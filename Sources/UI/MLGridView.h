@@ -61,4 +61,7 @@
 - (BOOL)isFolderAtVisibleIndex:(NSInteger)vis;
 - (NSString *)folderIdAtVisibleIndex:(NSInteger)vis;
 
+/// Brief spring/glow on a cell after merge or add-to-folder.
+- (void)pulseVisibleIndex:(NSInteger)vis;
+
 @end

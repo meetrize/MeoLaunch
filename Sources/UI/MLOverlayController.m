@@ -1047,16 +1047,21 @@ doCommandBySelector:(SEL)commandSelector {
     if (!fid.length) {
         return;
     }
-    /* Brief scale pulse on merge */
-    if (self.gridView.layer == nil) {
-        self.gridView.wantsLayer = YES;
+    NSInteger folderIndex = MIN(fromIndex, toIndex);
+    [self applyFilterWithQuery:@"" preservePage:YES];
+    if (folderIndex >= 0) {
+        self.gridView.selectedVisibleIndex = folderIndex;
+        [self.gridView pulseVisibleIndex:folderIndex];
     }
-    CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-    pulse.fromValue = @0.96;
-    pulse.toValue = @1.0;
-    pulse.duration = 0.18;
-    [self.gridView.layer addAnimation:pulse forKey:@"ml.mergePulse"];
-    [self enterFolderId:fid focusTitle:YES];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       __strong typeof(weakSelf) self = weakSelf;
+                       if (!self || !self.visible) {
+                           return;
+                       }
+                       [self enterFolderId:fid focusTitle:YES];
+                   });
 }
 
 - (void)gridView:(MLGridView *)gridView didExtractItemAt:(NSInteger)index {
@@ -1216,20 +1221,19 @@ doCommandBySelector:(SEL)commandSelector {
 
 - (void)gridView:(MLGridView *)gridView didAddItem:(NSInteger)fromIndex toFolderAt:(NSInteger)folderIndex {
     (void)gridView;
-    NSString *fid = nil;
-    if (self.layoutStore.layout &&
-        folderIndex >= 0 &&
-        (size_t)folderIndex < self.layoutStore.layout->count &&
-        self.layoutStore.layout->root[folderIndex].kind == ML_LAYOUT_FOLDER &&
-        self.layoutStore.layout->root[folderIndex].u.folder &&
-        self.layoutStore.layout->root[folderIndex].u.folder->id) {
-        fid = [NSString stringWithUTF8String:self.layoutStore.layout->root[folderIndex].u.folder->id];
-    }
     if (![self.layoutStore addRootAppFrom:fromIndex toFolderAt:folderIndex]) {
         return;
     }
+    /* Removing a lower-index app shifts the folder left by one. */
+    NSInteger pulseIndex = folderIndex;
+    if (fromIndex < folderIndex) {
+        pulseIndex = folderIndex - 1;
+    }
     [self applyFilterWithQuery:@"" preservePage:YES];
-    (void)fid;
+    if (pulseIndex >= 0) {
+        self.gridView.selectedVisibleIndex = pulseIndex;
+        [self.gridView pulseVisibleIndex:pulseIndex];
+    }
 }
 
 - (void)gridView:(MLGridView *)gridView didActivateFolderId:(NSString *)folderId {
