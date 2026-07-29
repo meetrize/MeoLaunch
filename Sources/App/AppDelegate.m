@@ -3,10 +3,12 @@
 #import "MLConfigStore.h"
 #import "MLHotCornerMonitor.h"
 #import "MLHotKeyManager.h"
+#import "MLLayoutStore.h"
 #import "MLOverlayController.h"
 #import "MLPrefsWindow.h"
 
 #include "ml_app_index.h"
+#include "ml_layout.h"
 
 #include <string.h>
 
@@ -18,6 +20,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLHotCornerMonitor *hotCorner;
 @property (nonatomic, strong) MLHotKeyManager *hotKey;
 @property (nonatomic, strong) MLConfigStore *config;
+@property (nonatomic, strong) MLLayoutStore *layoutStore;
 @property (nonatomic, strong) MLPrefsWindow *prefs;
 @property (nonatomic, assign) MLAppIndex appIndex;
 @end
@@ -30,7 +33,11 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.config = [[MLConfigStore alloc] init];
     [self.config loadFromDisk];
 
-    self.overlay = [[MLOverlayController alloc] initWithConfigStore:self.config];
+    self.layoutStore = [[MLLayoutStore alloc] init];
+    [self.layoutStore loadFromDisk];
+
+    self.overlay = [[MLOverlayController alloc] initWithConfigStore:self.config
+                                                        layoutStore:self.layoutStore];
     self.overlay.delegate = self;
     self.hotCorner = [[MLHotCornerMonitor alloc] init];
     self.hotCorner.delegate = self;
@@ -47,6 +54,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
                                              selector:@selector(configDidChange:)
                                                  name:MLConfigStoreDidChangeNotification
                                                object:self.config];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(layoutDidChange:)
+                                                 name:MLLayoutStoreDidChangeNotification
+                                               object:self.layoutStore];
 
     memset(&_appIndex, 0, sizeof(_appIndex));
     [self rescanApps];
@@ -54,7 +65,12 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     [self setupStatusItem];
     [self setupHotCornerWithAccessibility];
 
-    NSLog(@"[MeoLaunch] M5 ready — multi-screen / fade / icon purge");
+    NSLog(@"[MeoLaunch] M6 ready — layout order persistence");
+}
+
+- (void)layoutDidChange:(NSNotification *)note {
+    (void)note;
+    [self.overlay reloadWithAppIndex:&_appIndex];
 }
 
 - (void)configDidChange:(NSNotification *)note {
@@ -140,6 +156,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         return;
     }
     NSLog(@"[MeoLaunch] scanned %zu apps", _appIndex.count);
+    int layoutChanges = [self.layoutStore syncWithAppIndex:&_appIndex];
+    NSLog(@"[MeoLaunch] layout sync changes=%d root=%zu",
+          layoutChanges,
+          self.layoutStore.layout ? self.layoutStore.layout->count : 0);
     [self.overlay reloadWithAppIndex:&_appIndex];
 }
 

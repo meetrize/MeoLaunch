@@ -17,6 +17,7 @@
 | [05-project-structure.md](./05-project-structure.md) | 目录结构、构建方式、里程碑 |
 | [06-config-schema.md](./06-config-schema.md) | 配置文件格式与默认值 |
 | [07-agent-playbook.md](./07-agent-playbook.md) | 自动化开发任务卡与 Status |
+| [08-layout-folders.md](./08-layout-folders.md) | 拖动排序与目录分组设计 + 开发计划 |
 
 ## 产品定位
 
@@ -34,10 +35,10 @@
 3. 鼠标滚轮翻页（横向页切换）
 4. 触发角：默认左上角移入即唤起
 
-## 非目标（首期不做）
+## 非目标（首期不做 / 已调整）
 
 - iCloud / App Store 同步布局
-- 文件夹嵌套（Launchpad 文件夹）
+- 文件夹嵌套（文件夹内再建文件夹）— 单层分组见 [08-layout-folders.md](./08-layout-folders.md)
 - 多显示器复杂策略（首期：当前鼠标所在屏）
 - 插件系统、主题商店
 
