@@ -1,0 +1,44 @@
+name: MeoLaunch
+options:
+  bundleIdPrefix: com.meetrice
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: com.meetrice.meolaunch
+    PRODUCT_NAME: MeoLaunch
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    CLANG_ENABLE_OBJC_ARC: YES
+    CLANG_CXX_LANGUAGE_STANDARD: gnu++20
+    GCC_C_LANGUAGE_STANDARD: c11
+    HEADER_SEARCH_PATHS:
+      - $(SRCROOT)/Sources/App
+      - $(SRCROOT)/Sources/Core
+      - $(SRCROOT)/Sources/UI
+      - $(SRCROOT)/Sources/System
+    INFOPLIST_FILE: Sources/App/Info.plist
+    GENERATE_INFOPLIST_FILE: NO
+    LSUIElement: YES
+    COMBINE_HIDPI_IMAGES: YES
+
+targets:
+  MeoLaunch:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/App
+        excludes:
+          - Info.plist
+      - path: Sources/Core
+      - path: Sources/UI
+      - path: Sources/System
+      - path: Sources/Resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.meetrice.meolaunch
+        INFOPLIST_FILE: Sources/App/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    scheme:
+      testTargets: []

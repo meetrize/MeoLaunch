@@ -1,0 +1,18 @@
+---
+description: MeoLaunch project conventions for automated milestone work
+globs:
+  - Sources/**
+  - Scripts/**
+  - doc/07-agent-playbook.md
+alwaysApply: false
+---
+
+# MeoLaunch Agent Rules
+
+- Follow `doc/07-agent-playbook.md`: one task card at a time; update Status when done.
+- C symbols: `ml_` prefix. ObjC types: `ML` prefix. Core C must not import ObjC types.
+- No CocoaPods, SPM, or third-party libraries for MVP.
+- Primary build is `./Scripts/build.sh` (clang app bundle). Do not require full Xcode for M0–M4 acceptance.
+- Do not edit product docs `doc/00`–`doc/06` unless the user asks. Sync API changes into `doc/04` and `doc/07` when C headers change.
+- Default grid is 7×5; config path and schema live in `doc/06-config-schema.md`.
+- Keep overlays lean: no WebView, no SwiftUI, custom `NSView` grid.
