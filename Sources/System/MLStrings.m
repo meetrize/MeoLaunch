@@ -77,6 +77,18 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Overlay opacity",
             @"zh" : @"遮罩透明度",
         },
+        @"prefs.launch_at_login" : @{
+            @"en" : @"Launch at login",
+            @"zh" : @"开机启动",
+        },
+        @"prefs.launch_at_login_failed" : @{
+            @"en" : @"Couldn’t Change Login Item",
+            @"zh" : @"无法更改开机启动",
+        },
+        @"prefs.launch_at_login_failed_info" : @{
+            @"en" : @"Open System Settings → General → Login Items and allow MeoLaunch, or move the app to /Applications and try again.",
+            @"zh" : @"请在「系统设置 → 通用 → 登录项」中允许 MeoLaunch，或将应用移到「应用程序」文件夹后再试。",
+        },
         @"prefs.hot_corner_enabled" : @{
             @"en" : @"Hot corner enabled",
             @"zh" : @"启用触发角",

@@ -1,6 +1,7 @@
 #import "MLPrefsWindow.h"
 
 #import "MLConfigStore.h"
+#import "MLLaunchAtLogin.h"
 #import "MLStrings.h"
 
 /** Top-down layout coordinates for the prefs form. */
@@ -29,6 +30,7 @@
 @property (nonatomic, strong) NSTextField *opacityLabel;
 @property (nonatomic, strong) NSSlider *opacitySlider;
 @property (nonatomic, strong) NSTextField *opacityValueLabel;
+@property (nonatomic, strong) NSButton *launchAtLoginCheckbox;
 @property (nonatomic, strong) NSButton *hotCornerEnabled;
 @property (nonatomic, strong) NSTextField *hotCornerLabel;
 @property (nonatomic, strong) NSPopUpButton *cornerPopup;
@@ -189,6 +191,13 @@
     [c addSubview:self.opacityValueLabel];
     y += 40;
 
+    self.launchAtLoginCheckbox = [NSButton checkboxWithTitle:@""
+                                                      target:self
+                                                      action:@selector(launchAtLoginChanged:)];
+    self.launchAtLoginCheckbox.frame = NSMakeRect(pad, y, 320, 24);
+    [c addSubview:self.launchAtLoginCheckbox];
+    y += 32;
+
     self.hotCornerEnabled = [NSButton checkboxWithTitle:@""
                                                  target:self
                                                  action:@selector(prefsChanged:)];
@@ -317,6 +326,7 @@
     self.rowsLabel.stringValue = [MLStrings t:@"prefs.grid_rows"];
     self.iconSizeLabel.stringValue = [MLStrings t:@"prefs.icon_size"];
     self.opacityLabel.stringValue = [MLStrings t:@"prefs.overlay_opacity"];
+    self.launchAtLoginCheckbox.title = [MLStrings t:@"prefs.launch_at_login"];
     self.hotCornerEnabled.title = [MLStrings t:@"prefs.hot_corner_enabled"];
     self.hotCornerLabel.stringValue = [MLStrings t:@"prefs.hot_corner"];
 
@@ -416,6 +426,33 @@
 - (void)prefsChanged:(id)sender {
     (void)sender;
     [self applyLive];
+}
+
+- (void)launchAtLoginChanged:(id)sender {
+    (void)sender;
+    if (self.suppressApply) {
+        return;
+    }
+    BOOL want = (self.launchAtLoginCheckbox.state == NSControlStateValueOn);
+    NSError *err = nil;
+    if (![MLLaunchAtLogin setEnabled:want error:&err]) {
+        self.suppressApply = YES;
+        self.launchAtLoginCheckbox.state =
+            [MLLaunchAtLogin isEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+        self.suppressApply = NO;
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = [MLStrings t:@"prefs.launch_at_login_failed"];
+        alert.informativeText = err.localizedDescription.length > 0
+                                    ? err.localizedDescription
+                                    : [MLStrings t:@"prefs.launch_at_login_failed_info"];
+        [alert addButtonWithTitle:[MLStrings t:@"prefs.ok"]];
+        [alert beginSheetModalForWindow:self.window completionHandler:nil];
+        return;
+    }
+    self.suppressApply = YES;
+    self.launchAtLoginCheckbox.state =
+        [MLLaunchAtLogin isEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
+    self.suppressApply = NO;
 }
 
 - (void)controlTextDidChange:(NSNotification *)obj {
@@ -553,6 +590,8 @@
     self.opacitySlider.doubleValue = self.config.overlayOpacity * 100.0;
     self.opacityValueLabel.stringValue =
         [NSString stringWithFormat:@"%.0f%%", self.opacitySlider.doubleValue];
+    self.launchAtLoginCheckbox.state =
+        [MLLaunchAtLogin isEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
     self.hotCornerEnabled.state = self.config.hotCornerEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [self selectPopupForPosition:self.config.hotCornerPosition];
     self.sizeField.stringValue = [NSString stringWithFormat:@"%.0f", self.config.hotCornerSizePt];

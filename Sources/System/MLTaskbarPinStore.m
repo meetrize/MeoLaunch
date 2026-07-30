@@ -122,8 +122,17 @@ NSNotificationName const MLTaskbarPinsDidChangeNotification = @"MLTaskbarPinsDid
     if (path.length == 0) {
         return NO;
     }
+    path = path.stringByStandardizingPath;
+    if (path.length == 0) {
+        return NO;
+    }
     if ([self.pins containsObject:path]) {
         return NO;
+    }
+    for (NSString *existing in self.pins) {
+        if ([existing.stringByStandardizingPath isEqualToString:path]) {
+            return NO;
+        }
     }
     [self.pins addObject:path];
     [self scheduleSave];
@@ -135,7 +144,19 @@ NSNotificationName const MLTaskbarPinsDidChangeNotification = @"MLTaskbarPinsDid
     if (path.length == 0) {
         return NO;
     }
+    NSString *std = path.stringByStandardizingPath;
     NSUInteger idx = [self.pins indexOfObject:path];
+    if (idx == NSNotFound && std.length > 0) {
+        idx = [self.pins indexOfObject:std];
+    }
+    if (idx == NSNotFound && std.length > 0) {
+        for (NSUInteger i = 0; i < self.pins.count; i++) {
+            if ([self.pins[i].stringByStandardizingPath isEqualToString:std]) {
+                idx = i;
+                break;
+            }
+        }
+    }
     if (idx == NSNotFound) {
         return NO;
     }
@@ -149,7 +170,22 @@ NSNotificationName const MLTaskbarPinsDidChangeNotification = @"MLTaskbarPinsDid
     if (path.length == 0) {
         return NO;
     }
-    return [self.pins containsObject:path];
+    if ([self.pins containsObject:path]) {
+        return YES;
+    }
+    NSString *std = path.stringByStandardizingPath;
+    if (std.length == 0) {
+        return NO;
+    }
+    if ([self.pins containsObject:std]) {
+        return YES;
+    }
+    for (NSString *existing in self.pins) {
+        if ([existing.stringByStandardizingPath isEqualToString:std]) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 - (BOOL)movePinFrom:(NSInteger)from to:(NSInteger)to {

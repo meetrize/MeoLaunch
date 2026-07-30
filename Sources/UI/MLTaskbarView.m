@@ -18,8 +18,8 @@
  *   chip idle:    #FFFFFF @ 0.96 + stroke #C9D0DB
  *   chip min:     #F1F3F7 + stroke #D3D8E2
  *   chip active:  #D8E6FA + stroke #4F7FE8
- *   chip pinned:  #FFFFFF @ 0.55 + stroke #D3D8E2
- *   title:        #1F2937 / dim #8B93A3 / active #14305C
+ *   pinned only:  bare full-color icon (no chip / no title), left-packed
+ *   title:        #1F2937 / active #14305C
  */
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -74,21 +74,47 @@
     return 3.0;
 }
 
-- (CGFloat)effectiveItemWidth {
-    NSUInteger n = self.items.count;
-    if (n == 0) {
+/** Bare icon slot for pinned-not-running launchers. */
+- (CGFloat)pinnedSlotWidth {
+    return self.iconSize + 4.0;
+}
+
+- (BOOL)isPinnedIconOnly:(MLTaskbarItem *)item {
+    return item && item.kind == MLTaskbarItemPinnedOnly;
+}
+
+- (CGFloat)windowChipWidth {
+    NSUInteger pinnedN = 0;
+    NSUInteger windowN = 0;
+    for (MLTaskbarItem *item in self.items) {
+        if ([self isPinnedIconOnly:item]) {
+            pinnedN++;
+        } else {
+            windowN++;
+        }
+    }
+    if (windowN == 0) {
         return self.itemMaxWidth;
     }
     CGFloat inset = [self edgeInset];
     CGFloat avail = NSWidth(self.bounds) - inset * 2.0;
     CGFloat spacing = self.spacing;
+    CGFloat pinnedW = [self pinnedSlotWidth];
+    CGFloat pinnedSpan = pinnedN * pinnedW + (pinnedN > 0 ? (pinnedN - 1) * spacing : 0);
+    if (pinnedN > 0 && windowN > 0) {
+        pinnedSpan += spacing;
+    }
+    CGFloat remain = avail - pinnedSpan;
+    if (remain < 0) {
+        remain = 0;
+    }
     CGFloat maxW = self.itemMaxWidth;
     CGFloat minW = self.itemMinWidth;
-    CGFloat need = n * maxW + (n > 0 ? (n - 1) * spacing : 0);
-    if (need <= avail) {
+    CGFloat need = windowN * maxW + (windowN > 1 ? (windowN - 1) * spacing : 0);
+    if (need <= remain) {
         return maxW;
     }
-    CGFloat w = (avail - (n - 1) * spacing) / (CGFloat)n;
+    CGFloat w = (remain - (windowN > 1 ? (windowN - 1) * spacing : 0)) / (CGFloat)windowN;
     if (w < minW) {
         w = minW;
     }
@@ -98,22 +124,34 @@
     return w;
 }
 
-- (NSRect)rectForItemAtIndex:(NSInteger)index itemWidth:(CGFloat)itemW {
+- (CGFloat)widthForItem:(MLTaskbarItem *)item chipWidth:(CGFloat)chipW {
+    if ([self isPinnedIconOnly:item]) {
+        return [self pinnedSlotWidth];
+    }
+    return chipW;
+}
+
+- (NSRect)rectForItemAtIndex:(NSInteger)index chipWidth:(CGFloat)chipW {
     if (index < 0 || index >= (NSInteger)self.items.count) {
         return NSZeroRect;
     }
-    CGFloat x = [self edgeInset] + index * (itemW + self.spacing);
+    CGFloat x = [self edgeInset];
+    for (NSInteger i = 0; i < index; i++) {
+        MLTaskbarItem *prev = self.items[(NSUInteger)i];
+        x += [self widthForItem:prev chipWidth:chipW] + self.spacing;
+    }
+    CGFloat w = [self widthForItem:self.items[(NSUInteger)index] chipWidth:chipW];
     CGFloat y = (NSHeight(self.bounds) - self.barHeight) * 0.5;
     if (y < 0) {
         y = 0;
     }
-    return NSMakeRect(x, y, itemW, self.barHeight);
+    return NSMakeRect(x, y, w, self.barHeight);
 }
 
 - (NSInteger)indexAtPoint:(NSPoint)p {
-    CGFloat itemW = [self effectiveItemWidth];
+    CGFloat chipW = [self windowChipWidth];
     for (NSInteger i = 0; i < (NSInteger)self.items.count; i++) {
-        NSRect r = [self rectForItemAtIndex:i itemWidth:itemW];
+        NSRect r = [self rectForItemAtIndex:i chipWidth:chipW];
         if (NSPointInRect(p, r)) {
             return i;
         }
@@ -122,7 +160,7 @@
 }
 
 - (NSRect)rectForItemAtIndex:(NSInteger)index {
-    return [self rectForItemAtIndex:index itemWidth:[self effectiveItemWidth]];
+    return [self rectForItemAtIndex:index chipWidth:[self windowChipWidth]];
 }
 
 - (void)drawRoundedChip:(NSRect)rect
@@ -153,10 +191,9 @@
     [[NSColor colorWithCalibratedRed:0.72 green:0.76 blue:0.82 alpha:0.35] setFill];
     NSRectFill(NSMakeRect(0, NSHeight(self.bounds) - 1.0, NSWidth(self.bounds), 1.0));
 
-    CGFloat itemW = [self effectiveItemWidth];
+    CGFloat chipW = [self windowChipWidth];
 
     NSColor *titleIdle = [NSColor colorWithCalibratedRed:0.122 green:0.161 blue:0.216 alpha:1.0];
-    NSColor *titleDim = [NSColor colorWithCalibratedRed:0.545 green:0.576 blue:0.639 alpha:1.0];
     NSColor *titleActive = [NSColor colorWithCalibratedRed:0.078 green:0.188 blue:0.361 alpha:1.0];
 
     NSMutableParagraphStyle *ps = [[NSMutableParagraphStyle alloc] init];
@@ -166,11 +203,6 @@
     NSDictionary *titleAttrs = @{
         NSFontAttributeName : [NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium],
         NSForegroundColorAttributeName : titleIdle,
-        NSParagraphStyleAttributeName : ps,
-    };
-    NSDictionary *dimTitleAttrs = @{
-        NSFontAttributeName : titleAttrs[NSFontAttributeName],
-        NSForegroundColorAttributeName : titleDim,
         NSParagraphStyleAttributeName : ps,
     };
     NSDictionary *activeTitleAttrs = @{
@@ -185,29 +217,44 @@
     NSColor *chipMinStroke = [NSColor colorWithCalibratedRed:0.827 green:0.847 blue:0.886 alpha:1.0];
     NSColor *chipActiveFill = [NSColor colorWithCalibratedRed:0.847 green:0.902 blue:0.980 alpha:1.0];
     NSColor *chipActiveStroke = [NSColor colorWithCalibratedRed:0.310 green:0.498 blue:0.910 alpha:1.0];
-    NSColor *chipPinnedFill = [NSColor colorWithCalibratedRed:1.0 green:1.0 blue:1.0 alpha:0.55];
 
     for (NSInteger i = 0; i < (NSInteger)self.items.count; i++) {
         MLTaskbarItem *item = self.items[(NSUInteger)i];
-        NSRect cell = [self rectForItemAtIndex:i itemWidth:itemW];
+        NSRect cell = [self rectForItemAtIndex:i chipWidth:chipW];
         if (NSIsEmptyRect(cell)) {
             continue;
         }
 
-        NSRect chip = NSInsetRect(cell, 0.0, 3.0);
-        BOOL pinnedOnly = (item.kind == MLTaskbarItemPinnedOnly);
+        BOOL pinnedOnly = [self isPinnedIconOnly:item];
         BOOL isActive = item.active && !pinnedOnly;
 
+        if (pinnedOnly) {
+            /* Icon only — full color, no chip / title; pack from the left. */
+            NSRect iconRect = NSMakeRect(NSMinX(cell) + (NSWidth(cell) - self.iconSize) * 0.5,
+                                         NSMinY(cell) + (NSHeight(cell) - self.iconSize) * 0.5,
+                                         self.iconSize,
+                                         self.iconSize);
+            NSImage *icon = [self.iconCache cachedIconForPath:item.path];
+            if (icon) {
+                [icon drawInRect:iconRect
+                        fromRect:NSZeroRect
+                       operation:NSCompositingOperationSourceOver
+                        fraction:1.0
+                  respectFlipped:YES
+                           hints:nil];
+            } else {
+                [[NSColor colorWithCalibratedRed:0.82 green:0.85 blue:0.90 alpha:1.0] setFill];
+                NSRectFill(iconRect);
+            }
+            continue;
+        }
+
+        NSRect chip = NSInsetRect(cell, 0.0, 3.0);
         if (isActive) {
             [self drawRoundedChip:chip
                              fill:chipActiveFill
                            stroke:chipActiveStroke
                       strokeWidth:1.5];
-        } else if (pinnedOnly) {
-            [self drawRoundedChip:chip
-                             fill:chipPinnedFill
-                           stroke:chipIdleStroke
-                      strokeWidth:1.0];
         } else if (item.minimized) {
             [self drawRoundedChip:chip
                              fill:chipMinFill
@@ -220,8 +267,6 @@
                       strokeWidth:1.0];
         }
 
-        CGFloat alpha = pinnedOnly ? 0.65 : 1.0;
-
         NSRect iconRect = NSMakeRect(NSMinX(chip) + 6.0,
                                      NSMinY(chip) + (NSHeight(chip) - self.iconSize) * 0.5,
                                      self.iconSize,
@@ -231,11 +276,11 @@
             [icon drawInRect:iconRect
                     fromRect:NSZeroRect
                    operation:NSCompositingOperationSourceOver
-                    fraction:alpha
-              respectFlipped:YES
-                       hints:nil];
+                    fraction:1.0
+                  respectFlipped:YES
+                           hints:nil];
         } else {
-            [[NSColor colorWithCalibratedRed:0.82 green:0.85 blue:0.90 alpha:alpha] setFill];
+            [[NSColor colorWithCalibratedRed:0.82 green:0.85 blue:0.90 alpha:1.0] setFill];
             NSBezierPath *ph = [NSBezierPath bezierPathWithRoundedRect:iconRect xRadius:6.0 yRadius:6.0];
             [ph fill];
         }
@@ -245,7 +290,7 @@
                                       NSMaxX(chip) - (NSMaxX(iconRect) + 6.0) - 8.0,
                                       14.0);
         if (titleRect.size.width > 8.0 && item.title.length > 0) {
-            NSDictionary *attrs = pinnedOnly ? dimTitleAttrs : (isActive ? activeTitleAttrs : titleAttrs);
+            NSDictionary *attrs = isActive ? activeTitleAttrs : titleAttrs;
             [item.title drawInRect:titleRect withAttributes:attrs];
         }
     }

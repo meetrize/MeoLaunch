@@ -20,7 +20,7 @@ INC=(
 
 CFLAGS_C=(-std=c11 -O2 -Wall -Wextra "${INC[@]}")
 CFLAGS_M=(-fobjc-arc -O2 -Wall -Wextra "${INC[@]}")
-LIBS=(-framework AppKit -framework Foundation -framework ApplicationServices -framework Carbon -framework CoreFoundation -framework QuartzCore)
+LIBS=(-framework AppKit -framework Foundation -framework ApplicationServices -framework Carbon -framework CoreFoundation -framework QuartzCore -framework ServiceManagement)
 
 OBJS=()
 

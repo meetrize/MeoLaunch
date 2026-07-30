@@ -97,12 +97,34 @@
     if (path.length == 0 || !snap) {
         return 0;
     }
+    NSString *std = path.stringByStandardizingPath;
     for (NSNumber *pidNum in snap.pidToPath) {
-        if ([snap.pidToPath[pidNum] isEqualToString:path]) {
+        NSString *p = snap.pidToPath[pidNum];
+        if ([p isEqualToString:path] ||
+            (std.length > 0 && [p.stringByStandardizingPath isEqualToString:std])) {
             return (pid_t)pidNum.intValue;
         }
     }
     return 0;
+}
+
+- (BOOL)pinSet:(NSSet<NSString *> *)pinSet containsPath:(NSString *)path {
+    if (path.length == 0 || pinSet.count == 0) {
+        return NO;
+    }
+    if ([pinSet containsObject:path]) {
+        return YES;
+    }
+    NSString *std = path.stringByStandardizingPath;
+    if (std.length > 0 && [pinSet containsObject:std]) {
+        return YES;
+    }
+    for (NSString *pin in pinSet) {
+        if ([pin.stringByStandardizingPath isEqualToString:std]) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 - (MLTaskbarItem *)itemWithPath:(NSString *)path
@@ -272,7 +294,6 @@
     MLRunningAppsSnapshot *snap = self.monitor.snapshot;
     NSArray<NSString *> *pins = self.pinStore.pinnedPaths;
     NSSet<NSString *> *pinSet = [NSSet setWithArray:pins];
-    NSSet<NSString *> *runningSet = [NSSet setWithArray:snap.runningAppPaths ?: @[]];
 
     NSUInteger cap = self.monitor.maxWindowEntries > 0 ? self.monitor.maxWindowEntries
                                                        : (NSUInteger)MLTaskbarMaxWindowEntries;
@@ -340,7 +361,7 @@
     for (MLTaskbarWindowInfo *w in uniqueWindows) {
         NSString *display = [self displayNameForPath:w.path];
         NSString *title = w.title.length > 0 ? w.title : display;
-        BOOL pinned = [pinSet containsObject:w.path];
+        BOOL pinned = [self pinSet:pinSet containsPath:w.path];
         NSUInteger ord = w.seenOrder;
         if (ord == 0 && w.windowID != 0) {
             ord = priorOrderByWid[@(w.windowID)].unsignedIntegerValue;
@@ -376,19 +397,35 @@
 
     NSMutableArray<MLTaskbarItem *> *items = [NSMutableArray array];
 
-    /* Pinned launchers (not running) stay at the leading edge in pin order. */
+    /*
+     * Pinned launchers with no window chip on this screen stay at the leading
+     * edge (pin order). Do NOT gate on runningSet: Electron apps (Cursor, etc.)
+     * often keep a process alive after the last window closes — hiding the pin
+     * then makes the icon vanish. Show the bare icon whenever this screen has
+     * no window for that path; click will activate or open a new window.
+     */
     NSMutableSet<NSString *> *pathsWithWindows = [NSMutableSet set];
     for (MLTaskbarWindowInfo *w in uniqueWindows) {
         if (w.path.length > 0) {
             [pathsWithWindows addObject:w.path];
+            NSString *std = w.path.stringByStandardizingPath;
+            if (std.length > 0) {
+                [pathsWithWindows addObject:std];
+            }
         }
     }
     for (NSString *path in pins) {
-        if ([pathsWithWindows containsObject:path] || [runningSet containsObject:path]) {
+        if (path.length == 0) {
             continue;
         }
+        NSString *std = path.stringByStandardizingPath;
+        if ([pathsWithWindows containsObject:path] ||
+            (std.length > 0 && [pathsWithWindows containsObject:std])) {
+            continue;
+        }
+        pid_t pinPid = [self pidForPath:path snapshot:snap];
         [items addObject:[self itemWithPath:path
-                                        pid:0
+                                        pid:pinPid
                                    windowID:0
                                       title:[self displayNameForPath:path]
                                        kind:MLTaskbarItemPinnedOnly
@@ -424,10 +461,20 @@
     if (width < 32.0 || items.count == 0) {
         return items;
     }
+    /* Pinned-only slots are bare icons (~iconSize+4); window chips use minW. */
+    CGFloat pinnedW = 36.0;
     CGFloat avail = width - 6.0;
     while (items.count > 0) {
+        CGFloat need = 0;
         NSUInteger n = items.count;
-        CGFloat need = n * minW + (n > 1 ? (n - 1) * spacing : 0);
+        for (NSUInteger i = 0; i < n; i++) {
+            MLTaskbarItem *it = items[i];
+            CGFloat w = (it.kind == MLTaskbarItemPinnedOnly) ? pinnedW : minW;
+            need += w;
+            if (i + 1 < n) {
+                need += spacing;
+            }
+        }
         if (need <= avail) {
             break;
         }
@@ -861,8 +908,11 @@
         app = [NSRunningApplication runningApplicationWithProcessIdentifier:item.pid];
     }
     if ((!app || app.isTerminated) && item.path.length > 0) {
+        NSString *std = item.path.stringByStandardizingPath;
         for (NSRunningApplication *ra in [NSWorkspace sharedWorkspace].runningApplications) {
-            if ([ra.bundleURL.path isEqualToString:item.path]) {
+            NSString *p = ra.bundleURL.path;
+            if ([p isEqualToString:item.path] ||
+                (std.length > 0 && [p.stringByStandardizingPath isEqualToString:std])) {
                 app = ra;
                 item.pid = ra.processIdentifier;
                 break;
@@ -884,7 +934,52 @@
     }
 }
 
+- (void)openApplicationAtPath:(NSString *)path {
+    if (path.length == 0) {
+        return;
+    }
+    NSURL *url = [NSURL fileURLWithPath:path];
+    NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
+    cfg.activates = YES;
+    [[NSWorkspace sharedWorkspace] openApplicationAtURL:url
+                                          configuration:cfg
+                                      completionHandler:^(__unused NSRunningApplication *app, NSError *error) {
+                                          if (error) {
+                                              NSLog(@"[MeoLaunch] taskbar launch failed: %@", error);
+                                          }
+                                      }];
+}
+
+- (BOOL)isApplicationRunningAtPath:(NSString *)path {
+    if (path.length == 0) {
+        return NO;
+    }
+    NSString *std = path.stringByStandardizingPath;
+    for (NSRunningApplication *app in [NSWorkspace sharedWorkspace].runningApplications) {
+        NSString *p = app.bundleURL.path;
+        if (p.length == 0) {
+            continue;
+        }
+        if ([p isEqualToString:path] ||
+            (std.length > 0 && [p.stringByStandardizingPath isEqualToString:std])) {
+            return !app.isTerminated;
+        }
+    }
+    return NO;
+}
+
 - (void)activateOrLaunchItem:(MLTaskbarItem *)item {
+    /*
+     * Pinned-only (no window chip): always open via Workspace so apps that are
+     * still alive without a window (Cursor / Electron) get a new window, and
+     * fully-quit apps relaunch.
+     */
+    if (item.kind == MLTaskbarItemPinnedOnly) {
+        [self activateApplicationForItem:item];
+        [self openApplicationAtPath:item.path];
+        return;
+    }
+
     if (item.pid > 0 || item.path.length > 0) {
         [self raiseAndFocusWindowForItem:item];
         [self activateApplicationForItem:item];
@@ -901,26 +996,12 @@
                 return;
             }
         }
-        for (NSRunningApplication *app in [NSWorkspace sharedWorkspace].runningApplications) {
-            if ([app.bundleURL.path isEqualToString:item.path]) {
-                return;
-            }
+        if ([self isApplicationRunningAtPath:item.path]) {
+            return;
         }
     }
 
-    if (item.path.length == 0) {
-        return;
-    }
-    NSURL *url = [NSURL fileURLWithPath:item.path];
-    NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
-    cfg.activates = YES;
-    [[NSWorkspace sharedWorkspace] openApplicationAtURL:url
-                                          configuration:cfg
-                                      completionHandler:^(__unused NSRunningApplication *app, NSError *error) {
-                                          if (error) {
-                                              NSLog(@"[MeoLaunch] taskbar launch failed: %@", error);
-                                          }
-                                      }];
+    [self openApplicationAtPath:item.path];
 }
 
 - (void)taskbarView:(MLTaskbarView *)view didClickItemAtIndex:(NSInteger)index {
