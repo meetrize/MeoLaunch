@@ -112,6 +112,7 @@
                            kind:(MLTaskbarItemKind)kind
                          pinned:(BOOL)pinned
                       minimized:(BOOL)minimized
+                         active:(BOOL)active
                       seenOrder:(NSUInteger)seenOrder {
     MLTaskbarItem *item = [[MLTaskbarItem alloc] init];
     item.path = path;
@@ -121,8 +122,67 @@
     item.kind = kind;
     item.pinned = pinned;
     item.minimized = minimized;
+    item.active = active;
     item.seenOrder = seenOrder;
     return item;
+}
+
+/** Frontmost layer-0 window of the frontmost regular app (CG front-to-back order). */
+- (CGWindowID)frontmostTrackedWindowID {
+    NSRunningApplication *front = [NSWorkspace sharedWorkspace].frontmostApplication;
+    if (!front || front.isTerminated || front.processIdentifier <= 0) {
+        return 0;
+    }
+    if (front.activationPolicy != NSApplicationActivationPolicyRegular) {
+        return 0;
+    }
+    NSString *selfBid = [NSBundle mainBundle].bundleIdentifier;
+    if (selfBid.length > 0 && [front.bundleIdentifier isEqualToString:selfBid]) {
+        return 0;
+    }
+    pid_t pid = front.processIdentifier;
+    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
+                                                     kCGWindowListExcludeDesktopElements,
+                                                 kCGNullWindowID);
+    if (!list) {
+        return 0;
+    }
+    CGWindowID best = 0;
+    CFIndex count = CFArrayGetCount(list);
+    for (CFIndex i = 0; i < count; i++) {
+        CFDictionaryRef info = (CFDictionaryRef)CFArrayGetValueAtIndex(list, i);
+        CFNumberRef pidRef = info ? CFDictionaryGetValue(info, kCGWindowOwnerPID) : NULL;
+        pid_t wpid = 0;
+        if (pidRef) {
+            CFNumberGetValue(pidRef, kCFNumberIntType, &wpid);
+        }
+        if (wpid != pid) {
+            continue;
+        }
+        CFNumberRef layerRef = CFDictionaryGetValue(info, kCGWindowLayer);
+        int layer = 0;
+        if (layerRef) {
+            CFNumberGetValue(layerRef, kCFNumberIntType, &layer);
+        }
+        if (layer != 0) {
+            continue;
+        }
+        CGRect bounds = CGRectZero;
+        CFDictionaryRef bd = CFDictionaryGetValue(info, kCGWindowBounds);
+        if (!bd || !CGRectMakeWithDictionaryRepresentation(bd, &bounds)) {
+            continue;
+        }
+        if (bounds.size.width < 100.0 || bounds.size.height < 80.0) {
+            continue;
+        }
+        CFNumberRef winRef = CFDictionaryGetValue(info, kCGWindowNumber);
+        if (winRef) {
+            CFNumberGetValue(winRef, kCFNumberIntType, &best);
+        }
+        break; /* first match is frontmost */
+    }
+    CFRelease(list);
+    return best;
 }
 
 /** Prefer the screen with the largest intersection; ties break to containing center. */
@@ -276,6 +336,7 @@
     }
 
     NSMutableArray<MLTaskbarItem *> *windowItems = [NSMutableArray array];
+    CGWindowID frontWid = [self frontmostTrackedWindowID];
     for (MLTaskbarWindowInfo *w in uniqueWindows) {
         NSString *display = [self displayNameForPath:w.path];
         NSString *title = w.title.length > 0 ? w.title : display;
@@ -288,6 +349,7 @@
             NSString *pt = [NSString stringWithFormat:@"%@|%@", w.path ?: @"", title ?: @""];
             ord = priorOrderByPathTitle[pt].unsignedIntegerValue;
         }
+        BOOL active = !w.minimized && w.windowID != 0 && frontWid != 0 && w.windowID == frontWid;
         [windowItems addObject:[self itemWithPath:w.path
                                               pid:w.pid
                                          windowID:w.windowID
@@ -295,6 +357,7 @@
                                              kind:MLTaskbarItemRunningWindow
                                            pinned:pinned
                                         minimized:w.minimized
+                                           active:active
                                         seenOrder:ord]];
     }
 
@@ -331,6 +394,7 @@
                                        kind:MLTaskbarItemPinnedOnly
                                      pinned:YES
                                   minimized:NO
+                                     active:NO
                                   seenOrder:0]];
     }
     [items addObjectsFromArray:windowItems];
@@ -360,7 +424,7 @@
     if (width < 32.0 || items.count == 0) {
         return items;
     }
-    CGFloat avail = width - 16.0;
+    CGFloat avail = width - 6.0;
     while (items.count > 0) {
         NSUInteger n = items.count;
         CGFloat need = n * minW + (n > 1 ? (n - 1) * spacing : 0);
@@ -482,6 +546,10 @@
                                              selector:@selector(screenParamsChanged:)
                                                  name:NSApplicationDidChangeScreenParametersNotification
                                                object:nil];
+    [[[NSWorkspace sharedWorkspace] notificationCenter] addObserver:self
+                                                           selector:@selector(frontAppDidChange:)
+                                                               name:NSWorkspaceDidActivateApplicationNotification
+                                                             object:nil];
 
     [self.monitor start];
     [self syncBarsToScreens];
@@ -499,6 +567,7 @@
     [self.minimizeInterceptor stop];
     self.minimizeInterceptor = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
     [self.monitor stop];
     for (MLTaskbarScreenBar *bar in self.bars) {
         [bar.window orderOut:nil];
@@ -519,9 +588,15 @@
     [self rebuildItems];
 }
 
+- (void)frontAppDidChange:(NSNotification *)note {
+    (void)note;
+    [self rebuildItems];
+}
+
 - (void)screenParamsChanged:(NSNotification *)note {
     (void)note;
     [self syncBarsToScreens];
+    [self rebuildItems];
 }
 
 - (void)overlayWillShow {

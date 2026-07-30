@@ -19,6 +19,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
 @property (nonatomic, assign) MLTaskbarItemKind kind;
 @property (nonatomic, assign) BOOL pinned;
 @property (nonatomic, assign) BOOL minimized;
+/** Frontmost on-screen window of the frontmost app. */
+@property (nonatomic, assign) BOOL active;
 @property (nonatomic, assign) NSUInteger seenOrder;
 @end
 
