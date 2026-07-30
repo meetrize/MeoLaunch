@@ -52,6 +52,11 @@ mkdir -p "$RES"
 if [[ -f "$ROOT/Sources/Resources/AppIcon.icns" ]]; then
   cp "$ROOT/Sources/Resources/AppIcon.icns" "$RES/AppIcon.icns"
 fi
+for icon in MenuBarIcon.png "MenuBarIcon@2x.png"; do
+  if [[ -f "$ROOT/Sources/Resources/$icon" ]]; then
+    cp "$ROOT/Sources/Resources/$icon" "$RES/$icon"
+  fi
+done
 if [[ -d "$ROOT/Sources/Resources/Assets.xcassets" ]]; then
   cp -R "$ROOT/Sources/Resources/Assets.xcassets" "$RES/" 2>/dev/null || true
 fi

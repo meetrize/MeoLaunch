@@ -207,7 +207,21 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.statusItem = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
     NSStatusBarButton *button = self.statusItem.button;
     if (button) {
-        button.title = @"ML";
+        NSImage *icon = [NSImage imageNamed:@"MenuBarIcon"];
+        if (!icon) {
+            NSString *path = [[NSBundle mainBundle] pathForResource:@"MenuBarIcon" ofType:@"png"];
+            if (path) {
+                icon = [[NSImage alloc] initWithContentsOfFile:path];
+            }
+        }
+        if (icon) {
+            icon.size = NSMakeSize(18, 18);
+            icon.template = YES;
+            button.image = icon;
+            button.imagePosition = NSImageOnly;
+        } else {
+            button.title = @"ML";
+        }
         button.toolTip = @"MeoLaunch (⌥Space)";
     }
 
