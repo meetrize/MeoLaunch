@@ -15,6 +15,12 @@
 | M3b | done | Carbon ⌥Space 全局热键 toggle Overlay |
 | M4 | done | config.json 读写 + Prefs（行列/触发角）持久化 |
 | M5 | done | 鼠标所在屏 Overlay、fade、IconCache LRU+关闭 purge、插拔屏重置 |
+| T0 | done | 任务栏 PinStore：`taskbar_pins.json` 读写 + debounce |
+| T1 | done | RunningAppsMonitor：launch/terminate，先不算窗口 |
+| T3 | done | TaskbarIconCache：32px LRU≤48，与 Overlay cache 隔离 |
+| T4 | done | TaskbarView + Controller：图标 + 显示名标题布局；点击 activate/launch |
+| T2 | done | 窗口 1s poll：瘦窗口列表/截断标题、多窗口多格、状态色 |
+| T5 | done | 右键钉住、Overlay show/hide 时 taskbar orderOut/恢复 |
 
 ## 执行协议
 
@@ -103,6 +109,54 @@
 - **改**：Overlay 多屏、fade、IconCache purge、内存
 - **验收**：Instruments 粗测接近 Idle ≤25MB / Active ≤60MB；插拔屏热区正确
 - **禁止**：大重构目录
+
+### T0 — 任务栏 PinStore
+
+- **输入**：[10-taskbar.md](./10-taskbar.md) §5.2
+- **改**：`Sources/System/MLTaskbarPinStore.h/.m`；`Scripts/build.sh` 纳入编译
+- **做**：读写 `~/Library/Application Support/meoLaunch/taskbar_pins.json`；`pin`/`unpin`/`isPinned`；`scheduleSave` 300ms debounce；变更发 `MLTaskbarPinsDidChangeNotification`
+- **验收**：`./Scripts/build.sh` 通过；临时调用 pin 后重启（或再 load）pins 仍在；文件仅含 path 数组
+- **禁止**：存图标、接 UI、跑窗口枚举
+
+### T1 — RunningAppsMonitor（无窗口态）
+
+- **输入**：10 §5.1（先忽略 `pathsWithVisibleWindows`）
+- **改**：`Sources/System/MLRunningAppsMonitor.h/.m`
+- **做**：订阅 `NSWorkspace` launch/terminate；维护 Regular 策略 app 的 path 列表；发 `MLRunningAppsDidChangeNotification`；snapshot 不可变；过滤自身 MeoLaunch
+- **验收**：启动/退出任意 app 后 snapshot 变化；不长期持有 `NSRunningApplication` 数组
+- **禁止**：`CGWindowList`、任务栏 UI、图标加载
+
+### T3 — TaskbarIconCache
+
+- **输入**：10 §5.3、§7
+- **改**：`Sources/System/MLTaskbarIconCache.h/.m`
+- **做**：异步加载；默认 32pt、`maxEntries=48` LRU；与 `MLIconCache` 完全分离
+- **验收**：加载若干 path 后 `cachedCount ≤ 48`；Overlay hide 的 `MLIconCache.purge` 不影响本 cache
+- **禁止**：128px 大图、接到 GridView
+
+### T4 — TaskbarView + Controller（图标 + 标题）
+
+- **输入**：10 §4、§5.4、§5.5、§6
+- **改**：`MLTaskbarView`、`MLTaskbarController`、`AppDelegate` 接线；依赖 T0/T1/T3
+- **做**：底栏 borderless 窗；`rebuildItems` = pins ⊕ running（T2 前可先一 app 一格）；单 view `drawRect` 绘制 **图标 + 截断标题**（先用显示名）；`itemMaxWidth`/`MinWidth`；左键 activate 或 launch；`PinnedOnly` 低透明
+- **验收**：底栏可见图标与标题文字；标题过长尾部省略；点击可切换/启动；`./Scripts/build.sh` 通过；Idle 增量粗测 ≤4MB
+- **禁止**：每条目 NSView/NSTextField、窗口缩略图、真实 kCGWindowName（留给 T2）
+
+### T2 — 窗口列表 / 标题 + 状态色
+
+- **输入**：10 §4.1、§4.5、§5.1
+- **改**：`MLRunningAppsMonitor`、`MLTaskbarView`/`Controller`
+- **做**：默认 1.0s `CGWindowListCopyWindowInfo`；产出瘦 `windows`（`windowID` + 截断 title ≤40 + path/pid）；上限 24；同 app 多窗口多格；空名回退显示名；区分 `RunningNoWindow` / `RunningWindow`；用完释放原始 list
+- **验收**：多窗口 app 出现多格且标题不同（或权限不足时均为显示名）；有窗口 / 仅进程视觉不同；无原始 window list 常驻
+- **禁止**：未截断标题缓存、bounds 常驻、Accessibility 聚焦单窗、缩略图
+
+### T5 — 右键钉住 + Overlay 协同
+
+- **输入**：10 §2 原则5、§5.5 窗口约定
+- **改**：`MLTaskbarView` 菜单、`MLTaskbarController`、`MLOverlayController` show/hide 钩子
+- **做**：右键钉住/取消钉住并 `scheduleSave`；Overlay show → taskbar `orderOut`，hide → 恢复
+- **验收**：钉住重启仍在；Overlay 打开时任务栏不挡网格；关闭 Overlay 后任务栏回来
+- **禁止**：Prefs UI、多屏每屏一条、拖拽重排 pins（可二期）
 
 ---
 

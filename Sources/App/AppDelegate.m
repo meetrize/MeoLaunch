@@ -6,7 +6,11 @@
 #import "MLLayoutStore.h"
 #import "MLOverlayController.h"
 #import "MLPrefsWindow.h"
+#import "MLRunningAppsMonitor.h"
 #import "MLStrings.h"
+#import "MLTaskbarController.h"
+#import "MLTaskbarIconCache.h"
+#import "MLTaskbarPinStore.h"
 
 #include "ml_app_index.h"
 #include "ml_layout.h"
@@ -28,6 +32,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLConfigStore *config;
 @property (nonatomic, strong) MLLayoutStore *layoutStore;
 @property (nonatomic, strong) MLPrefsWindow *prefs;
+@property (nonatomic, strong) MLTaskbarPinStore *taskbarPins;
+@property (nonatomic, strong) MLRunningAppsMonitor *runningApps;
+@property (nonatomic, strong) MLTaskbarIconCache *taskbarIcons;
+@property (nonatomic, strong) MLTaskbarController *taskbar;
 @property (nonatomic, assign) MLAppIndex appIndex;
 @property (nonatomic, strong) NSTimer *rescanDebounceTimer;
 @end
@@ -57,6 +65,14 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
     self.prefs = [[MLPrefsWindow alloc] initWithConfigStore:self.config];
 
+    self.taskbarPins = [[MLTaskbarPinStore alloc] init];
+    [self.taskbarPins loadFromDisk];
+    self.runningApps = [[MLRunningAppsMonitor alloc] init];
+    self.taskbarIcons = [[MLTaskbarIconCache alloc] init];
+    self.taskbar = [[MLTaskbarController alloc] initWithPinStore:self.taskbarPins
+                                                         monitor:self.runningApps
+                                                       iconCache:self.taskbarIcons];
+
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(configDidChange:)
                                                  name:MLConfigStoreDidChangeNotification
@@ -79,8 +95,9 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
     [self setupStatusItem];
     [self setupHotCornerWithAccessibility];
+    [self.taskbar start];
 
-    NSLog(@"[MeoLaunch] ready — layout + configurable scan roots");
+    NSLog(@"[MeoLaunch] ready — layout + configurable scan roots + taskbar");
 }
 
 - (void)layoutDidChange:(NSNotification *)note {
@@ -205,6 +222,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     [self.rescanDebounceTimer invalidate];
     self.rescanDebounceTimer = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.taskbar stop];
     [self.hotKey unregisterAll];
     [self.hotCorner stop];
     ml_app_index_clear(&_appIndex);
@@ -306,6 +324,16 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 - (void)overlayControllerDidRequestPreferences:(MLOverlayController *)controller {
     (void)controller;
     [self showPrefs:nil];
+}
+
+- (void)overlayControllerWillShow:(MLOverlayController *)controller {
+    (void)controller;
+    [self.taskbar overlayWillShow];
+}
+
+- (void)overlayControllerDidHide:(MLOverlayController *)controller {
+    (void)controller;
+    [self.taskbar overlayDidHide];
 }
 
 - (void)quit:(id)sender {

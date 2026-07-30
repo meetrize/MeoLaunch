@@ -33,6 +33,14 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"MeoLaunch (⌥Space)",
             @"zh" : @"MeoLaunch（⌥Space）",
         },
+        @"taskbar.pin" : @{
+            @"en" : @"Pin",
+            @"zh" : @"钉住",
+        },
+        @"taskbar.unpin" : @{
+            @"en" : @"Unpin",
+            @"zh" : @"取消钉住",
+        },
         @"prefs.title" : @{
             @"en" : @"MeoLaunch Preferences",
             @"zh" : @"MeoLaunch 设置",

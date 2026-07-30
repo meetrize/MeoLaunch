@@ -9,6 +9,8 @@
 @protocol MLOverlayControllerDelegate <NSObject>
 @optional
 - (void)overlayControllerDidRequestPreferences:(MLOverlayController *)controller;
+- (void)overlayControllerWillShow:(MLOverlayController *)controller;
+- (void)overlayControllerDidHide:(MLOverlayController *)controller;
 @end
 
 @interface MLOverlayController : NSObject

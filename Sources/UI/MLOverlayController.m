@@ -651,6 +651,10 @@ static void MLLogMemory(NSString *tag) {
 
     self.visible = YES;
 
+    if ([self.delegate respondsToSelector:@selector(overlayControllerWillShow:)]) {
+        [self.delegate overlayControllerWillShow:self];
+    }
+
     NSTimeInterval dur = [self fadeDuration];
     self.window.alphaValue = 1.0;
     [NSApp activateIgnoringOtherApps:YES];
@@ -718,6 +722,9 @@ static void MLLogMemory(NSString *tag) {
     self.previousApp = nil;
     if (prev && !prev.isTerminated) {
         [prev activateWithOptions:(NSApplicationActivationOptions)0];
+    }
+    if ([self.delegate respondsToSelector:@selector(overlayControllerDidHide:)]) {
+        [self.delegate overlayControllerDidHide:self];
     }
     NSLog(@"[MeoLaunch] Overlay hidden (icon cache purged)");
 }
