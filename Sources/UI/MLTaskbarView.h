@@ -40,5 +40,6 @@ typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
 @property (nonatomic, assign) CGFloat itemMinWidth;
 
 - (NSInteger)indexAtPoint:(NSPoint)p;
+- (NSRect)rectForItemAtIndex:(NSInteger)index;
 
 @end

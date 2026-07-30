@@ -1,5 +1,7 @@
 #import "MLTaskbarController.h"
 
+#import "MLCGSAlpha.h"
+#import "MLMinimizeInterceptor.h"
 #import "MLRunningAppsMonitor.h"
 #import "MLTaskbarIconCache.h"
 #import "MLTaskbarPinStore.h"
@@ -22,6 +24,7 @@
 @property (nonatomic, strong) MLTaskbarIconCache *iconCache;
 @property (nonatomic, strong) NSMutableArray<MLTaskbarScreenBar *> *bars;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *displayNameCache;
+@property (nonatomic, strong) MLMinimizeInterceptor *minimizeInterceptor;
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL hiddenForOverlay;
 @end
@@ -154,8 +157,19 @@
     for (MLTaskbarWindowInfo *w in snap.windows ?: @[]) {
         NSScreen *owner = [self screenForWindowBounds:w.bounds];
         if (!owner && w.minimized) {
-            /* Minimized bounds can be empty; fall back to main display. */
-            owner = NSScreen.mainScreen;
+            /*
+             * Avoid dumping onto mainScreen: prefer any non-empty bounds center,
+             * else skip (better missing chip than wrong-screen chip).
+             */
+            if (!CGRectIsEmpty(w.bounds)) {
+                CGPoint c = CGPointMake(CGRectGetMidX(w.bounds), CGRectGetMidY(w.bounds));
+                for (NSScreen *s in NSScreen.screens) {
+                    if (NSPointInRect(NSMakePoint(c.x, c.y), s.frame)) {
+                        owner = s;
+                        break;
+                    }
+                }
+            }
         }
         if (!owner) {
             continue;
@@ -174,6 +188,25 @@
 - (void)rebuildItemsForBar:(MLTaskbarScreenBar *)bar screen:(NSScreen *)screen {
     if (!bar.barView || !screen) {
         return;
+    }
+
+    /* Inherit prior chip order so minimize/restore never reshuffles. */
+    NSMutableDictionary<NSNumber *, NSNumber *> *priorOrderByWid = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *, NSNumber *> *priorOrderByPathTitle = [NSMutableDictionary dictionary];
+    NSUInteger priorIdx = 1;
+    for (MLTaskbarItem *prev in bar.barView.items ?: @[]) {
+        if (prev.kind != MLTaskbarItemRunningWindow) {
+            continue;
+        }
+        NSUInteger ord = prev.seenOrder > 0 ? prev.seenOrder : priorIdx;
+        if (prev.windowID != 0) {
+            priorOrderByWid[@(prev.windowID)] = @(ord);
+        }
+        NSString *pt = [NSString stringWithFormat:@"%@|%@", prev.path ?: @"", prev.title ?: @""];
+        if (!priorOrderByPathTitle[pt]) {
+            priorOrderByPathTitle[pt] = @(ord);
+        }
+        priorIdx++;
     }
 
     MLRunningAppsSnapshot *snap = self.monitor.snapshot;
@@ -225,8 +258,13 @@
                 }
             } else if (!existing.minimized && w.minimized) {
                 /* keep visible entry; inherit order already */
+                if (existing.seenOrder == 0 && w.seenOrder > 0) {
+                    existing.seenOrder = w.seenOrder;
+                }
             } else if (existing.seenOrder == 0 && w.seenOrder > 0) {
                 existing.seenOrder = w.seenOrder;
+            } else if (w.seenOrder > 0 && existing.seenOrder > 0) {
+                existing.seenOrder = MIN(existing.seenOrder, w.seenOrder);
             }
             break;
         }
@@ -242,6 +280,14 @@
         NSString *display = [self displayNameForPath:w.path];
         NSString *title = w.title.length > 0 ? w.title : display;
         BOOL pinned = [pinSet containsObject:w.path];
+        NSUInteger ord = w.seenOrder;
+        if (ord == 0 && w.windowID != 0) {
+            ord = priorOrderByWid[@(w.windowID)].unsignedIntegerValue;
+        }
+        if (ord == 0) {
+            NSString *pt = [NSString stringWithFormat:@"%@|%@", w.path ?: @"", title ?: @""];
+            ord = priorOrderByPathTitle[pt].unsignedIntegerValue;
+        }
         [windowItems addObject:[self itemWithPath:w.path
                                               pid:w.pid
                                          windowID:w.windowID
@@ -249,7 +295,7 @@
                                              kind:MLTaskbarItemRunningWindow
                                            pinned:pinned
                                         minimized:w.minimized
-                                        seenOrder:w.seenOrder]];
+                                        seenOrder:ord]];
     }
 
     [windowItems sortUsingComparator:^NSComparisonResult(MLTaskbarItem *a, MLTaskbarItem *b) {
@@ -439,6 +485,10 @@
 
     [self.monitor start];
     [self syncBarsToScreens];
+
+    self.minimizeInterceptor = [[MLMinimizeInterceptor alloc] init];
+    self.minimizeInterceptor.taskbar = self;
+    [self.minimizeInterceptor start];
 }
 
 - (void)stop {
@@ -446,6 +496,8 @@
         return;
     }
     self.started = NO;
+    [self.minimizeInterceptor stop];
+    self.minimizeInterceptor = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self.monitor stop];
     for (MLTaskbarScreenBar *bar in self.bars) {
@@ -489,6 +541,74 @@
     }
 }
 
+- (NSRect)animationTargetRectForPID:(pid_t)pid
+                              title:(NSString *)title
+                       windowBounds:(CGRect)windowBounds {
+    NSScreen *screen = [self screenForWindowBounds:windowBounds];
+    if (!screen) {
+        screen = NSScreen.mainScreen;
+    }
+    if (!screen) {
+        return NSZeroRect;
+    }
+
+    NSNumber *sid = [[self class] screenIDForScreen:screen];
+    MLTaskbarScreenBar *bar = nil;
+    for (MLTaskbarScreenBar *b in self.bars) {
+        if ([b.screenID isEqualToNumber:sid]) {
+            bar = b;
+            break;
+        }
+    }
+    if (!bar.barView || !bar.window) {
+        NSRect vis = screen.visibleFrame;
+        return NSMakeRect(NSMidX(vis) - 40.0, NSMinY(vis) + 4.0, 80.0, 32.0);
+    }
+
+    NSInteger match = -1;
+    NSInteger pidFallback = -1;
+    for (NSInteger i = 0; i < (NSInteger)bar.barView.items.count; i++) {
+        MLTaskbarItem *item = bar.barView.items[(NSUInteger)i];
+        if (pid > 0 && item.pid == pid) {
+            if (pidFallback < 0) {
+                pidFallback = i;
+            }
+            if (title.length == 0 || item.title.length == 0 ||
+                [item.title isEqualToString:title] ||
+                [item.title hasPrefix:title] || [title hasPrefix:item.title]) {
+                match = i;
+                break;
+            }
+        }
+    }
+    if (match < 0) {
+        match = pidFallback;
+    }
+    if (match < 0) {
+        NSRect vis = bar.window.frame;
+        return NSMakeRect(NSMidX(vis) - 40.0, NSMinY(vis) + 4.0, 80.0, 32.0);
+    }
+
+    NSRect local = [bar.barView rectForItemAtIndex:match];
+    NSRect inWindow = [bar.barView convertRect:local toView:nil];
+    return [bar.window convertRectToScreen:inWindow];
+}
+
+- (void)refreshAfterCustomMinimize {
+    [self.monitor pollNow];
+    [self rebuildItems];
+}
+
+- (CGWindowID)rememberWindowForCustomMinimizePID:(pid_t)pid
+                                           title:(NSString *)title
+                                          bounds:(CGRect)bounds {
+    return [self.monitor rememberBounds:bounds forPID:pid title:title];
+}
+
+- (void)markSoftMinimizedWindowID:(CGWindowID)windowID {
+    [self.monitor markSoftMinimizedWindowID:windowID];
+}
+
 #pragma mark - MLTaskbarViewDelegate
 
 /** Title hint may be truncated with an ellipsis from the monitor. */
@@ -512,12 +632,35 @@
     return prefix.length > 0 && [full hasPrefix:prefix];
 }
 
-- (void)unminimizeWindowForItem:(MLTaskbarItem *)item {
+- (void)raiseAndFocusWindowForItem:(MLTaskbarItem *)item {
     if (item.pid <= 0) {
         return;
     }
     if (!AXIsProcessTrusted()) {
         return;
+    }
+
+    /*
+     * Only rewrite geometry when restoring from OUR custom minimize (frozen frame).
+     * Re-applying AX coords on every click flips Y on multi-monitor setups.
+     */
+    CGWindowID wid = item.windowID;
+    BOOL needsGeometryRestore = (wid != 0 && [self.monitor hasFrozenRestoreBoundsForWindowID:wid]);
+    CGRect restoreBounds = CGRectZero;
+    if (needsGeometryRestore) {
+        restoreBounds = [self.monitor cachedBoundsForWindowID:wid];
+        if (CGRectIsEmpty(restoreBounds) || restoreBounds.size.width <= 2.0 ||
+            restoreBounds.size.height <= 2.0) {
+            needsGeometryRestore = NO;
+        } else {
+            /* Consume freeze now so a duplicate raise (0.05s retry) won't move the window again. */
+            [self.monitor clearFrozenRestoreBoundsForWindowID:wid];
+        }
+    }
+
+    if (wid != 0 && [self.monitor isSoftMinimizedWindowID:wid]) {
+        [self.monitor clearSoftMinimizedWindowID:wid];
+        MLCGSSetWindowAlpha(wid, 1.0f);
     }
 
     AXUIElementRef appRef = AXUIElementCreateApplication(item.pid);
@@ -531,6 +674,7 @@
         if (windowsRef) {
             CFRelease(windowsRef);
         }
+        AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
         CFRelease(appRef);
         return;
     }
@@ -539,9 +683,14 @@
     CFIndex count = CFArrayGetCount(windows);
     AXUIElementRef matched = NULL;
     AXUIElementRef firstMinimized = NULL;
+    AXUIElementRef firstAny = NULL;
 
     for (CFIndex i = 0; i < count; i++) {
         AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(windows, i);
+        if (!firstAny) {
+            firstAny = win;
+        }
+
         CFTypeRef minRef = NULL;
         Boolean isMin = false;
         if (AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute, &minRef) == kAXErrorSuccess && minRef) {
@@ -550,10 +699,7 @@
             }
             CFRelease(minRef);
         }
-        if (!isMin) {
-            continue;
-        }
-        if (!firstMinimized) {
+        if (isMin && !firstMinimized) {
             firstMinimized = win;
         }
 
@@ -567,56 +713,128 @@
         }
         if ([self title:title ?: @"" matchesHint:item.title]) {
             matched = win;
-            break;
+            if (item.minimized || isMin) {
+                break;
+            }
+            if (!isMin) {
+                break;
+            }
         }
     }
 
-    AXUIElementRef target = matched ?: firstMinimized;
+    AXUIElementRef target = matched;
+    if (!target) {
+        target = item.minimized ? (firstMinimized ?: firstAny) : (firstAny ?: firstMinimized);
+    }
+
     if (target) {
         AXUIElementSetAttributeValue(target, kAXMinimizedAttribute, kCFBooleanFalse);
+
+        if (needsGeometryRestore) {
+            [self applyCocoaFrame:restoreBounds toWindow:target];
+            AXUIElementRef winRetry = (AXUIElementRef)CFRetain(target);
+            CGRect frameRetry = restoreBounds;
+            __weak typeof(self) weakSelf = self;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.04 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                               [weakSelf applyCocoaFrame:frameRetry toWindow:winRetry];
+                               AXUIElementPerformAction(winRetry, kAXRaiseAction);
+                               CFRelease(winRetry);
+                           });
+        }
+
         AXUIElementPerformAction(target, kAXRaiseAction);
+        AXUIElementSetAttributeValue(target, kAXMainAttribute, kCFBooleanTrue);
+        AXUIElementSetAttributeValue(target, kAXFocusedAttribute, kCFBooleanTrue);
     }
+
+    AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
 
     CFRelease(windowsRef);
     CFRelease(appRef);
 }
 
-- (void)activateOrLaunchItem:(MLTaskbarItem *)item {
-    if (item.minimized) {
-        [self unminimizeWindowForItem:item];
-    }
-    if (item.pid > 0) {
-        NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:item.pid];
-        if (app && !app.isTerminated) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-#pragma clang diagnostic pop
-            if (item.minimized) {
-                __weak typeof(self) weakSelf = self;
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
-                               dispatch_get_main_queue(), ^{
-                                   [weakSelf unminimizeWindowForItem:item];
-                               });
-            }
-            return;
-        }
-    }
-    if (item.path.length == 0) {
+/** Cocoa bottom-left → AX top-left (relative to main display). Size then position. */
+- (void)applyCocoaFrame:(CGRect)cocoa toWindow:(AXUIElementRef)win {
+    if (!win || CGRectIsEmpty(cocoa) || cocoa.size.width < 2.0 || cocoa.size.height < 2.0) {
         return;
     }
-    for (NSRunningApplication *app in [NSWorkspace sharedWorkspace].runningApplications) {
-        if ([app.bundleURL.path isEqualToString:item.path]) {
+    NSRect main = NSScreen.mainScreen.frame;
+    CGSize axSize = CGSizeMake(cocoa.size.width, cocoa.size.height);
+    CGPoint axPos = CGPointMake(cocoa.origin.x, NSMaxY(main) - cocoa.origin.y - cocoa.size.height);
+    AXValueRef sizeVal = AXValueCreate((AXValueType)kAXValueCGSizeType, &axSize);
+    AXValueRef posVal = AXValueCreate((AXValueType)kAXValueCGPointType, &axPos);
+    if (sizeVal) {
+        AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal);
+        CFRelease(sizeVal);
+    }
+    if (posVal) {
+        AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal);
+        CFRelease(posVal);
+    }
+    /* Re-apply size after position — deminimize often clamps size first. */
+    sizeVal = AXValueCreate((AXValueType)kAXValueCGSizeType, &axSize);
+    if (sizeVal) {
+        AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal);
+        CFRelease(sizeVal);
+    }
+}
+
+- (void)activateApplicationForItem:(MLTaskbarItem *)item {
+    NSRunningApplication *app = nil;
+    if (item.pid > 0) {
+        app = [NSRunningApplication runningApplicationWithProcessIdentifier:item.pid];
+    }
+    if ((!app || app.isTerminated) && item.path.length > 0) {
+        for (NSRunningApplication *ra in [NSWorkspace sharedWorkspace].runningApplications) {
+            if ([ra.bundleURL.path isEqualToString:item.path]) {
+                app = ra;
+                item.pid = ra.processIdentifier;
+                break;
+            }
+        }
+    }
+    if (!app || app.isTerminated) {
+        return;
+    }
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    [app activateWithOptions:NSApplicationActivateIgnoringOtherApps | NSApplicationActivateAllWindows];
 #pragma clang diagnostic pop
-            if (item.minimized) {
-                item.pid = app.processIdentifier;
-                [self unminimizeWindowForItem:item];
+
+    if (@available(macOS 14.0, *)) {
+        /* Best-effort additional activation on newer systems */
+        [app unhide];
+    }
+}
+
+- (void)activateOrLaunchItem:(MLTaskbarItem *)item {
+    if (item.pid > 0 || item.path.length > 0) {
+        [self raiseAndFocusWindowForItem:item];
+        [self activateApplicationForItem:item];
+        /* Raise again after activation settles — some apps ignore the first raise. */
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                           [weakSelf raiseAndFocusWindowForItem:item];
+                           [weakSelf activateApplicationForItem:item];
+                       });
+        if (item.pid > 0) {
+            NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:item.pid];
+            if (app && !app.isTerminated) {
+                return;
             }
-            return;
         }
+        for (NSRunningApplication *app in [NSWorkspace sharedWorkspace].runningApplications) {
+            if ([app.bundleURL.path isEqualToString:item.path]) {
+                return;
+            }
+        }
+    }
+
+    if (item.path.length == 0) {
+        return;
     }
     NSURL *url = [NSURL fileURLWithPath:item.path];
     NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];

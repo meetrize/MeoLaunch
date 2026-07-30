@@ -106,6 +106,10 @@
     return -1;
 }
 
+- (NSRect)rectForItemAtIndex:(NSInteger)index {
+    return [self rectForItemAtIndex:index itemWidth:[self effectiveItemWidth]];
+}
+
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
 

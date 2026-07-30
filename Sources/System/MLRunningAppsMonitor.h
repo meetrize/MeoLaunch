@@ -37,5 +37,16 @@ FOUNDATION_EXPORT NSNotificationName const MLRunningAppsDidChangeNotification;
 
 - (void)start;
 - (void)stop;
+/** Force an immediate window snapshot refresh. */
+- (void)pollNow;
+- (CGRect)cachedBoundsForWindowID:(CGWindowID)windowID;
+- (CGRect)cachedBoundsForPID:(pid_t)pid title:(NSString *)title;
+/** Upsert last-seen frame; returns matched CGWindowID (0 if unknown). */
+- (CGWindowID)rememberBounds:(CGRect)bounds forPID:(pid_t)pid title:(NSString *)title;
+- (void)markSoftMinimizedWindowID:(CGWindowID)windowID;
+- (void)clearSoftMinimizedWindowID:(CGWindowID)windowID;
+- (BOOL)isSoftMinimizedWindowID:(CGWindowID)windowID;
+- (BOOL)hasFrozenRestoreBoundsForWindowID:(CGWindowID)windowID;
+- (void)clearFrozenRestoreBoundsForWindowID:(CGWindowID)windowID;
 
 @end
