@@ -1,7 +1,11 @@
 # Ignore local build products
 build/
+dist/
 *.o
 .DS_Store
 MeoLaunch.xcodeproj/
 xcuserdata/
 *.xcuserstate
+*.dmg
+*.zip
+!Scripts/**

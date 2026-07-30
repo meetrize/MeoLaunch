@@ -43,6 +43,28 @@ macOS Launchpad 替代应用——极低内存、原生 AppKit（C 核心 + Obje
 INSTALL_DIR="$HOME/Applications" ./Scripts/release_install.sh  # 装到用户 Applications
 ```
 
+### 打包成安装包（DMG / ZIP）
+
+```bash
+./Scripts/package.sh
+```
+
+产出：
+
+- `dist/MeoLaunch-<version>.dmg` — 打开后把 `MeoLaunch.app` 拖到 `Applications`
+- `dist/MeoLaunch-<version>.zip` — 解压后拖到应用程序文件夹
+
+```bash
+./Scripts/package.sh --no-build   # 复用已有 build/MeoLaunch.app
+open dist/MeoLaunch-*.dmg         # 预览安装盘
+```
+
+若有 Developer ID：
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./Scripts/package.sh
+```
+
 有 Xcode + XcodeGen 时：
 
 ```bash
