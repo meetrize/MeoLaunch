@@ -6,8 +6,11 @@
 #import "MLTaskbarIconCache.h"
 #import "MLTaskbarPinStore.h"
 #import "MLTaskbarView.h"
+#import "MLWorkAreaEnforcer.h"
 
 #import <ApplicationServices/ApplicationServices.h>
+
+enum { MLTaskbarBarHeight = 40 };
 
 @interface MLTaskbarScreenBar : NSObject
 @property (nonatomic, strong) NSNumber *screenID;
@@ -25,6 +28,7 @@
 @property (nonatomic, strong) NSMutableArray<MLTaskbarScreenBar *> *bars;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *displayNameCache;
 @property (nonatomic, strong) MLMinimizeInterceptor *minimizeInterceptor;
+@property (nonatomic, strong) MLWorkAreaEnforcer *workAreaEnforcer;
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL hiddenForOverlay;
 @end
@@ -503,7 +507,7 @@
 
 - (MLTaskbarScreenBar *)makeBarForScreen:(NSScreen *)screen {
     NSRect visible = screen.visibleFrame;
-    CGFloat height = 40.0;
+    CGFloat height = (CGFloat)MLTaskbarBarHeight;
     NSRect frame = NSMakeRect(NSMinX(visible), NSMinY(visible), NSWidth(visible), height);
 
     NSWindow *w = [[NSWindow alloc] initWithContentRect:frame
@@ -546,7 +550,7 @@
             [keep addObject:bar];
             [wanted removeObject:bar.screenID];
             NSRect visible = screen.visibleFrame;
-            CGFloat height = bar.barView.barHeight > 0 ? bar.barView.barHeight : 40.0;
+            CGFloat height = bar.barView.barHeight > 0 ? bar.barView.barHeight : (CGFloat)MLTaskbarBarHeight;
             NSRect frame = NSMakeRect(NSMinX(visible), NSMinY(visible), NSWidth(visible), height);
             [bar.window setFrame:frame display:YES];
         } else {
@@ -570,6 +574,7 @@
     }
 
     [self rebuildItems];
+    [self.workAreaEnforcer enforceNow];
 }
 
 - (void)start {
@@ -604,6 +609,11 @@
     self.minimizeInterceptor = [[MLMinimizeInterceptor alloc] init];
     self.minimizeInterceptor.taskbar = self;
     [self.minimizeInterceptor start];
+
+    self.workAreaEnforcer = [[MLWorkAreaEnforcer alloc] init];
+    self.workAreaEnforcer.monitor = self.monitor;
+    self.workAreaEnforcer.barHeight = (CGFloat)MLTaskbarBarHeight;
+    [self.workAreaEnforcer start];
 }
 
 - (void)stop {
@@ -611,6 +621,8 @@
         return;
     }
     self.started = NO;
+    [self.workAreaEnforcer stop];
+    self.workAreaEnforcer = nil;
     [self.minimizeInterceptor stop];
     self.minimizeInterceptor = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
