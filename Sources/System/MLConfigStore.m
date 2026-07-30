@@ -1,6 +1,8 @@
 #import "MLConfigStore.h"
 
 NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDidChangeNotification";
+NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
+    @"MLConfigStoreScanRootsDidChangeNotification";
 
 @interface MLConfigStore ()
 @property (nonatomic, assign, readwrite) MLGridConfig gridConfig;
@@ -19,6 +21,8 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
 @property (nonatomic, assign, readwrite) NSInteger fadeMs;
 @property (nonatomic, assign, readwrite) CGFloat overlayOpacity;
 @property (nonatomic, assign, readwrite) BOOL overlayBlur;
+@property (nonatomic, copy, readwrite) NSArray<NSString *> *scanRoots;
+@property (nonatomic, assign, readwrite) NSInteger scanRefreshSeconds;
 @property (nonatomic, strong) NSTimer *saveTimer;
 @end
 
@@ -29,6 +33,70 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
                                                                     inDomains:NSUserDomainMask];
     NSURL *base = urls.firstObject;
     return [base URLByAppendingPathComponent:@"meoLaunch/config.json"];
+}
+
++ (NSArray<NSString *> *)builtInScanRoots {
+    return @[ @"~/Applications", @"/Applications", @"/System/Applications" ];
+}
+
++ (NSString *)normalizeRootPath:(NSString *)path {
+    if (![path isKindOfClass:[NSString class]]) {
+        return nil;
+    }
+    NSString *trimmed = [path stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if (trimmed.length == 0) {
+        return nil;
+    }
+    if ([trimmed hasPrefix:@"~"]) {
+        return trimmed;
+    }
+    return [trimmed stringByStandardizingPath];
+}
+
++ (NSString *)expansionKeyForRoot:(NSString *)path {
+    NSString *n = [self normalizeRootPath:path];
+    if (!n) {
+        return nil;
+    }
+    return [[n stringByExpandingTildeInPath] stringByStandardizingPath];
+}
+
++ (NSArray<NSString *> *)mergedScanRootsWithExtras:(NSArray<NSString *> *)extras {
+    NSArray<NSString *> *builtIn = [self builtInScanRoots];
+    NSMutableArray<NSString *> *out = [NSMutableArray arrayWithArray:builtIn];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSString *b in builtIn) {
+        NSString *key = [self expansionKeyForRoot:b];
+        if (key) {
+            [seen addObject:key];
+        }
+    }
+    if (![extras isKindOfClass:[NSArray class]]) {
+        return [out copy];
+    }
+    for (id item in extras) {
+        if (![item isKindOfClass:[NSString class]]) {
+            continue;
+        }
+        NSString *n = [self normalizeRootPath:(NSString *)item];
+        NSString *key = [self expansionKeyForRoot:n];
+        if (!n || !key || [seen containsObject:key]) {
+            continue;
+        }
+        BOOL isBuiltIn = NO;
+        for (NSString *b in builtIn) {
+            if ([n isEqualToString:b] || [key isEqualToString:[self expansionKeyForRoot:b]]) {
+                isBuiltIn = YES;
+                break;
+            }
+        }
+        if (isBuiltIn) {
+            continue;
+        }
+        [seen addObject:key];
+        [out addObject:n];
+    }
+    return [out copy];
 }
 
 + (NSString *)stringForCorner:(MLHotCornerPosition)p {
@@ -75,6 +143,51 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
     self.fadeMs = 100;
     self.overlayOpacity = 0.55;
     self.overlayBlur = YES;
+    self.scanRoots = [[self class] builtInScanRoots];
+    self.scanRefreshSeconds = 60;
+}
+
+- (void)applyScanDictionary:(NSDictionary *)scan {
+    if (![scan isKindOfClass:[NSDictionary class]]) {
+        return;
+    }
+    if (scan[@"refresh_seconds"]) {
+        NSInteger sec = [scan[@"refresh_seconds"] integerValue];
+        if (sec < 0) {
+            sec = 0;
+        }
+        if (sec > 3600) {
+            sec = 3600;
+        }
+        self.scanRefreshSeconds = sec;
+    }
+    NSArray *roots = scan[@"roots"];
+    if ([roots isKindOfClass:[NSArray class]]) {
+        NSMutableArray<NSString *> *extras = [NSMutableArray array];
+        NSArray<NSString *> *builtIn = [[self class] builtInScanRoots];
+        NSMutableSet<NSString *> *builtKeys = [NSMutableSet set];
+        for (NSString *b in builtIn) {
+            NSString *k = [[self class] expansionKeyForRoot:b];
+            if (k) {
+                [builtKeys addObject:k];
+            }
+        }
+        for (id item in roots) {
+            if (![item isKindOfClass:[NSString class]]) {
+                continue;
+            }
+            NSString *n = [[self class] normalizeRootPath:(NSString *)item];
+            NSString *key = [[self class] expansionKeyForRoot:n];
+            if (!n || !key) {
+                continue;
+            }
+            if ([builtKeys containsObject:key]) {
+                continue;
+            }
+            [extras addObject:n];
+        }
+        self.scanRoots = [[self class] mergedScanRootsWithExtras:extras];
+    }
 }
 
 - (void)applyDictionary:(NSDictionary *)root {
@@ -104,7 +217,6 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
         if (hc[@"corner"]) self.hotCornerPosition = [[self class] cornerFromString:hc[@"corner"]];
         if (hc[@"size_pt"]) {
             CGFloat sz = [hc[@"size_pt"] doubleValue];
-            /* Migrate tiny legacy default that missed top-edge pixels */
             if (sz > 0 && sz < 8.0) {
                 sz = 12.0;
             }
@@ -129,7 +241,6 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
     NSDictionary *paging = root[@"paging"];
     if ([paging isKindOfClass:[NSDictionary class]] && paging[@"wheel_threshold"]) {
         CGFloat thr = [paging[@"wheel_threshold"] doubleValue];
-        /* Migrate legacy insensitive default (8) to high sensitivity */
         if (thr >= 4.0) {
             thr = 0.15;
         }
@@ -157,6 +268,8 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
             self.overlayBlur = [ui[@"blur"] boolValue];
         }
     }
+
+    [self applyScanDictionary:root[@"scan"]];
 }
 
 - (NSDictionary *)dictionaryRepresentation {
@@ -167,6 +280,7 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
     if (self.hotkeyShift) [mods addObject:@"shift"];
 
     MLGridConfig g = self.gridConfig;
+    NSArray *roots = self.scanRoots.count ? self.scanRoots : [[self class] builtInScanRoots];
     return @{
         @"version" : @1,
         @"grid" : @{
@@ -198,9 +312,9 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
             @"animate" : @YES,
         },
         @"scan" : @{
-            @"roots" : @[ @"/Applications", @"/System/Applications", @"~/Applications" ],
+            @"roots" : roots,
             @"include_hidden" : @NO,
-            @"refresh_seconds" : @60,
+            @"refresh_seconds" : @(self.scanRefreshSeconds > 0 ? self.scanRefreshSeconds : 60),
         },
         @"ui" : @{
             @"blur" : @(self.overlayBlur),
@@ -242,7 +356,8 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
     }
 
     [self applyDictionary:(NSDictionary *)json];
-    NSLog(@"[MeoLaunch] config loaded %@ (%dx%d)", url.path, self.gridConfig.cols, self.gridConfig.rows);
+    NSLog(@"[MeoLaunch] config loaded %@ (%dx%d) scanRoots=%zu",
+          url.path, self.gridConfig.cols, self.gridConfig.rows, (size_t)self.scanRoots.count);
     return YES;
 }
 
@@ -276,6 +391,89 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
 - (void)notifyChanged {
     [[NSNotificationCenter defaultCenter] postNotificationName:MLConfigStoreDidChangeNotification
                                                         object:self];
+}
+
+- (void)notifyScanRootsChanged {
+    [[NSNotificationCenter defaultCenter] postNotificationName:MLConfigStoreScanRootsDidChangeNotification
+                                                        object:self];
+}
+
+- (NSArray<NSString *> *)scanExtraRoots {
+    NSArray<NSString *> *builtIn = [[self class] builtInScanRoots];
+    NSMutableSet<NSString *> *builtKeys = [NSMutableSet set];
+    for (NSString *b in builtIn) {
+        NSString *k = [[self class] expansionKeyForRoot:b];
+        if (k) {
+            [builtKeys addObject:k];
+        }
+    }
+    NSMutableArray<NSString *> *extras = [NSMutableArray array];
+    for (NSString *r in self.scanRoots) {
+        NSString *key = [[self class] expansionKeyForRoot:r];
+        if (!key || [builtKeys containsObject:key]) {
+            continue;
+        }
+        [extras addObject:r];
+    }
+    return [extras copy];
+}
+
+- (void)setScanExtraRoots:(NSArray<NSString *> *)extras {
+    NSArray<NSString *> *merged = [[self class] mergedScanRootsWithExtras:extras];
+    if ([merged isEqualToArray:self.scanRoots ?: @[]]) {
+        return;
+    }
+    self.scanRoots = merged;
+    [self notifyChanged];
+    [self notifyScanRootsChanged];
+    [self scheduleSave];
+}
+
+- (BOOL)addScanExtraRoot:(NSString *)path {
+    NSString *n = [[self class] normalizeRootPath:path];
+    if (!n) {
+        return NO;
+    }
+    NSArray<NSString *> *current = [self scanExtraRoots];
+    NSString *key = [[self class] expansionKeyForRoot:n];
+    for (NSString *e in current) {
+        if ([key isEqualToString:[[self class] expansionKeyForRoot:e]]) {
+            return NO;
+        }
+    }
+    NSMutableArray<NSString *> *next = [current mutableCopy] ?: [NSMutableArray array];
+    [next addObject:n];
+    [self setScanExtraRoots:next];
+    return YES;
+}
+
+- (void)removeScanExtraRootAtIndex:(NSInteger)index {
+    NSArray<NSString *> *current = [self scanExtraRoots];
+    if (index < 0 || index >= (NSInteger)current.count) {
+        return;
+    }
+    NSMutableArray<NSString *> *next = [current mutableCopy];
+    [next removeObjectAtIndex:(NSUInteger)index];
+    [self setScanExtraRoots:next];
+}
+
+- (NSArray<NSString *> *)expandedScanRoots {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    NSArray<NSString *> *roots = self.scanRoots.count ? self.scanRoots : [[self class] builtInScanRoots];
+    NSMutableSet<NSString *> *seen = [NSMutableSet set];
+    for (NSString *r in roots) {
+        NSString *exp = [[r stringByExpandingTildeInPath] stringByStandardizingPath];
+        if (exp.length == 0 || [seen containsObject:exp]) {
+            continue;
+        }
+        [seen addObject:exp];
+        [out addObject:exp];
+    }
+    return [out copy];
+}
+
+- (void)requestAppRescan {
+    [self notifyScanRootsChanged];
 }
 
 - (void)updateGridCols:(int)cols rows:(int)rows {
@@ -317,7 +515,6 @@ NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDid
 - (void)updateOverlayOpacity:(CGFloat)opacity {
     if (opacity < 0.0) opacity = 0.0;
     if (opacity > 1.0) opacity = 1.0;
-    /* Quantize to percent so slider noise doesn't spam reloads */
     opacity = round(opacity * 100.0) / 100.0;
     if (fabs(self.overlayOpacity - opacity) < 0.0001) {
         return;

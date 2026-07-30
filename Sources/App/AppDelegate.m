@@ -10,6 +10,7 @@
 #include "ml_app_index.h"
 #include "ml_layout.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibilityGuide";
@@ -23,6 +24,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLLayoutStore *layoutStore;
 @property (nonatomic, strong) MLPrefsWindow *prefs;
 @property (nonatomic, assign) MLAppIndex appIndex;
+@property (nonatomic, strong) NSTimer *rescanDebounceTimer;
 @end
 
 @implementation AppDelegate
@@ -55,6 +57,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
                                                  name:MLConfigStoreDidChangeNotification
                                                object:self.config];
     [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(scanRootsDidChange:)
+                                                 name:MLConfigStoreScanRootsDidChangeNotification
+                                               object:self.config];
+    [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(layoutDidChange:)
                                                  name:MLLayoutStoreDidChangeNotification
                                                object:self.layoutStore];
@@ -65,7 +71,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     [self setupStatusItem];
     [self setupHotCornerWithAccessibility];
 
-    NSLog(@"[MeoLaunch] M6 ready — layout order persistence");
+    NSLog(@"[MeoLaunch] ready — layout + configurable scan roots");
 }
 
 - (void)layoutDidChange:(NSNotification *)note {
@@ -144,18 +150,42 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     }
 }
 
+- (void)scanRootsDidChange:(NSNotification *)note {
+    (void)note;
+    [self.rescanDebounceTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.rescanDebounceTimer = [NSTimer scheduledTimerWithTimeInterval:0.4
+                                                               repeats:NO
+                                                                 block:^(__unused NSTimer *timer) {
+                                                                     [weakSelf rescanApps];
+                                                                 }];
+}
+
 - (void)rescanApps {
-    const char *roots[] = {
-        "~/Applications",
-        "/Applications",
-        "/System/Applications",
-    };
-    int rc = ml_app_index_scan(&_appIndex, roots, sizeof(roots) / sizeof(roots[0]));
+    NSArray<NSString *> *roots = [self.config expandedScanRoots];
+    if (roots.count == 0) {
+        roots = @[
+            [@"~/Applications" stringByExpandingTildeInPath],
+            @"/Applications",
+            @"/System/Applications",
+        ];
+    }
+
+    const char **croots = (const char **)calloc(roots.count, sizeof(char *));
+    if (!croots) {
+        NSLog(@"[MeoLaunch] app scan OOM");
+        return;
+    }
+    for (NSUInteger i = 0; i < roots.count; i++) {
+        croots[i] = roots[i].UTF8String;
+    }
+    int rc = ml_app_index_scan(&_appIndex, croots, roots.count);
+    free(croots);
     if (rc != 0) {
         NSLog(@"[MeoLaunch] app scan failed (%d)", rc);
         return;
     }
-    NSLog(@"[MeoLaunch] scanned %zu apps", _appIndex.count);
+    NSLog(@"[MeoLaunch] scanned %zu apps from %zu roots", _appIndex.count, (size_t)roots.count);
     int layoutChanges = [self.layoutStore syncWithAppIndex:&_appIndex];
     NSLog(@"[MeoLaunch] layout sync changes=%d root=%zu",
           layoutChanges,
@@ -165,6 +195,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
     (void)notification;
+    [self.rescanDebounceTimer invalidate];
+    self.rescanDebounceTimer = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self.hotKey unregisterAll];
     [self.hotCorner stop];

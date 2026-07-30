@@ -11,6 +11,8 @@ typedef NS_ENUM(NSInteger, MLHotCornerPosition) {
 };
 
 FOUNDATION_EXPORT NSNotificationName const MLConfigStoreDidChangeNotification;
+/** Posted when scan.roots extras change, or when an explicit rescan is requested. */
+FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotification;
 
 @interface MLConfigStore : NSObject
 
@@ -34,7 +36,12 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreDidChangeNotification;
 @property (nonatomic, assign, readonly) CGFloat overlayOpacity; /* 0…1 scrim alpha, default 0.55 */
 @property (nonatomic, assign, readonly) BOOL overlayBlur; /* blur desktop behind overlay */
 
+/// Full scan root list as stored (may contain ~). Built-ins first, then extras.
+@property (nonatomic, copy, readonly) NSArray<NSString *> *scanRoots;
+@property (nonatomic, assign, readonly) NSInteger scanRefreshSeconds;
+
 + (NSURL *)configFileURL;
++ (NSArray<NSString *> *)builtInScanRoots;
 
 - (void)loadDefaults;
 - (BOOL)loadFromDisk;
@@ -47,6 +54,17 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreDidChangeNotification;
                       position:(MLHotCornerPosition)position
                         sizePt:(CGFloat)sizePt
                        delayMs:(NSInteger)delayMs;
+
+/// Extra roots only (after built-ins). Normalized absolute-or-~ paths.
+- (NSArray<NSString *> *)scanExtraRoots;
+- (void)setScanExtraRoots:(NSArray<NSString *> *)extras;
+- (BOOL)addScanExtraRoot:(NSString *)path; /* NO if duplicate / empty */
+- (void)removeScanExtraRootAtIndex:(NSInteger)index;
+
+/// Expanded for filesystem scan (tilde resolved).
+- (NSArray<NSString *> *)expandedScanRoots;
+
+- (void)requestAppRescan; /* notify AppDelegate to rescan without changing roots */
 - (void)scheduleSave; /* debounce 300ms */
 
 @end
