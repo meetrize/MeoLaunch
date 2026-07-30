@@ -34,7 +34,11 @@ NSNotificationName const MLRunningAppsDidChangeNotification = @"MLRunningAppsDid
 @property (nonatomic, copy) NSString *lastFingerprint;
 /** pid → AXObserver watch; drives near-instant taskbar updates on close/min. */
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, id> *axWatchByPid;
-@property (nonatomic, assign) BOOL axPollCoalescePending;
+@property (nonatomic, assign) BOOL axStructuralPollPending;
+@property (nonatomic, assign) BOOL axGeometryPollPending;
+/** High-frequency CG census (no AX) — catches open/close/display-move without waiting for AX. */
+@property (nonatomic, strong) NSTimer *censusTimer;
+@property (nonatomic, copy) NSString *lastCensusToken;
 @end
 
 /** Per-process AXObserver (window create/destroy/miniaturize/title). */
@@ -64,6 +68,19 @@ NSNotificationName const MLRunningAppsDidChangeNotification = @"MLRunningAppsDid
     [self invalidate];
 }
 @end
+
+enum {
+    MLPollOptionNone = 0,
+    MLPollOptionSkipPidRebuild = 1 << 0,
+    MLPollOptionSkipTitleEnrich = 1 << 1,
+    MLPollOptionSkipGhostSweep = 1 << 2,
+    MLPollOptionSkipAXMinimizedBackup = 1 << 3,
+};
+typedef NSInteger MLPollOptions;
+
+static const MLPollOptions MLPollOptionsFast =
+    MLPollOptionSkipPidRebuild | MLPollOptionSkipTitleEnrich | MLPollOptionSkipGhostSweep |
+    MLPollOptionSkipAXMinimizedBackup;
 
 @implementation MLRunningAppsMonitor
 
@@ -343,6 +360,9 @@ NSNotificationName const MLRunningAppsDidChangeNotification = @"MLRunningAppsDid
             MLTaskbarWindowInfo *prev = self.lastSeenWindows[@(w.windowID)];
             if (prev && prev.seenOrder > 0) {
                 w.seenOrder = prev.seenOrder;
+            }
+            if (w.title.length == 0 && prev.title.length > 0) {
+                w.title = prev.title;
             }
         }
         [windows addObject:w];
@@ -1123,7 +1143,13 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
 }
 
 - (void)pollWindows {
-    [self rebuildPidMapFromWorkspace];
+    [self pollWindowsWithOptions:MLPollOptionNone];
+}
+
+- (void)pollWindowsWithOptions:(MLPollOptions)options {
+    if ((options & MLPollOptionSkipPidRebuild) == 0) {
+        [self rebuildPidMapFromWorkspace];
+    }
     NSArray<NSString *> *runningPaths = [self orderedRunningPaths];
 
     NSMutableArray<MLTaskbarWindowInfo *> *windows = [NSMutableArray array];
@@ -1146,14 +1172,15 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         CFRelease(onScreen);
     }
 
-    /* Drop closed-but-still-in-CG ghosts (WeChat chats, etc.). */
-    [self removeCGGhostWindowsNotInAccessibility:windows seenWindowIDs:seen];
+    if ((options & MLPollOptionSkipGhostSweep) == 0) {
+        [self removeCGGhostWindowsNotInAccessibility:windows seenWindowIDs:seen];
+    }
 
-    /* Snapshot of truly visible ids before minimized appendages. */
     NSSet<NSNumber *> *onScreenIDs = [seen copy];
 
-    /* CG titles are often empty without Screen Recording — fill from AX (Cursor / browser tabs). */
-    [self enrichTitlesFromAccessibility:windows];
+    if ((options & MLPollOptionSkipTitleEnrich) == 0) {
+        [self enrichTitlesFromAccessibility:windows];
+    }
 
     [self rememberOnScreenWindows:windows];
 
@@ -1183,24 +1210,23 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         CFRelease(all);
     }
 
-    /* Soft-minimized (alpha=0): keep on the screen of lastSeen.bounds. */
     [self appendSoftMinimizedWindows:windows
                        seenWindowIDs:seen
                          withWindows:withWindows
                                  cap:cap];
 
-    /* Electron-style: minimized window disappears from CG entirely. */
     [self appendMinimizedFromCacheWhenVanished:windows
                                  seenWindowIDs:seen
                                    withWindows:withWindows
                                            cap:cap
                                       aliveIDs:aliveIDs];
 
-    /* AX backup when CG does not keep minimized window IDs (some Electron apps). */
-    [self appendMinimizedWindowsFromAccessibility:windows withWindows:withWindows cap:cap];
-
-    /* Soft-min / AX-minimized may still need live tab titles. */
-    [self enrichTitlesFromAccessibility:windows];
+    if ((options & MLPollOptionSkipAXMinimizedBackup) == 0) {
+        [self appendMinimizedWindowsFromAccessibility:windows withWindows:withWindows cap:cap];
+        if ((options & MLPollOptionSkipTitleEnrich) == 0) {
+            [self enrichTitlesFromAccessibility:windows];
+        }
+    }
 
     [self pruneClosedCachedWindows:aliveIDs onScreenIDs:onScreenIDs];
 
@@ -1215,9 +1241,12 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     NSString *fp = [self fingerprintForPaths:runningPaths windows:deduped];
     if ([fp isEqualToString:self.lastFingerprint]) {
         self.snapshot = snap;
+        /* Keep census in sync even when snapshot fingerprint is unchanged. */
+        self.lastCensusToken = [self computeWindowCensusToken];
         return;
     }
     [self publishSnapshot:snap fingerprint:fp];
+    self.lastCensusToken = [self computeWindowCensusToken];
 }
 
 - (void)appDidLaunch:(NSNotification *)note {
@@ -1226,7 +1255,7 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         self.pidPathMap[@(app.processIdentifier)] = app.bundleURL.path;
         [self installAXWatchForPID:app.processIdentifier];
     }
-    [self scheduleAXTriggeredPoll];
+    [self scheduleStructuralFastPoll];
 }
 
 - (void)appDidTerminate:(NSNotification *)note {
@@ -1235,10 +1264,10 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         [self.pidPathMap removeObjectForKey:@(app.processIdentifier)];
         [self removeAXWatchForPID:app.processIdentifier];
     }
-    [self scheduleAXTriggeredPoll];
+    [self scheduleStructuralFastPoll];
 }
 
-#pragma mark - AX window observers (low-latency close / minimize)
+#pragma mark - AX window observers (low-latency close / minimize / move)
 
 static void MLAXObserverCallback(AXObserverRef observer,
                                  AXUIElementRef element,
@@ -1246,35 +1275,272 @@ static void MLAXObserverCallback(AXObserverRef observer,
                                  void *refcon) {
     (void)observer;
     MLRunningAppsMonitor *self = (__bridge MLRunningAppsMonitor *)refcon;
-    if (!self || !self.running) {
+    if (!self || !self.running || !notification) {
         return;
     }
-    if (notification && CFEqual(notification, kAXWindowCreatedNotification) && element) {
+
+    if (CFEqual(notification, kAXWindowCreatedNotification) && element) {
         [self axWatchRegisterNotificationsOnWindow:element];
+        [self scheduleStructuralFastPoll];
+        return;
     }
-    [self scheduleAXTriggeredPoll];
+    if (CFEqual(notification, kAXUIElementDestroyedNotification)) {
+        [self optimisticRemoveWindowElement:element];
+        [self scheduleStructuralFastPoll];
+        return;
+    }
+    if (CFEqual(notification, kAXWindowMiniaturizedNotification) ||
+        CFEqual(notification, kAXWindowDeminiaturizedNotification)) {
+        [self scheduleStructuralFastPoll];
+        return;
+    }
+    if (CFEqual(notification, kAXTitleChangedNotification)) {
+        [self optimisticUpdateTitleFromElement:element];
+        [self scheduleStructuralFastPoll];
+        return;
+    }
+    if (CFEqual(notification, kAXMovedNotification) || CFEqual(notification, kAXResizedNotification)) {
+        [self optimisticUpdateBoundsFromElement:element];
+        [self scheduleGeometryFastPoll];
+        return;
+    }
+    [self scheduleStructuralFastPoll];
 }
 
-- (void)scheduleAXTriggeredPoll {
+- (void)scheduleStructuralFastPoll {
     if (!self.running) {
         return;
     }
-    if (self.axPollCoalescePending) {
+    if (self.axStructuralPollPending) {
         return;
     }
-    self.axPollCoalescePending = YES;
+    self.axStructuralPollPending = YES;
     __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.04 * NSEC_PER_SEC)),
+    /* Next run-loop turn — no artificial 40ms delay. */
+    dispatch_async(dispatch_get_main_queue(), ^{
+        typeof(self) strong = weakSelf;
+        if (!strong) {
+            return;
+        }
+        strong.axStructuralPollPending = NO;
+        if (strong.running) {
+            [strong pollWindowsWithOptions:MLPollOptionsFast];
+        }
+    });
+}
+
+- (void)scheduleGeometryFastPoll {
+    if (!self.running) {
+        return;
+    }
+    if (self.axGeometryPollPending) {
+        return;
+    }
+    self.axGeometryPollPending = YES;
+    __weak typeof(self) weakSelf = self;
+    /* Coalesce move spam while dragging; optimistic path already updated screen affinity. */
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
                        typeof(self) strong = weakSelf;
                        if (!strong) {
                            return;
                        }
-                       strong.axPollCoalescePending = NO;
+                       strong.axGeometryPollPending = NO;
                        if (strong.running) {
-                           [strong pollWindows];
+                           [strong pollWindowsWithOptions:MLPollOptionsFast];
                        }
                    });
+}
+
+- (CGWindowID)cgWindowIDFromAXElement:(AXUIElementRef)el {
+    if (!el) {
+        return 0;
+    }
+    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
+    if (!getWid) {
+        return 0;
+    }
+    CGWindowID wid = 0;
+    if (getWid(el, &wid) != kAXErrorSuccess) {
+        return 0;
+    }
+    return wid;
+}
+
+- (BOOL)axReadCocoaFrame:(NSRect *)outFrame fromElement:(AXUIElementRef)el {
+    if (!el || !outFrame) {
+        return NO;
+    }
+    CFTypeRef posRef = NULL;
+    CFTypeRef sizeRef = NULL;
+    CGPoint pos = CGPointZero;
+    CGSize size = CGSizeZero;
+    BOOL havePos = NO;
+    BOOL haveSize = NO;
+    if (AXUIElementCopyAttributeValue(el, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) {
+        havePos = AXValueGetValue((AXValueRef)posRef, (AXValueType)kAXValueCGPointType, &pos);
+        CFRelease(posRef);
+    }
+    if (AXUIElementCopyAttributeValue(el, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) {
+        haveSize = AXValueGetValue((AXValueRef)sizeRef, (AXValueType)kAXValueCGSizeType, &size);
+        CFRelease(sizeRef);
+    }
+    if (!havePos || !haveSize || size.width < 2.0 || size.height < 2.0) {
+        return NO;
+    }
+    NSRect main = NSScreen.mainScreen.frame;
+    *outFrame = NSMakeRect(pos.x, NSMaxY(main) - pos.y - size.height, size.width, size.height);
+    return YES;
+}
+
+- (NSScreen *)screenForCocoaBounds:(CGRect)bounds {
+    NSScreen *best = nil;
+    CGFloat bestArea = -1.0;
+    for (NSScreen *screen in NSScreen.screens) {
+        CGRect inter = CGRectIntersection(bounds, NSRectToCGRect(screen.frame));
+        if (CGRectIsNull(inter) || CGRectIsEmpty(inter)) {
+            continue;
+        }
+        CGFloat area = inter.size.width * inter.size.height;
+        if (area > bestArea) {
+            bestArea = area;
+            best = screen;
+        }
+    }
+    return best;
+}
+
+- (void)republishSnapshotWindows:(NSArray<MLTaskbarWindowInfo *> *)windows {
+    NSMutableSet<NSString *> *withWindows = [NSMutableSet set];
+    for (MLTaskbarWindowInfo *w in windows) {
+        if (w.path.length > 0) {
+            [withWindows addObject:w.path];
+        }
+    }
+    NSArray<NSString *> *runningPaths = self.snapshot.runningAppPaths ?: [self orderedRunningPaths];
+    MLRunningAppsSnapshot *snap = [[MLRunningAppsSnapshot alloc] init];
+    snap.runningAppPaths = runningPaths;
+    snap.pathsWithVisibleWindows = [withWindows copy];
+    snap.windows = windows;
+    snap.pidToPath = [self.pidPathMap copy];
+    NSString *fp = [self fingerprintForPaths:runningPaths windows:windows];
+    if ([fp isEqualToString:self.lastFingerprint]) {
+        self.snapshot = snap;
+        return;
+    }
+    [self publishSnapshot:snap fingerprint:fp];
+}
+
+- (void)optimisticRemoveWindowElement:(AXUIElementRef)el {
+    CGWindowID wid = [self cgWindowIDFromAXElement:el];
+    if (wid == 0) {
+        return;
+    }
+    if ([self.softMinimizedWindowIDs containsObject:@(wid)]) {
+        return;
+    }
+    [self.lastSeenWindows removeObjectForKey:@(wid)];
+    [self.frozenRestoreFrames removeObjectForKey:@(wid)];
+
+    NSArray<MLTaskbarWindowInfo *> *prev = self.snapshot.windows ?: @[];
+    NSMutableArray<MLTaskbarWindowInfo *> *next = [NSMutableArray arrayWithCapacity:prev.count];
+    BOOL removed = NO;
+    for (MLTaskbarWindowInfo *w in prev) {
+        if (w.windowID == wid) {
+            removed = YES;
+            continue;
+        }
+        [next addObject:w];
+    }
+    if (removed) {
+        [self republishSnapshotWindows:next];
+    }
+}
+
+- (void)optimisticUpdateBoundsFromElement:(AXUIElementRef)el {
+    CGWindowID wid = [self cgWindowIDFromAXElement:el];
+    if (wid == 0 || [self.softMinimizedWindowIDs containsObject:@(wid)]) {
+        return;
+    }
+    NSRect cocoa = NSZeroRect;
+    if (![self axReadCocoaFrame:&cocoa fromElement:el]) {
+        return;
+    }
+    CGRect bounds = NSRectToCGRect(cocoa);
+    MLTaskbarWindowInfo *cached = self.lastSeenWindows[@(wid)];
+    CGRect oldBounds = cached ? cached.bounds : CGRectZero;
+    if (cached && !self.frozenRestoreFrames[@(wid)]) {
+        cached.bounds = bounds;
+    }
+
+    NSScreen *oldScreen = [self screenForCocoaBounds:oldBounds];
+    NSScreen *newScreen = [self screenForCocoaBounds:bounds];
+    BOOL screenChanged = (oldScreen != newScreen);
+
+    NSArray<MLTaskbarWindowInfo *> *prev = self.snapshot.windows ?: @[];
+    NSMutableArray<MLTaskbarWindowInfo *> *next = [NSMutableArray arrayWithCapacity:prev.count];
+    BOOL changed = NO;
+    for (MLTaskbarWindowInfo *w in prev) {
+        if (w.windowID == wid) {
+            MLTaskbarWindowInfo *copy = [self copyWindowInfo:w minimized:w.minimized];
+            copy.bounds = bounds;
+            [next addObject:copy];
+            changed = YES;
+        } else {
+            [next addObject:w];
+        }
+    }
+    /* Only push UI immediately when the owning display changes (cross-screen drag). */
+    if (changed && screenChanged) {
+        [self republishSnapshotWindows:next];
+    }
+}
+
+- (void)optimisticUpdateTitleFromElement:(AXUIElementRef)el {
+    CGWindowID wid = [self cgWindowIDFromAXElement:el];
+    if (wid == 0) {
+        return;
+    }
+    CFTypeRef titleRef = NULL;
+    NSString *title = nil;
+    if (AXUIElementCopyAttributeValue(el, kAXTitleAttribute, &titleRef) == kAXErrorSuccess && titleRef) {
+        if (CFGetTypeID(titleRef) == CFStringGetTypeID()) {
+            title = (__bridge NSString *)titleRef;
+        }
+        CFRelease(titleRef);
+    }
+    if (title.length == 0) {
+        return;
+    }
+    pid_t pid = 0;
+    AXUIElementGetPid(el, &pid);
+    NSString *appName = [self appDisplayNameForPid:pid path:self.pidPathMap[@(pid)]];
+    title = [self truncateTitle:[self preferredTaskTitleFromWindowTitle:title appName:appName]];
+    if (title.length == 0) {
+        return;
+    }
+
+    MLTaskbarWindowInfo *cached = self.lastSeenWindows[@(wid)];
+    if (cached) {
+        cached.title = title;
+    }
+
+    NSArray<MLTaskbarWindowInfo *> *prev = self.snapshot.windows ?: @[];
+    NSMutableArray<MLTaskbarWindowInfo *> *next = [NSMutableArray arrayWithCapacity:prev.count];
+    BOOL changed = NO;
+    for (MLTaskbarWindowInfo *w in prev) {
+        if (w.windowID == wid && ![w.title isEqualToString:title]) {
+            MLTaskbarWindowInfo *copy = [self copyWindowInfo:w minimized:w.minimized];
+            copy.title = title;
+            [next addObject:copy];
+            changed = YES;
+        } else {
+            [next addObject:w];
+        }
+    }
+    if (changed) {
+        [self republishSnapshotWindows:next];
+    }
 }
 
 - (void)axWatchRegisterNotificationsOnWindow:(AXUIElementRef)win {
@@ -1293,6 +1559,8 @@ static void MLAXObserverCallback(AXObserverRef observer,
     AXObserverAddNotification(watch.observer, win, kAXWindowMiniaturizedNotification, NULL);
     AXObserverAddNotification(watch.observer, win, kAXWindowDeminiaturizedNotification, NULL);
     AXObserverAddNotification(watch.observer, win, kAXTitleChangedNotification, NULL);
+    AXObserverAddNotification(watch.observer, win, kAXMovedNotification, NULL);
+    AXObserverAddNotification(watch.observer, win, kAXResizedNotification, NULL);
 }
 
 - (void)installAXWatchForPID:(pid_t)pid {
@@ -1379,6 +1647,109 @@ static void MLAXObserverCallback(AXObserverRef observer,
     }
 }
 
+- (NSInteger)screenIndexForCocoaPoint:(CGPoint)point {
+    NSArray<NSScreen *> *screens = NSScreen.screens;
+    for (NSInteger i = 0; i < (NSInteger)screens.count; i++) {
+        if (NSPointInRect(NSMakePoint(point.x, point.y), screens[(NSUInteger)i].frame)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/**
+ * Lightweight on-screen window census: id + owner + display index (+ quantized size).
+ * Ignores intra-display pixel moves so dragging does not spam refreshes.
+ * Open / close / cross-display moves change this token immediately via CG — no AX wait.
+ */
+- (NSString *)computeWindowCensusToken {
+    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
+                                                     kCGWindowListExcludeDesktopElements,
+                                                 kCGNullWindowID);
+    if (!list) {
+        return @"";
+    }
+    NSMutableArray<NSString *> *rows = [NSMutableArray array];
+    CFIndex count = CFArrayGetCount(list);
+    for (CFIndex i = 0; i < count; i++) {
+        CFDictionaryRef info = (CFDictionaryRef)CFArrayGetValueAtIndex(list, i);
+        if (!info) {
+            continue;
+        }
+        CFNumberRef layerRef = CFDictionaryGetValue(info, kCGWindowLayer);
+        int layer = 0;
+        if (layerRef) {
+            CFNumberGetValue(layerRef, kCFNumberIntType, &layer);
+        }
+        if (layer != 0) {
+            continue;
+        }
+        CGRect bounds = CGRectZero;
+        CFDictionaryRef boundsDict = CFDictionaryGetValue(info, kCGWindowBounds);
+        if (!boundsDict || !CGRectMakeWithDictionaryRepresentation(boundsDict, &bounds)) {
+            continue;
+        }
+        if (bounds.size.width < 100.0 || bounds.size.height < 80.0) {
+            continue;
+        }
+        CFNumberRef alphaRef = CFDictionaryGetValue(info, kCGWindowAlpha);
+        if (alphaRef) {
+            double alpha = 1.0;
+            CFNumberGetValue(alphaRef, kCFNumberDoubleType, &alpha);
+            if (alpha < 0.1) {
+                continue;
+            }
+        }
+        CFNumberRef winRef = CFDictionaryGetValue(info, kCGWindowNumber);
+        CFNumberRef pidRef = CFDictionaryGetValue(info, kCGWindowOwnerPID);
+        CGWindowID wid = 0;
+        pid_t pid = 0;
+        if (winRef) {
+            CFNumberGetValue(winRef, kCFNumberIntType, &wid);
+        }
+        if (pidRef) {
+            CFNumberGetValue(pidRef, kCFNumberIntType, &pid);
+        }
+        if (wid == 0 || pid <= 0) {
+            continue;
+        }
+        if ([self.softMinimizedWindowIDs containsObject:@(wid)]) {
+            continue;
+        }
+        CGPoint mid = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
+        NSInteger screenIdx = [self screenIndexForCocoaPoint:mid];
+        /* Size buckets (~32pt) — ignore tiny resizes, keep big layout changes. */
+        int bw = (int)(bounds.size.width / 32.0);
+        int bh = (int)(bounds.size.height / 32.0);
+        [rows addObject:[NSString stringWithFormat:@"%u:%d:%ld:%d:%d",
+                                                   (unsigned)wid, (int)pid, (long)screenIdx, bw, bh]];
+    }
+    CFRelease(list);
+    [rows sortUsingSelector:@selector(compare:)];
+    /* Soft-min chips still count so census stays stable while tucked. */
+    if (self.softMinimizedWindowIDs.count > 0) {
+        NSArray *soft = [[self.softMinimizedWindowIDs allObjects]
+            sortedArrayUsingSelector:@selector(compare:)];
+        for (NSNumber *widNum in soft) {
+            [rows addObject:[NSString stringWithFormat:@"soft:%u", (unsigned)widNum.unsignedIntValue]];
+        }
+    }
+    return [rows componentsJoinedByString:@"|"];
+}
+
+- (void)censusTick {
+    if (!self.running) {
+        return;
+    }
+    NSString *token = [self computeWindowCensusToken];
+    if ([token isEqualToString:self.lastCensusToken ?: @""]) {
+        return;
+    }
+    self.lastCensusToken = token;
+    /* CG already saw the change — refresh taskbar without waiting for AX. */
+    [self pollWindowsWithOptions:MLPollOptionsFast];
+}
+
 - (void)start {
     if (self.running) {
         return;
@@ -1399,9 +1770,17 @@ static void MLAXObserverCallback(AXObserverRef observer,
     [self syncAXWindowObservers];
     [self pollWindows];
 
-    /* Keep a slower backup poll; AX observers handle close/min nearly instantly. */
-    NSTimeInterval interval = self.windowPollInterval > 0.2 ? self.windowPollInterval : 1.0;
     __weak typeof(self) weakSelf = self;
+    /* ~12 Hz CG census: open/close/cross-screen move without AX latency. */
+    self.censusTimer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 12.0)
+                                                        repeats:YES
+                                                          block:^(__unused NSTimer *timer) {
+                                                              [weakSelf censusTick];
+                                                          }];
+    [[NSRunLoop mainRunLoop] addTimer:self.censusTimer forMode:NSRunLoopCommonModes];
+
+    /* Slow full poll: titles / AX ghost cleanup / observer sync. */
+    NSTimeInterval interval = self.windowPollInterval > 0.2 ? self.windowPollInterval : 1.0;
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:interval
                                                      repeats:YES
                                                        block:^(__unused NSTimer *timer) {
@@ -1416,11 +1795,15 @@ static void MLAXObserverCallback(AXObserverRef observer,
         return;
     }
     self.running = NO;
+    [self.censusTimer invalidate];
+    self.censusTimer = nil;
     [self.pollTimer invalidate];
     self.pollTimer = nil;
     [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
     [self removeAllAXWatches];
-    self.axPollCoalescePending = NO;
+    self.axStructuralPollPending = NO;
+    self.axGeometryPollPending = NO;
+    self.lastCensusToken = nil;
     self.snapshot = [self emptySnapshot];
     self.lastFingerprint = nil;
     [self.pidPathMap removeAllObjects];
