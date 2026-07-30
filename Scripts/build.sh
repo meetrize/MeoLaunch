@@ -48,8 +48,10 @@ clang -o "$MACOS/MeoLaunch" "${OBJS[@]}" "${LIBS[@]}"
 
 echo "[build] assembling bundle ..."
 cp "$ROOT/Sources/App/Info.plist" "$APP/Contents/Info.plist"
-# Placeholder resources; Assets not compiled into car for clang path
 mkdir -p "$RES"
+if [[ -f "$ROOT/Sources/Resources/AppIcon.icns" ]]; then
+  cp "$ROOT/Sources/Resources/AppIcon.icns" "$RES/AppIcon.icns"
+fi
 if [[ -d "$ROOT/Sources/Resources/Assets.xcassets" ]]; then
   cp -R "$ROOT/Sources/Resources/Assets.xcassets" "$RES/" 2>/dev/null || true
 fi
