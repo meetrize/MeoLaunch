@@ -21,6 +21,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @property (nonatomic, assign, readwrite) NSInteger fadeMs;
 @property (nonatomic, assign, readwrite) CGFloat overlayOpacity;
 @property (nonatomic, assign, readwrite) BOOL overlayBlur;
+@property (nonatomic, assign, readwrite) MLLanguage language;
 @property (nonatomic, copy, readwrite) NSArray<NSString *> *scanRoots;
 @property (nonatomic, assign, readwrite) NSInteger scanRefreshSeconds;
 @property (nonatomic, strong) NSTimer *saveTimer;
@@ -143,6 +144,8 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.fadeMs = 100;
     self.overlayOpacity = 0.55;
     self.overlayBlur = YES;
+    self.language = [MLStrings systemPreferredLanguage];
+    [MLStrings setLanguage:self.language];
     self.scanRoots = [[self class] builtInScanRoots];
     self.scanRefreshSeconds = 60;
 }
@@ -267,6 +270,10 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         if (ui[@"blur"]) {
             self.overlayBlur = [ui[@"blur"] boolValue];
         }
+        if (ui[@"language"]) {
+            self.language = [MLStrings languageFromCode:[ui[@"language"] description]];
+            [MLStrings setLanguage:self.language];
+        }
     }
 
     [self applyScanDictionary:root[@"scan"]];
@@ -320,6 +327,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
             @"blur" : @(self.overlayBlur),
             @"fade_ms" : @(self.fadeMs),
             @"overlay_opacity" : @(self.overlayOpacity),
+            @"language" : [MLStrings codeForLanguage:self.language],
             @"menubar_icon" : @YES,
             @"lsuielement" : @YES,
         },
@@ -540,6 +548,16 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.hotCornerPosition = position;
     self.hotCornerSizePt = size;
     self.hotCornerDelayMs = delay;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateLanguage:(MLLanguage)language {
+    if (self.language == language) {
+        return;
+    }
+    self.language = language;
+    [MLStrings setLanguage:language];
     [self notifyChanged];
     [self scheduleSave];
 }

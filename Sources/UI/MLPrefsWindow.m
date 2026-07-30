@@ -1,6 +1,7 @@
 #import "MLPrefsWindow.h"
 
 #import "MLConfigStore.h"
+#import "MLStrings.h"
 
 /** Top-down layout coordinates for the prefs form. */
 @interface MLPrefsFormView : NSView
@@ -14,17 +15,32 @@
 @interface MLPrefsWindow () <NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @property (nonatomic, weak) MLConfigStore *config;
 @property (nonatomic, strong) NSWindow *window;
+@property (nonatomic, strong) NSTextField *languageLabel;
+@property (nonatomic, strong) NSPopUpButton *languagePopup;
+@property (nonatomic, strong) NSTextField *colsLabel;
 @property (nonatomic, strong) NSSlider *colsSlider;
 @property (nonatomic, strong) NSTextField *colsValueLabel;
+@property (nonatomic, strong) NSTextField *rowsLabel;
 @property (nonatomic, strong) NSSlider *rowsSlider;
 @property (nonatomic, strong) NSTextField *rowsValueLabel;
+@property (nonatomic, strong) NSTextField *iconSizeLabel;
 @property (nonatomic, strong) NSSlider *iconSizeSlider;
 @property (nonatomic, strong) NSTextField *iconSizeValueLabel;
+@property (nonatomic, strong) NSTextField *opacityLabel;
 @property (nonatomic, strong) NSSlider *opacitySlider;
 @property (nonatomic, strong) NSTextField *opacityValueLabel;
 @property (nonatomic, strong) NSButton *hotCornerEnabled;
+@property (nonatomic, strong) NSTextField *hotCornerLabel;
 @property (nonatomic, strong) NSPopUpButton *cornerPopup;
+@property (nonatomic, strong) NSTextField *sizeLabel;
 @property (nonatomic, strong) NSTextField *sizeField;
+@property (nonatomic, strong) NSTextField *scanTitle;
+@property (nonatomic, strong) NSTextField *scanHint;
+@property (nonatomic, strong) NSTextField *sysLabel;
+@property (nonatomic, strong) NSTextField *extraLabel;
+@property (nonatomic, strong) NSButton *addBtn;
+@property (nonatomic, strong) NSButton *removeBtn;
+@property (nonatomic, strong) NSButton *rescanBtn;
 @property (nonatomic, strong) NSTextField *pathLabel;
 @property (nonatomic, strong) NSTableView *extraRootsTable;
 @property (nonatomic, strong) NSArray<NSString *> *extraRootsCache;
@@ -38,8 +54,16 @@
     if (self) {
         _config = config;
         _extraRootsCache = @[];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(languageDidChange:)
+                                                     name:MLLanguageDidChangeNotification
+                                                   object:nil];
     }
     return self;
+}
+
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (NSTextField *)makeLabel:(NSString *)text frame:(NSRect)frame {
@@ -75,16 +99,15 @@
         return;
     }
 
-    NSRect rect = NSMakeRect(0, 0, 520, 620);
+    NSRect rect = NSMakeRect(0, 0, 520, 660);
     NSWindow *w = [[NSWindow alloc] initWithContentRect:rect
                                               styleMask:NSWindowStyleMaskTitled |
                                                         NSWindowStyleMaskClosable |
                                                         NSWindowStyleMaskResizable
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
-    w.title = @"MeoLaunch Preferences";
     w.releasedWhenClosed = NO;
-    w.minSize = NSMakeSize(480, 520);
+    w.minSize = NSMakeSize(480, 560);
     w.level = NSStatusWindowLevel + 1;
     w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
                            NSWindowCollectionBehaviorFullScreenAuxiliary;
@@ -103,7 +126,17 @@
 
     MLPrefsFormView *c = [[MLPrefsFormView alloc] initWithFrame:NSMakeRect(0, 0, contentW, 10)];
 
-    [c addSubview:[self makeLabel:@"Grid columns" frame:NSMakeRect(pad, y, 120, 22)]];
+    self.languageLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.languageLabel];
+    self.languagePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(140, y - 1, 180, 26) pullsDown:NO];
+    [self.languagePopup addItemsWithTitles:@[ @"", @"" ]];
+    self.languagePopup.target = self;
+    self.languagePopup.action = @selector(languageChanged:);
+    [c addSubview:self.languagePopup];
+    y += 40;
+
+    self.colsLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.colsLabel];
     self.colsSlider = [self makeIntSliderMin:4 max:10 action:@selector(colsChanged:)];
     self.colsSlider.frame = NSMakeRect(136, y - 2, 280, 28);
     [c addSubview:self.colsSlider];
@@ -112,7 +145,8 @@
     [c addSubview:self.colsValueLabel];
     y += 40;
 
-    [c addSubview:[self makeLabel:@"Grid rows" frame:NSMakeRect(pad, y, 120, 22)]];
+    self.rowsLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.rowsLabel];
     self.rowsSlider = [self makeIntSliderMin:3 max:8 action:@selector(rowsChanged:)];
     self.rowsSlider.frame = NSMakeRect(136, y - 2, 280, 28);
     [c addSubview:self.rowsSlider];
@@ -121,7 +155,8 @@
     [c addSubview:self.rowsValueLabel];
     y += 40;
 
-    [c addSubview:[self makeLabel:@"Icon size" frame:NSMakeRect(pad, y, 120, 22)]];
+    self.iconSizeLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.iconSizeLabel];
     self.iconSizeSlider = [NSSlider sliderWithValue:0
                                            minValue:0
                                            maxValue:160
@@ -132,12 +167,13 @@
     self.iconSizeSlider.tickMarkPosition = NSTickMarkPositionBelow;
     self.iconSizeSlider.frame = NSMakeRect(136, y - 2, 280, 28);
     [c addSubview:self.iconSizeSlider];
-    self.iconSizeValueLabel = [self makeLabel:@"Auto" frame:NSMakeRect(420, y, 50, 22)];
+    self.iconSizeValueLabel = [self makeLabel:@"" frame:NSMakeRect(420, y, 50, 22)];
     self.iconSizeValueLabel.alignment = NSTextAlignmentRight;
     [c addSubview:self.iconSizeValueLabel];
     y += 40;
 
-    [c addSubview:[self makeLabel:@"Overlay opacity" frame:NSMakeRect(pad, y, 120, 22)]];
+    self.opacityLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.opacityLabel];
     self.opacitySlider = [NSSlider sliderWithValue:55
                                           minValue:0
                                           maxValue:100
@@ -153,24 +189,24 @@
     [c addSubview:self.opacityValueLabel];
     y += 40;
 
-    self.hotCornerEnabled = [NSButton checkboxWithTitle:@"Hot corner enabled"
+    self.hotCornerEnabled = [NSButton checkboxWithTitle:@""
                                                  target:self
                                                  action:@selector(prefsChanged:)];
-    self.hotCornerEnabled.frame = NSMakeRect(pad, y, 220, 24);
+    self.hotCornerEnabled.frame = NSMakeRect(pad, y, 280, 24);
     [c addSubview:self.hotCornerEnabled];
     y += 32;
 
-    [c addSubview:[self makeLabel:@"Hot corner" frame:NSMakeRect(pad, y, 120, 22)]];
+    self.hotCornerLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.hotCornerLabel];
     self.cornerPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(140, y - 1, 180, 26) pullsDown:NO];
-    [self.cornerPopup addItemsWithTitles:@[
-        @"Top Left", @"Top Right", @"Bottom Left", @"Bottom Right", @"Off"
-    ]];
+    [self.cornerPopup addItemsWithTitles:@[ @"", @"", @"", @"", @"" ]];
     self.cornerPopup.target = self;
     self.cornerPopup.action = @selector(prefsChanged:);
     [c addSubview:self.cornerPopup];
     y += 32;
 
-    [c addSubview:[self makeLabel:@"Hot size (pt)" frame:NSMakeRect(pad, y, 120, 22)]];
+    self.sizeLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.sizeLabel];
     self.sizeField = [self makeField:NSMakeRect(140, y, 60, 24)];
     self.sizeField.delegate = self;
     self.sizeField.target = self;
@@ -178,24 +214,23 @@
     [c addSubview:self.sizeField];
     y += 36;
 
-    NSTextField *scanTitle = [self makeLabel:@"应用目录" frame:NSMakeRect(pad, y, 200, 20)];
-    scanTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
-    [c addSubview:scanTitle];
+    self.scanTitle = [self makeLabel:@"" frame:NSMakeRect(pad, y, 200, 20)];
+    self.scanTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+    [c addSubview:self.scanTitle];
     y += 22;
 
-    NSTextField *scanHint = [self makeLabel:@"外接硬盘上的 .app 可加在这里；仅扫描该文件夹及一层子文件夹。"
-                                      frame:NSMakeRect(pad, y, 468, 16)];
-    scanHint.font = [NSFont systemFontOfSize:11];
-    scanHint.textColor = [NSColor secondaryLabelColor];
-    scanHint.maximumNumberOfLines = 1;
-    scanHint.lineBreakMode = NSLineBreakByTruncatingTail;
-    [c addSubview:scanHint];
-    y += 20;
+    self.scanHint = [self makeLabel:@"" frame:NSMakeRect(pad, y, 468, 32)];
+    self.scanHint.font = [NSFont systemFontOfSize:11];
+    self.scanHint.textColor = [NSColor secondaryLabelColor];
+    self.scanHint.maximumNumberOfLines = 2;
+    self.scanHint.lineBreakMode = NSLineBreakByWordWrapping;
+    [c addSubview:self.scanHint];
+    y += 36;
 
-    NSTextField *sysLabel = [self makeLabel:@"系统目录（只读）" frame:NSMakeRect(pad, y, 200, 16)];
-    sysLabel.font = [NSFont systemFontOfSize:11];
-    sysLabel.textColor = [NSColor secondaryLabelColor];
-    [c addSubview:sysLabel];
+    self.sysLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 200, 16)];
+    self.sysLabel.font = [NSFont systemFontOfSize:11];
+    self.sysLabel.textColor = [NSColor secondaryLabelColor];
+    [c addSubview:self.sysLabel];
     y += 16;
 
     for (NSString *root in [MLConfigStore builtInScanRoots]) {
@@ -207,10 +242,10 @@
     }
     y += 6;
 
-    NSTextField *extraLabel = [self makeLabel:@"额外目录" frame:NSMakeRect(pad, y, 200, 16)];
-    extraLabel.font = [NSFont systemFontOfSize:11];
-    extraLabel.textColor = [NSColor secondaryLabelColor];
-    [c addSubview:extraLabel];
+    self.extraLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 200, 16)];
+    self.extraLabel.font = [NSFont systemFontOfSize:11];
+    self.extraLabel.textColor = [NSColor secondaryLabelColor];
+    [c addSubview:self.extraLabel];
     y += 18;
 
     CGFloat tableH = 72;
@@ -221,7 +256,7 @@
 
     NSTableView *table = [[NSTableView alloc] initWithFrame:scroll.bounds];
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"path"];
-    col.title = @"路径";
+    col.title = @"";
     col.width = 440;
     [table addTableColumn:col];
     table.headerView = nil;
@@ -235,23 +270,23 @@
     [c addSubview:scroll];
     y += tableH + 10;
 
-    NSButton *addBtn = [NSButton buttonWithTitle:@"添加文件夹…"
-                                          target:self
-                                          action:@selector(addExtraRoot:)];
-    addBtn.frame = NSMakeRect(pad, y, 120, 28);
-    [c addSubview:addBtn];
+    self.addBtn = [NSButton buttonWithTitle:@""
+                                     target:self
+                                     action:@selector(addExtraRoot:)];
+    self.addBtn.frame = NSMakeRect(pad, y, 130, 28);
+    [c addSubview:self.addBtn];
 
-    NSButton *removeBtn = [NSButton buttonWithTitle:@"移除"
-                                             target:self
-                                             action:@selector(removeExtraRoot:)];
-    removeBtn.frame = NSMakeRect(pad + 128, y, 72, 28);
-    [c addSubview:removeBtn];
+    self.removeBtn = [NSButton buttonWithTitle:@""
+                                        target:self
+                                        action:@selector(removeExtraRoot:)];
+    self.removeBtn.frame = NSMakeRect(pad + 138, y, 80, 28);
+    [c addSubview:self.removeBtn];
 
-    NSButton *rescanBtn = [NSButton buttonWithTitle:@"重新扫描"
-                                             target:self
-                                             action:@selector(rescanApps:)];
-    rescanBtn.frame = NSMakeRect(pad + 208, y, 100, 28);
-    [c addSubview:rescanBtn];
+    self.rescanBtn = [NSButton buttonWithTitle:@""
+                                        target:self
+                                        action:@selector(rescanApps:)];
+    self.rescanBtn.frame = NSMakeRect(pad + 226, y, 110, 28);
+    [c addSubview:self.rescanBtn];
     y += 34;
 
     self.pathLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 468, 16)];
@@ -266,6 +301,67 @@
     outerScroll.documentView = c;
     [w.contentView addSubview:outerScroll];
     self.window = w;
+
+    [self applyLocalizedStrings];
+}
+
+- (void)applyLocalizedStrings {
+    if (!self.window) {
+        return;
+    }
+    self.window.title = [MLStrings t:@"prefs.title"];
+    self.languageLabel.stringValue = [MLStrings t:@"prefs.language"];
+    [[self.languagePopup itemAtIndex:0] setTitle:[MLStrings t:@"prefs.lang.zh"]];
+    [[self.languagePopup itemAtIndex:1] setTitle:[MLStrings t:@"prefs.lang.en"]];
+    self.colsLabel.stringValue = [MLStrings t:@"prefs.grid_cols"];
+    self.rowsLabel.stringValue = [MLStrings t:@"prefs.grid_rows"];
+    self.iconSizeLabel.stringValue = [MLStrings t:@"prefs.icon_size"];
+    self.opacityLabel.stringValue = [MLStrings t:@"prefs.overlay_opacity"];
+    self.hotCornerEnabled.title = [MLStrings t:@"prefs.hot_corner_enabled"];
+    self.hotCornerLabel.stringValue = [MLStrings t:@"prefs.hot_corner"];
+
+    NSInteger cornerIdx = self.cornerPopup.indexOfSelectedItem;
+    [self.cornerPopup removeAllItems];
+    [self.cornerPopup addItemsWithTitles:@[
+        [MLStrings t:@"prefs.corner.top_left"],
+        [MLStrings t:@"prefs.corner.top_right"],
+        [MLStrings t:@"prefs.corner.bottom_left"],
+        [MLStrings t:@"prefs.corner.bottom_right"],
+        [MLStrings t:@"prefs.corner.off"],
+    ]];
+    if (cornerIdx >= 0 && cornerIdx < self.cornerPopup.numberOfItems) {
+        [self.cornerPopup selectItemAtIndex:cornerIdx];
+    }
+
+    self.sizeLabel.stringValue = [MLStrings t:@"prefs.hot_size"];
+    self.scanTitle.stringValue = [MLStrings t:@"prefs.scan_title"];
+    self.scanHint.stringValue = [MLStrings t:@"prefs.scan_hint"];
+    self.sysLabel.stringValue = [MLStrings t:@"prefs.system_dirs"];
+    self.extraLabel.stringValue = [MLStrings t:@"prefs.extra_dirs"];
+    self.addBtn.title = [MLStrings t:@"prefs.add_folder"];
+    self.removeBtn.title = [MLStrings t:@"prefs.remove"];
+    self.rescanBtn.title = [MLStrings t:@"prefs.rescan"];
+    [self updateIconSizeLabel];
+    self.pathLabel.stringValue =
+        [NSString stringWithFormat:[MLStrings t:@"prefs.config_path"],
+                                   [MLConfigStore configFileURL].path];
+    [self.extraRootsTable reloadData];
+}
+
+- (void)languageDidChange:(NSNotification *)note {
+    (void)note;
+    [self applyLocalizedStrings];
+}
+
+- (void)languageChanged:(id)sender {
+    (void)sender;
+    if (self.suppressApply) {
+        return;
+    }
+    MLLanguage lang = (self.languagePopup.indexOfSelectedItem == 0)
+                          ? MLLanguageChinese
+                          : MLLanguageEnglish;
+    [self.config updateLanguage:lang];
 }
 
 - (void)colsChanged:(id)sender {
@@ -297,7 +393,7 @@
 - (void)updateIconSizeLabel {
     float size = [self iconSizeFromSlider];
     if (size <= 0.f) {
-        self.iconSizeValueLabel.stringValue = @"Auto";
+        self.iconSizeValueLabel.stringValue = [MLStrings t:@"prefs.icon_auto"];
     } else {
         self.iconSizeValueLabel.stringValue =
             [NSString stringWithFormat:@"%.0f", size];
@@ -386,7 +482,8 @@
         cell.stringValue = path;
         cell.textColor = [NSColor labelColor];
     } else {
-        cell.stringValue = [NSString stringWithFormat:@"%@（未挂载）", path];
+        cell.stringValue =
+            [NSString stringWithFormat:[MLStrings t:@"prefs.unmounted"], path];
         cell.textColor = [NSColor secondaryLabelColor];
     }
     return cell;
@@ -399,8 +496,8 @@
     panel.canChooseDirectories = YES;
     panel.allowsMultipleSelection = NO;
     panel.canCreateDirectories = NO;
-    panel.prompt = @"添加";
-    panel.message = @"选择包含 .app 的文件夹（例如外接硬盘上的 Apps）";
+    panel.prompt = [MLStrings t:@"prefs.add_prompt"];
+    panel.message = [MLStrings t:@"prefs.add_message"];
     panel.directoryURL = [NSURL fileURLWithPath:@"/Volumes"];
     [panel beginSheetModalForWindow:self.window
                   completionHandler:^(NSModalResponse result) {
@@ -410,9 +507,9 @@
                       NSString *path = panel.URL.path;
                       if (![self.config addScanExtraRoot:path]) {
                           NSAlert *alert = [[NSAlert alloc] init];
-                          alert.messageText = @"未能添加目录";
-                          alert.informativeText = @"路径无效，或已在列表中。";
-                          [alert addButtonWithTitle:@"好"];
+                          alert.messageText = [MLStrings t:@"prefs.add_failed_title"];
+                          alert.informativeText = [MLStrings t:@"prefs.add_failed_info"];
+                          [alert addButtonWithTitle:[MLStrings t:@"prefs.ok"]];
                           [alert beginSheetModalForWindow:self.window completionHandler:nil];
                           return;
                       }
@@ -437,6 +534,7 @@
 
 - (void)reloadFields {
     self.suppressApply = YES;
+    [self.languagePopup selectItemAtIndex:(self.config.language == MLLanguageChinese) ? 0 : 1];
     self.colsSlider.doubleValue = self.config.gridConfig.cols;
     self.rowsSlider.doubleValue = self.config.gridConfig.rows;
     self.colsValueLabel.stringValue =
@@ -459,7 +557,8 @@
     [self selectPopupForPosition:self.config.hotCornerPosition];
     self.sizeField.stringValue = [NSString stringWithFormat:@"%.0f", self.config.hotCornerSizePt];
     self.pathLabel.stringValue =
-        [NSString stringWithFormat:@"Config: %@", [MLConfigStore configFileURL].path];
+        [NSString stringWithFormat:[MLStrings t:@"prefs.config_path"],
+                                   [MLConfigStore configFileURL].path];
     [self reloadExtraRootsTable];
     self.suppressApply = NO;
 }
@@ -483,6 +582,7 @@
 
 - (void)show {
     [self ensureWindow];
+    [self applyLocalizedStrings];
     [self reloadFields];
     [self.window center];
     [self.window orderFrontRegardless];

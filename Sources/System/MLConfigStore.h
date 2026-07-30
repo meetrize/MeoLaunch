@@ -1,5 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
+#import "MLStrings.h"
+
 #include "ml_grid.h"
 
 typedef NS_ENUM(NSInteger, MLHotCornerPosition) {
@@ -35,6 +37,7 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 @property (nonatomic, assign, readonly) NSInteger fadeMs;
 @property (nonatomic, assign, readonly) CGFloat overlayOpacity; /* 0…1 scrim alpha, default 0.55 */
 @property (nonatomic, assign, readonly) BOOL overlayBlur; /* blur desktop behind overlay */
+@property (nonatomic, assign, readonly) MLLanguage language; /* ui.language: en | zh */
 
 /// Full scan root list as stored (may contain ~). Built-ins first, then extras.
 @property (nonatomic, copy, readonly) NSArray<NSString *> *scanRoots;
@@ -54,6 +57,7 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
                       position:(MLHotCornerPosition)position
                         sizePt:(CGFloat)sizePt
                        delayMs:(NSInteger)delayMs;
+- (void)updateLanguage:(MLLanguage)language;
 
 /// Extra roots only (after built-ins). Normalized absolute-or-~ paths.
 - (NSArray<NSString *> *)scanExtraRoots;

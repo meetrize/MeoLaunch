@@ -6,6 +6,7 @@
 #import "MLLayoutStore.h"
 #import "MLOverlayController.h"
 #import "MLPrefsWindow.h"
+#import "MLStrings.h"
 
 #include "ml_app_index.h"
 #include "ml_layout.h"
@@ -17,6 +18,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 @interface AppDelegate () <MLHotCornerMonitorDelegate, MLHotKeyManagerDelegate, MLOverlayControllerDelegate>
 @property (nonatomic, strong) NSStatusItem *statusItem;
+@property (nonatomic, strong) NSMenuItem *showOverlayItem;
+@property (nonatomic, strong) NSMenuItem *retryHotCornerItem;
+@property (nonatomic, strong) NSMenuItem *prefsItem;
+@property (nonatomic, strong) NSMenuItem *quitItem;
 @property (nonatomic, strong) MLOverlayController *overlay;
 @property (nonatomic, strong) MLHotCornerMonitor *hotCorner;
 @property (nonatomic, strong) MLHotKeyManager *hotKey;
@@ -64,6 +69,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
                                              selector:@selector(layoutDidChange:)
                                                  name:MLLayoutStoreDidChangeNotification
                                                object:self.layoutStore];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(languageDidChange:)
+                                                 name:MLLanguageDidChangeNotification
+                                               object:nil];
 
     memset(&_appIndex, 0, sizeof(_appIndex));
     [self rescanApps];
@@ -119,12 +128,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     [ud setBool:YES forKey:kMLDidPromptAccessibilityKey];
 
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"需要「辅助功能」权限";
-    alert.informativeText =
-        @"MeoLaunch 用触发角唤起应用列表。请在「系统设置 → 隐私与安全性 → 辅助功能」中允许 MeoLaunch。\n\n"
-        @"未授权时仍可通过菜单栏或 ⌥Space 打开。";
-    [alert addButtonWithTitle:@"打开系统设置"];
-    [alert addButtonWithTitle:@"稍后"];
+    alert.messageText = [MLStrings t:@"a11y.title"];
+    alert.informativeText = [MLStrings t:@"a11y.body"];
+    [alert addButtonWithTitle:[MLStrings t:@"a11y.open_settings"]];
+    [alert addButtonWithTitle:[MLStrings t:@"a11y.later"]];
     NSModalResponse resp = [alert runModal];
     if (resp == NSAlertFirstButtonReturn) {
         NSURL *url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
@@ -222,16 +229,43 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         } else {
             button.title = @"ML";
         }
-        button.toolTip = @"MeoLaunch (⌥Space)";
     }
 
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"MeoLaunch"];
-    [menu addItemWithTitle:@"Show Overlay" action:@selector(showOverlay:) keyEquivalent:@"s"];
-    [menu addItemWithTitle:@"Retry Hot Corner Permission" action:@selector(retryHotCorner:) keyEquivalent:@""];
-    [menu addItemWithTitle:@"Preferences…" action:@selector(showPrefs:) keyEquivalent:@","];
+    self.showOverlayItem = [[NSMenuItem alloc] initWithTitle:@""
+                                                      action:@selector(showOverlay:)
+                                               keyEquivalent:@"s"];
+    self.retryHotCornerItem = [[NSMenuItem alloc] initWithTitle:@""
+                                                         action:@selector(retryHotCorner:)
+                                                  keyEquivalent:@""];
+    self.prefsItem = [[NSMenuItem alloc] initWithTitle:@""
+                                                action:@selector(showPrefs:)
+                                         keyEquivalent:@","];
+    self.quitItem = [[NSMenuItem alloc] initWithTitle:@""
+                                               action:@selector(quit:)
+                                        keyEquivalent:@"q"];
+    [menu addItem:self.showOverlayItem];
+    [menu addItem:self.retryHotCornerItem];
+    [menu addItem:self.prefsItem];
     [menu addItem:[NSMenuItem separatorItem]];
-    [menu addItemWithTitle:@"Quit MeoLaunch" action:@selector(quit:) keyEquivalent:@"q"];
+    [menu addItem:self.quitItem];
     self.statusItem.menu = menu;
+    [self refreshStatusMenuTitles];
+}
+
+- (void)refreshStatusMenuTitles {
+    self.showOverlayItem.title = [MLStrings t:@"menu.show_overlay"];
+    self.retryHotCornerItem.title = [MLStrings t:@"menu.retry_hot_corner"];
+    self.prefsItem.title = [MLStrings t:@"menu.preferences"];
+    self.quitItem.title = [MLStrings t:@"menu.quit"];
+    if (self.statusItem.button) {
+        self.statusItem.button.toolTip = [MLStrings t:@"menu.tooltip"];
+    }
+}
+
+- (void)languageDidChange:(NSNotification *)note {
+    (void)note;
+    [self refreshStatusMenuTitles];
 }
 
 - (void)showOverlay:(id)sender {
