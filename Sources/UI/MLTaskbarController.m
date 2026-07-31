@@ -11,13 +11,19 @@
 #import "MLWorkAreaEnforcer.h"
 
 #import <ApplicationServices/ApplicationServices.h>
+#import <QuartzCore/QuartzCore.h>
 #import <dlfcn.h>
 
 enum {
     MLTaskbarBarHeight = 40,
-    MLTaskbarPeekOffset = 12,
+    MLTaskbarPeekOffset = 28,
     MLTaskbarHideConfirmCount = 2,
 };
+
+/** Quiet period before painting live candidates — absorbs Show Desktop / Exposé churn. */
+static const NSTimeInterval MLTaskbarItemsCommitDelay = 0.32;
+/** After leaving peek, wait for window list to settle before one atomic paint. */
+static const NSTimeInterval MLTaskbarExitSettleDelay = 0.45;
 
 typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     MLTaskbarBarModeNormal = 0,
@@ -30,6 +36,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 @property (nonatomic, strong) NSWindow *window;
 @property (nonatomic, strong) MLTaskbarView *barView;
 @property (nonatomic, assign) MLTaskbarBarMode mode;
+/** Latest computed chips; painted only via commit (not on every monitor tick). */
+@property (nonatomic, strong) NSArray<MLTaskbarItem *> *pendingItems;
 @end
 
 @implementation MLTaskbarScreenBar
@@ -46,6 +54,22 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 @property (nonatomic, strong) NSSet<NSNumber *> *fullscreenScreenIDs;
 @property (nonatomic, strong) NSSet<NSNumber *> *desktopRevealScreenIDs;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *fullscreenHideStreaks;
+/** Per-screen window-chip counts from the last successful (unfrozen) rebuild. */
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *lastStableWindowCountByScreen;
+/** Deep-copied chips per screen, captured at freeze time. */
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSArray<MLTaskbarItem *> *> *frozenItemsByScreenID;
+/** While YES, chips stay exactly as frozen — no live rebuild. */
+@property (nonatomic, assign) BOOL itemsFrozenForDesktopReveal;
+/** Live on-screen window count while desktop was normal; used to detect sudden drop. */
+@property (nonatomic, assign) NSInteger lastStableLiveWindowCount;
+/** Live count captured at freeze time (unfreeze when live returns). */
+@property (nonatomic, assign) NSInteger freezeLiveBaseline;
+/** Wall time when start finished; freeze disabled until armed. */
+@property (nonatomic, assign) NSTimeInterval desktopRevealArmTime;
+/** Debounced painter: display list is sticky until this fires. */
+@property (nonatomic, strong) NSTimer *itemsCommitTimer;
+/** Until this time, refuse painting a much-smaller chip set (exit Show Desktop settle). */
+@property (nonatomic, assign) NSTimeInterval stickyDisplayUntil;
 @property (nonatomic, strong) NSTimer *visibilitySafetyTimer;
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL hiddenForOverlay;
@@ -67,8 +91,15 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         _bars = [NSMutableArray array];
         _displayNameCache = [NSMutableDictionary dictionary];
         _fullscreenHideStreaks = [NSMutableDictionary dictionary];
+        _lastStableWindowCountByScreen = [NSMutableDictionary dictionary];
+        _frozenItemsByScreenID = [NSMutableDictionary dictionary];
         _fullscreenScreenIDs = [NSSet set];
         _desktopRevealScreenIDs = [NSSet set];
+        _itemsFrozenForDesktopReveal = NO;
+        _lastStableLiveWindowCount = 0;
+        _freezeLiveBaseline = 0;
+        _desktopRevealArmTime = 0;
+        _stickyDisplayUntil = 0;
     }
     return self;
 }
@@ -298,6 +329,39 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     return out;
 }
 
+- (NSInteger)windowChipCountInItems:(NSArray<MLTaskbarItem *> *)items {
+    NSInteger n = 0;
+    for (MLTaskbarItem *it in items ?: @[]) {
+        if (it.kind == MLTaskbarItemRunningWindow) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
+- (NSArray<MLTaskbarItem *> *)deepCopyItems:(NSArray<MLTaskbarItem *> *)src {
+    NSMutableArray<MLTaskbarItem *> *out = [NSMutableArray arrayWithCapacity:src.count];
+    for (MLTaskbarItem *it in src ?: @[]) {
+        MLTaskbarItem *c = [[MLTaskbarItem alloc] init];
+        c.path = it.path;
+        c.bundleID = it.bundleID;
+        c.pid = it.pid;
+        c.windowID = it.windowID;
+        c.title = it.title;
+        c.kind = it.kind;
+        c.pinned = it.pinned;
+        c.minimized = it.minimized;
+        c.active = it.active;
+        c.seenOrder = it.seenOrder;
+        [out addObject:c];
+    }
+    return out;
+}
+
+/**
+ * Compute chips for one bar into pendingItems — does NOT paint.
+ * Painting goes through commitPendingItemsForce: so Show Desktop churn stays invisible.
+ */
 - (void)rebuildItemsForBar:(MLTaskbarScreenBar *)bar screen:(NSScreen *)screen {
     if (!bar.barView || !screen) {
         return;
@@ -469,13 +533,463 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 
     items = [self fitItems:items toWidth:NSWidth(bar.barView.bounds) spacing:bar.barView.spacing
                     minWidth:bar.barView.itemMinWidth];
-    bar.barView.items = items;
+    bar.pendingItems = items;
 }
 
-- (void)rebuildItems {
+- (NSInteger)windowChipCountOnBar:(MLTaskbarScreenBar *)bar {
+    return [self windowChipCountInItems:bar.barView.items];
+}
+
+- (void)cancelItemsCommitTimer {
+    [self.itemsCommitTimer invalidate];
+    self.itemsCommitTimer = nil;
+}
+
+- (void)scheduleItemsCommitWithDelay:(NSTimeInterval)delay {
+    [self cancelItemsCommitTimer];
+    if (delay < 0.01) {
+        [self commitPendingItemsForce:NO];
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    self.itemsCommitTimer = [NSTimer scheduledTimerWithTimeInterval:delay
+                                                             repeats:NO
+                                                               block:^(__unused NSTimer *timer) {
+                                                                   __strong typeof(weakSelf) self = weakSelf;
+                                                                   if (!self) {
+                                                                       return;
+                                                                   }
+                                                                   self.itemsCommitTimer = nil;
+                                                                   [self commitPendingItemsForce:NO];
+                                                               }];
+    [[NSRunLoop mainRunLoop] addTimer:self.itemsCommitTimer forMode:NSRunLoopCommonModes];
+}
+
+/**
+ * Paint pending → barView in one shot.
+ * force=YES: pin / soft-min / user actions (skip reveal-hold).
+ * force=NO: refuse large drops while desktop looks revealed — freeze instead.
+ */
+- (void)commitPendingItemsForce:(BOOL)force {
     if (!self.started) {
         return;
     }
+    if (self.itemsFrozenForDesktopReveal) {
+        [self restoreFrozenItemsOntoBars];
+        return;
+    }
+
+    if (!force && [self looksLikeDesktopReveal] && [self totalWindowChipsOnBars] >= 1) {
+        /* Keep displayed chips; enter peek freeze so monitor churn never paints. */
+        [self freezeDesktopReveal];
+        return;
+    }
+
+    NSInteger pendingWindows = 0;
+    NSInteger shownWindows = 0;
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        pendingWindows += [self windowChipCountInItems:bar.pendingItems];
+        shownWindows += [self windowChipCountOnBar:bar];
+    }
+    if (!force && shownWindows >= 2 && pendingWindows + 1 < shownWindows &&
+        [self looksLikeDesktopReveal]) {
+        [self freezeDesktopReveal];
+        return;
+    }
+
+    NSTimeInterval now = [NSDate date].timeIntervalSinceReferenceDate;
+    if (!force && now < self.stickyDisplayUntil) {
+        NSInteger expect = MAX(self.lastStableLiveWindowCount, shownWindows);
+        if (expect >= 2 && pendingWindows + 1 < expect) {
+            CGFloat cover = 0;
+            NSInteger onScreen = 0;
+            NSInteger all = 0;
+            [self measureDesktopRevealWithCenterCover:&cover onScreen:&onScreen all:&all];
+            BOOL newReality = (cover >= 0.15 && onScreen <= pendingWindows + 1 &&
+                               all <= pendingWindows + 1);
+            if (!newReality) {
+                /* Windows still flying back — keep old chips, try again after quiet. */
+                [self scheduleItemsCommitWithDelay:MLTaskbarItemsCommitDelay];
+                return;
+            }
+        }
+    }
+
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (!bar.barView || !bar.pendingItems) {
+            continue;
+        }
+        bar.barView.items = bar.pendingItems;
+        NSInteger windowChips = [self windowChipCountOnBar:bar];
+        if (bar.screenID && windowChips > 0) {
+            self.lastStableWindowCountByScreen[bar.screenID] = @(windowChips);
+        } else if (bar.screenID && ![self looksLikeDesktopReveal]) {
+            self.lastStableWindowCountByScreen[bar.screenID] = @(windowChips);
+        }
+    }
+}
+
+- (void)restoreFrozenItemsOntoBars {
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (!bar.screenID || !bar.barView) {
+            continue;
+        }
+        NSArray<MLTaskbarItem *> *frozen = self.frozenItemsByScreenID[bar.screenID];
+        if (frozen) {
+            bar.barView.items = frozen;
+            bar.pendingItems = frozen;
+        }
+    }
+}
+
+- (BOOL)isDesktopRevealArmed {
+    if (self.desktopRevealArmTime <= 0) {
+        return NO;
+    }
+    return [NSDate date].timeIntervalSinceReferenceDate >= self.desktopRevealArmTime;
+}
+
+/**
+ * Scan app windows: center coverage (0…1 max across screens), on-screen count,
+ * and all-spaces count (includes Show Desktop off-screen / edge windows).
+ */
+- (void)measureDesktopRevealWithCenterCover:(CGFloat *)outCover
+                                   onScreen:(NSInteger *)outOnScreen
+                                        all:(NSInteger *)outAll {
+    __block CGFloat maxCover = 0.0;
+    __block NSInteger onScreen = 0;
+    __block NSInteger all = 0;
+    pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
+
+    void (^consume)(CFDictionaryRef, BOOL) = ^(CFDictionaryRef info, BOOL countAllOnly) {
+        if (!info) {
+            return;
+        }
+        CFNumberRef pidRef = CFDictionaryGetValue(info, kCGWindowOwnerPID);
+        pid_t pid = 0;
+        if (pidRef) {
+            CFNumberGetValue(pidRef, kCFNumberIntType, &pid);
+        }
+        if (pid <= 0 || pid == selfPid) {
+            return;
+        }
+        CFStringRef ownerRef = CFDictionaryGetValue(info, kCGWindowOwnerName);
+        if (ownerRef && CFGetTypeID(ownerRef) == CFStringGetTypeID()) {
+            NSString *owner = (__bridge NSString *)ownerRef;
+            if ([[self class] isSystemWindowOwner:owner] ||
+                [owner isEqualToString:@"Finder"]) {
+                return;
+            }
+        }
+        CFNumberRef layerRef = CFDictionaryGetValue(info, kCGWindowLayer);
+        int layer = 0;
+        if (layerRef) {
+            CFNumberGetValue(layerRef, kCFNumberIntType, &layer);
+        }
+        if (layer != 0) {
+            return;
+        }
+        CFNumberRef alphaRef = CFDictionaryGetValue(info, kCGWindowAlpha);
+        if (alphaRef) {
+            double alpha = 1.0;
+            CFNumberGetValue(alphaRef, kCFNumberDoubleType, &alpha);
+            if (alpha < 0.2) {
+                return;
+            }
+        }
+        CGRect boundsQ = CGRectZero;
+        CFDictionaryRef boundsDict = CFDictionaryGetValue(info, kCGWindowBounds);
+        if (!boundsDict || !CGRectMakeWithDictionaryRepresentation(boundsDict, &boundsQ)) {
+            return;
+        }
+        if (boundsQ.size.width < 60.0 || boundsQ.size.height < 40.0) {
+            return;
+        }
+        if (countAllOnly) {
+            all += 1;
+            return;
+        }
+        NSRect bounds = [MLScreenGeometry cocoaRectFromQuartzBounds:boundsQ];
+        onScreen += 1;
+        for (NSScreen *screen in NSScreen.screens) {
+            NSRect sf = screen.frame;
+            NSRect center = NSInsetRect(sf, NSWidth(sf) * 0.18, NSHeight(sf) * 0.18);
+            NSRect hit = NSIntersectionRect(bounds, center);
+            if (NSIsEmptyRect(hit)) {
+                continue;
+            }
+            CGFloat area = NSWidth(center) * NSHeight(center);
+            if (area < 1.0) {
+                continue;
+            }
+            CGFloat cover = (NSWidth(hit) * NSHeight(hit)) / area;
+            if (cover > maxCover) {
+                maxCover = cover;
+            }
+        }
+    };
+
+    CFArrayRef onList = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
+                                                       kCGWindowListExcludeDesktopElements,
+                                                   kCGNullWindowID);
+    if (onList) {
+        CFIndex count = CFArrayGetCount(onList);
+        for (CFIndex i = 0; i < count; i++) {
+            consume((CFDictionaryRef)CFArrayGetValueAtIndex(onList, i), NO);
+        }
+        CFRelease(onList);
+    }
+    CFArrayRef allList = CGWindowListCopyWindowInfo(kCGWindowListOptionAll |
+                                                        kCGWindowListExcludeDesktopElements,
+                                                    kCGNullWindowID);
+    if (allList) {
+        CFIndex count = CFArrayGetCount(allList);
+        for (CFIndex i = 0; i < count; i++) {
+            consume((CFDictionaryRef)CFArrayGetValueAtIndex(allList, i), YES);
+        }
+        CFRelease(allList);
+    }
+
+    if (outCover) {
+        *outCover = maxCover;
+    }
+    if (outOnScreen) {
+        *outOnScreen = onScreen;
+    }
+    if (outAll) {
+        *outAll = all;
+    }
+}
+
+- (void)updateStableLiveCensus {
+    if (self.itemsFrozenForDesktopReveal) {
+        return;
+    }
+    NSInteger live = [self liveNonMinimizedWindowCount];
+    if (live > 0) {
+        self.lastStableLiveWindowCount = live;
+    }
+}
+
+- (NSInteger)frozenWindowChipTotal {
+    NSInteger n = 0;
+    for (NSNumber *sid in self.frozenItemsByScreenID) {
+        for (MLTaskbarItem *it in self.frozenItemsByScreenID[sid] ?: @[]) {
+            if (it.kind == MLTaskbarItemRunningWindow) {
+                n += 1;
+            }
+        }
+    }
+    return n;
+}
+
+- (BOOL)shouldUnfreezeDesktopReveal {
+    if (!self.itemsFrozenForDesktopReveal) {
+        return NO;
+    }
+    if (![self isDesktopRevealArmed]) {
+        return YES;
+    }
+    CGFloat cover = 0;
+    NSInteger onScreen = 0;
+    NSInteger all = 0;
+    [self measureDesktopRevealWithCenterCover:&cover onScreen:&onScreen all:&all];
+    /* Truly empty — not Show Desktop; leave peek. */
+    if (all < 1 && onScreen < 1) {
+        return YES;
+    }
+    /* Windows back covering the desktop center. */
+    if (cover >= 0.18) {
+        return YES;
+    }
+    NSInteger live = [self liveNonMinimizedWindowCount];
+    if (live >= 1 && cover >= 0.10) {
+        return YES;
+    }
+    if (live >= MAX(1, self.freezeLiveBaseline) && onScreen >= live) {
+        return YES;
+    }
+    return NO;
+}
+
+- (void)freezeDesktopReveal {
+    if (self.itemsFrozenForDesktopReveal) {
+        [self restoreFrozenItemsOntoBars];
+        return;
+    }
+    if (![self isDesktopRevealArmed]) {
+        return;
+    }
+    [self cancelItemsCommitTimer];
+    [self.frozenItemsByScreenID removeAllObjects];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (!bar.screenID || !bar.barView) {
+            continue;
+        }
+        NSArray<MLTaskbarItem *> *shot = [self deepCopyItems:bar.barView.items];
+        self.frozenItemsByScreenID[bar.screenID] = shot;
+        bar.pendingItems = shot;
+        NSInteger chips = [self windowChipCountOnBar:bar];
+        if (chips > 0) {
+            self.lastStableWindowCountByScreen[bar.screenID] = @(chips);
+        }
+    }
+    self.freezeLiveBaseline = MAX(self.lastStableLiveWindowCount, [self frozenWindowChipTotal]);
+    self.itemsFrozenForDesktopReveal = YES;
+    NSMutableSet<NSNumber *> *all = [NSMutableSet set];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (bar.screenID) {
+            [all addObject:bar.screenID];
+        }
+    }
+    self.desktopRevealScreenIDs = all;
+    self.fullscreenScreenIDs = [NSSet set];
+    NSLog(@"[Taskbar] desktop reveal FREEZE baseline=%ld chips=%ld",
+          (long)self.freezeLiveBaseline, (long)[self frozenWindowChipTotal]);
+    [self applyBarVisibility];
+}
+
+- (void)unfreezeDesktopRevealAndRefresh {
+    BOOL hadPeek = self.itemsFrozenForDesktopReveal || self.desktopRevealScreenIDs.count > 0;
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (bar.mode == MLTaskbarBarModePeek) {
+            hadPeek = YES;
+            break;
+        }
+    }
+    if (!hadPeek) {
+        return;
+    }
+
+    NSSet<NSNumber *> *wasReveal = [self.desktopRevealScreenIDs copy] ?: [NSSet set];
+    self.itemsFrozenForDesktopReveal = NO;
+    self.desktopRevealScreenIDs = [NSSet set];
+    self.freezeLiveBaseline = 0;
+    /* Keep frozenItems until first successful commit so a partial live list cannot paint. */
+    NSDictionary<NSNumber *, NSArray<MLTaskbarItem *> *> *hold =
+        [self.frozenItemsByScreenID copy] ?: @{};
+    [self.frozenItemsByScreenID removeAllObjects];
+
+    for (NSNumber *sid in wasReveal) {
+        [self.fullscreenHideStreaks removeObjectForKey:sid];
+    }
+    if (wasReveal.count > 0) {
+        NSMutableSet<NSNumber *> *fs = [self.fullscreenScreenIDs mutableCopy] ?: [NSMutableSet set];
+        [fs minusSet:wasReveal];
+        self.fullscreenScreenIDs = fs;
+    }
+
+    NSDictionary<NSNumber *, NSScreen *> *screensByID = [self screensByID];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        NSScreen *screen = screensByID[bar.screenID];
+        if (!screen || !bar.window) {
+            continue;
+        }
+        bar.mode = MLTaskbarBarModeNormal;
+        CGFloat height = [self barHeightForBar:bar];
+        NSRect home = [self normalFrameForScreen:screen height:height];
+        [bar.window setFrame:home display:YES];
+        bar.barView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        bar.barView.frame = bar.window.contentView.bounds;
+        /* Hold last peek composition until settle commit — no incremental chip morph. */
+        NSArray<MLTaskbarItem *> *kept = hold[bar.screenID];
+        if (kept.count > 0) {
+            bar.barView.items = kept;
+            bar.pendingItems = kept;
+        }
+        [bar.window orderFrontRegardless];
+    }
+
+    self.stickyDisplayUntil = [NSDate date].timeIntervalSinceReferenceDate + 1.25;
+    /* One atomic paint after window list quiet — not on each window that flies back. */
+    [self computePendingItemsForAllBars];
+    [self scheduleItemsCommitWithDelay:MLTaskbarExitSettleDelay];
+    [self updateStableLiveCensus];
+    NSLog(@"[Taskbar] desktop reveal UNFREEZE + settle commit");
+}
+
+- (NSInteger)liveNonMinimizedWindowCount {
+    pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
+    NSInteger n = 0;
+    for (MLTaskbarWindowInfo *w in self.monitor.snapshot.windows ?: @[]) {
+        if (w.pid == selfPid || w.minimized) {
+            continue;
+        }
+        n += 1;
+    }
+    return n;
+}
+
+- (NSInteger)totalWindowChipsOnBars {
+    NSInteger n = 0;
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        n += [self windowChipCountOnBar:bar];
+    }
+    return n;
+}
+
+/** Desktop center clear while app windows still exist somewhere (Show Desktop / Exposé). */
+- (BOOL)looksLikeDesktopReveal {
+    if (![self isDesktopRevealArmed]) {
+        return NO;
+    }
+    CGFloat cover = 0;
+    NSInteger onScreen = 0;
+    NSInteger all = 0;
+    [self measureDesktopRevealWithCenterCover:&cover onScreen:&onScreen all:&all];
+    if (all < 1) {
+        return NO;
+    }
+    if (cover < 0.14 && onScreen <= 1) {
+        return YES;
+    }
+    if (cover < 0.10) {
+        return YES;
+    }
+    NSInteger live = [self liveNonMinimizedWindowCount];
+    if (self.lastStableLiveWindowCount >= 1 && live == 0 && cover < 0.20) {
+        return YES;
+    }
+    return NO;
+}
+
+/**
+ * Show Desktop: desktop center cleared while app windows still exist (edges / off-screen),
+ * or on-screen live count collapsed after we had a stable census.
+ */
+- (BOOL)shouldFreezeForDesktopReveal {
+    if (![self isDesktopRevealArmed] || self.itemsFrozenForDesktopReveal) {
+        return NO;
+    }
+    if (self.lastStableLiveWindowCount < 1 && [self totalWindowChipsOnBars] < 1) {
+        return NO;
+    }
+
+    CGFloat cover = 0;
+    NSInteger onScreen = 0;
+    NSInteger all = 0;
+    [self measureDesktopRevealWithCenterCover:&cover onScreen:&onScreen all:&all];
+
+    /* Windows still exist but desktop center is clear → Show Desktop / Exposé. */
+    if (cover < 0.14 && all >= 1 && [self totalWindowChipsOnBars] >= 1) {
+        if (onScreen < MAX(1, self.lastStableLiveWindowCount) || onScreen == 0 || cover < 0.08) {
+            return YES;
+        }
+    }
+    if (cover < 0.14 && all >= 1 && onScreen < MAX(1, self.lastStableLiveWindowCount)) {
+        return YES;
+    }
+    if (cover < 0.14 && all >= 1 && [self totalWindowChipsOnBars] >= 1 && onScreen == 0) {
+        return YES;
+    }
+    NSInteger live = [self liveNonMinimizedWindowCount];
+    if (self.lastStableLiveWindowCount >= 1 && live == 0 && all >= 1 && cover < 0.20) {
+        return YES;
+    }
+    return NO;
+}
+
+- (void)computePendingItemsForAllBars {
     NSDictionary<NSNumber *, NSScreen *> *screensByID = [self screensByID];
     for (MLTaskbarScreenBar *bar in self.bars) {
         NSScreen *screen = screensByID[bar.screenID];
@@ -483,6 +997,30 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
             [self rebuildItemsForBar:bar screen:screen];
         }
     }
+}
+
+/**
+ * @param immediate YES = paint now (pin / soft-min). NO = debounce (monitor churn).
+ */
+- (void)rebuildItemsImmediate:(BOOL)immediate {
+    if (!self.started) {
+        return;
+    }
+    if (self.itemsFrozenForDesktopReveal) {
+        [self restoreFrozenItemsOntoBars];
+        return;
+    }
+    [self computePendingItemsForAllBars];
+    if (immediate) {
+        [self cancelItemsCommitTimer];
+        [self commitPendingItemsForce:YES];
+    } else {
+        [self scheduleItemsCommitWithDelay:MLTaskbarItemsCommitDelay];
+    }
+}
+
+- (void)rebuildItems {
+    [self rebuildItemsImmediate:NO];
 }
 
 - (NSMutableArray<MLTaskbarItem *> *)fitItems:(NSMutableArray<MLTaskbarItem *> *)items
@@ -544,18 +1082,50 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     return NSMakeRect(NSMinX(visible), NSMinY(visible), NSWidth(visible), height);
 }
 
-- (NSRect)peekFrameForScreen:(NSScreen *)screen height:(CGFloat)height {
-    NSRect frame = [self normalFrameForScreen:screen height:height];
-    frame.origin.y -= (CGFloat)MLTaskbarPeekOffset;
-    return frame;
-}
-
-- (NSRect)desiredFrameForBar:(MLTaskbarScreenBar *)bar screen:(NSScreen *)screen {
-    CGFloat height = [self barHeightForBar:bar];
-    if (bar.mode == MLTaskbarBarModePeek) {
-        return [self peekFrameForScreen:screen height:height];
+/**
+ * Peek: move the whole taskbar window down by MLTaskbarPeekOffset.
+ * (Content-offset alone is unreliable under Mission Control / autoresizing.)
+ */
+- (void)applyPeekPresentationForBar:(MLTaskbarScreenBar *)bar
+                            peeking:(BOOL)peeking
+                           animated:(BOOL)animated {
+    if (!bar.window || !bar.barView) {
+        return;
     }
-    return [self normalFrameForScreen:screen height:height];
+    NSScreen *screen = nil;
+    for (NSScreen *s in NSScreen.screens) {
+        if ([[[self class] screenIDForScreen:s] isEqualToNumber:bar.screenID]) {
+            screen = s;
+            break;
+        }
+    }
+    if (!screen) {
+        screen = bar.window.screen ?: NSScreen.mainScreen;
+    }
+    if (!screen) {
+        return;
+    }
+
+    CGFloat height = [self barHeightForBar:bar];
+    NSRect home = [self normalFrameForScreen:screen height:height];
+    NSRect target = home;
+    if (peeking) {
+        target.origin.y -= (CGFloat)MLTaskbarPeekOffset;
+    }
+
+    bar.barView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    if (animated && bar.window.isVisible &&
+        fabs(NSMinY(bar.window.frame) - NSMinY(target)) > 0.5) {
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+            context.duration = 0.18;
+            [[bar.window animator] setFrame:target display:YES];
+        } completionHandler:^{
+            bar.barView.frame = bar.window.contentView.bounds;
+        }];
+    } else {
+        [bar.window setFrame:target display:YES];
+        bar.barView.frame = bar.window.contentView.bounds;
+    }
 }
 
 - (void)setBar:(MLTaskbarScreenBar *)bar frame:(NSRect)frame animated:(BOOL)animated {
@@ -594,12 +1164,15 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     w.acceptsMouseMovedEvents = NO;
     w.releasedWhenClosed = NO;
 
-    MLTaskbarView *view = [[MLTaskbarView alloc] initWithFrame:w.contentView.bounds];
+    NSView *content = w.contentView;
+    content.clipsToBounds = YES;
+
+    MLTaskbarView *view = [[MLTaskbarView alloc] initWithFrame:content.bounds];
     view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     view.delegate = self;
     view.iconCache = self.iconCache;
     view.barHeight = height;
-    [w.contentView addSubview:view];
+    [content addSubview:view];
 
     MLTaskbarScreenBar *bar = [[MLTaskbarScreenBar alloc] init];
     bar.screenID = [[self class] screenIDForScreen:screen];
@@ -620,7 +1193,11 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
             [keep addObject:bar];
             [wanted removeObject:bar.screenID];
             if (bar.mode != MLTaskbarBarModeHidden) {
-                [self setBar:bar frame:[self desiredFrameForBar:bar screen:screen] animated:NO];
+                CGFloat height = [self barHeightForBar:bar];
+                [self setBar:bar frame:[self normalFrameForScreen:screen height:height] animated:NO];
+                [self applyPeekPresentationForBar:bar
+                                          peeking:(bar.mode == MLTaskbarBarModePeek)
+                                         animated:NO];
             }
         } else {
             [bar.window orderOut:nil];
@@ -643,8 +1220,12 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         }
     }
 
-    [self rebuildItems];
     [self refreshFullscreenVisibility];
+    if (!self.itemsFrozenForDesktopReveal) {
+        [self rebuildItemsImmediate:YES];
+    } else {
+        [self restoreFrozenItemsOntoBars];
+    }
     [self.workAreaEnforcer enforceNow];
 }
 
@@ -684,8 +1265,17 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
                object:nil];
 
     [self.monitor start];
+    /* Allow Show Desktop freeze only after census has settled (avoid startup false peek). */
+    self.desktopRevealArmTime = [NSDate date].timeIntervalSinceReferenceDate + 1.0;
+    self.lastStableLiveWindowCount = 0;
+    self.freezeLiveBaseline = 0;
+    self.itemsFrozenForDesktopReveal = NO;
+    self.desktopRevealScreenIDs = [NSSet set];
+    [self.frozenItemsByScreenID removeAllObjects];
+
     [self syncBarsToScreens];
     [self scheduleStartupVisibilityRechecks];
+    [self updateVisibilitySafetyTimer];
 
     self.minimizeInterceptor = [[MLMinimizeInterceptor alloc] init];
     self.minimizeInterceptor.taskbar = self;
@@ -704,11 +1294,19 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     self.started = NO;
     self.fullscreenCheckPending = NO;
     self.startupVisibilityGeneration += 1;
+    [self cancelItemsCommitTimer];
     [self.visibilitySafetyTimer invalidate];
     self.visibilitySafetyTimer = nil;
     self.fullscreenScreenIDs = [NSSet set];
     self.desktopRevealScreenIDs = [NSSet set];
+    self.itemsFrozenForDesktopReveal = NO;
+    self.lastStableLiveWindowCount = 0;
+    self.freezeLiveBaseline = 0;
+    self.desktopRevealArmTime = 0;
+    [self.frozenItemsByScreenID removeAllObjects];
     [self.fullscreenHideStreaks removeAllObjects];
+    [self.lastStableWindowCountByScreen removeAllObjects];
+    self.stickyDisplayUntil = 0;
     [self.workAreaEnforcer stop];
     self.workAreaEnforcer = nil;
     [self.minimizeInterceptor stop];
@@ -727,27 +1325,50 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 
 - (void)pinsDidChange:(NSNotification *)note {
     (void)note;
-    [self rebuildItems];
+    if (self.itemsFrozenForDesktopReveal) {
+        return;
+    }
+    [self rebuildItemsImmediate:YES];
 }
 
 - (void)runningDidChange:(NSNotification *)note {
     (void)note;
-    [self rebuildItems];
-    [self scheduleFullscreenVisibilityCheck];
+    if ([self shouldFreezeForDesktopReveal]) {
+        [self freezeDesktopReveal];
+    }
+    [self refreshFullscreenVisibility];
+    if (!self.itemsFrozenForDesktopReveal) {
+        [self rebuildItemsImmediate:NO];
+    } else {
+        [self restoreFrozenItemsOntoBars];
+    }
 }
 
 - (void)frontAppDidChange:(NSNotification *)note {
     (void)note;
-    [self rebuildItems];
-    [self scheduleFullscreenVisibilityCheck];
+    if ([self shouldFreezeForDesktopReveal]) {
+        [self freezeDesktopReveal];
+    }
+    [self refreshFullscreenVisibility];
+    if (!self.itemsFrozenForDesktopReveal) {
+        [self rebuildItemsImmediate:NO];
+    } else {
+        [self restoreFrozenItemsOntoBars];
+    }
     [self updateVisibilitySafetyTimer];
-    /* Video / Space fullscreen often settles after activation. */
     __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-                       [weakSelf refreshFullscreenVisibility];
+                       __strong typeof(weakSelf) self = weakSelf;
+                       if (!self) {
+                           return;
+                       }
+                       if ([self shouldFreezeForDesktopReveal]) {
+                           [self freezeDesktopReveal];
+                       }
+                       [self refreshFullscreenVisibility];
                    });
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
                        [weakSelf refreshFullscreenVisibility];
                    });
@@ -766,7 +1387,9 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 - (void)screenParamsChanged:(NSNotification *)note {
     (void)note;
     [self syncBarsToScreens];
-    [self rebuildItems];
+    if (!self.itemsFrozenForDesktopReveal) {
+        [self rebuildItems];
+    }
 }
 
 - (void)overlayWillShow {
@@ -984,40 +1607,16 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 }
 
 /**
- * Show Desktop / Exposé: Finder is frontmost, known app windows exist for the screen,
- * but almost none of them remain on-screen (pushed away). Not the same as an empty desktop.
+ * Show Desktop peek: chips are frozen (or lastStable > 0) and screen center is clear.
+ * Exit when center cover returns (windows back).
  */
 - (NSSet<NSNumber *> *)detectDesktopRevealScreenIDsExcludingFullscreen:(NSSet<NSNumber *> *)fullscreenIDs {
     NSMutableSet<NSNumber *> *ids = [NSMutableSet set];
-    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
-    if (![front.bundleIdentifier isEqualToString:@"com.apple.finder"]) {
-        return ids;
-    }
-
     pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
-    NSMutableDictionary<NSNumber *, NSNumber *> *expectedByScreen = [NSMutableDictionary dictionary];
-    for (MLTaskbarWindowInfo *w in self.monitor.snapshot.windows ?: @[]) {
-        if (w.pid == selfPid || w.pid == front.processIdentifier) {
-            continue;
-        }
-        if (w.minimized) {
-            continue;
-        }
-        NSScreen *screen = [self screenForWindowBounds:w.bounds];
-        if (!screen) {
-            continue;
-        }
-        NSNumber *sid = [[self class] screenIDForScreen:screen];
-        if ([fullscreenIDs containsObject:sid]) {
-            continue;
-        }
-        expectedByScreen[sid] = @([expectedByScreen[sid] integerValue] + 1);
-    }
-    if (expectedByScreen.count == 0) {
-        return ids;
-    }
 
-    NSMutableDictionary<NSNumber *, NSNumber *> *coverAreaByScreen = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *, NSNumber *> *centerCoverByScreen = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *, NSNumber *> *onScreenByScreen = [NSMutableDictionary dictionary];
+
     CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
                                                      kCGWindowListExcludeDesktopElements,
                                                  kCGNullWindowID);
@@ -1033,7 +1632,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
             if (pidRef) {
                 CFNumberGetValue(pidRef, kCFNumberIntType, &pid);
             }
-            if (pid <= 0 || pid == selfPid || pid == front.processIdentifier) {
+            if (pid <= 0 || pid == selfPid) {
                 continue;
             }
             CFStringRef ownerRef = CFDictionaryGetValue(info, kCGWindowOwnerName);
@@ -1056,42 +1655,45 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
             if (alphaRef) {
                 double alpha = 1.0;
                 CFNumberGetValue(alphaRef, kCFNumberDoubleType, &alpha);
-                if (alpha < 0.5) {
+                if (alpha < 0.35) {
                     continue;
                 }
             }
-            CGRect bounds = CGRectZero;
+            CGRect boundsQ = CGRectZero;
             CFDictionaryRef boundsDict = CFDictionaryGetValue(info, kCGWindowBounds);
-            if (!boundsDict || !CGRectMakeWithDictionaryRepresentation(boundsDict, &bounds)) {
+            if (!boundsDict || !CGRectMakeWithDictionaryRepresentation(boundsDict, &boundsQ)) {
                 continue;
             }
-            if (bounds.size.width < 80.0 || bounds.size.height < 60.0) {
+            if (boundsQ.size.width < 60.0 || boundsQ.size.height < 40.0) {
                 continue;
             }
-            for (NSNumber *sid in expectedByScreen) {
-                NSScreen *screen = nil;
-                for (NSScreen *s in NSScreen.screens) {
-                    if ([[[self class] screenIDForScreen:s] isEqualToNumber:sid]) {
-                        screen = s;
-                        break;
-                    }
-                }
-                if (!screen) {
+            NSRect bounds = [MLScreenGeometry cocoaRectFromQuartzBounds:boundsQ];
+
+            for (NSScreen *screen in NSScreen.screens) {
+                NSNumber *sid = [[self class] screenIDForScreen:screen];
+                if ([fullscreenIDs containsObject:sid]) {
                     continue;
                 }
-                CGRect inter = CGRectIntersection(bounds, NSRectToCGRect(screen.frame));
-                if (CGRectIsNull(inter) || CGRectIsEmpty(inter)) {
+                NSRect sf = screen.frame;
+                if (NSIsEmptyRect(NSIntersectionRect(bounds, sf))) {
                     continue;
                 }
-                CGFloat area = inter.size.width * inter.size.height;
-                coverAreaByScreen[sid] = @([coverAreaByScreen[sid] doubleValue] + area);
+                onScreenByScreen[sid] = @([onScreenByScreen[sid] integerValue] + 1);
+
+                NSRect center = NSInsetRect(sf, NSWidth(sf) * 0.18, NSHeight(sf) * 0.18);
+                NSRect centerHit = NSIntersectionRect(bounds, center);
+                if (!NSIsEmptyRect(centerHit)) {
+                    CGFloat area = NSWidth(centerHit) * NSHeight(centerHit);
+                    centerCoverByScreen[sid] = @([centerCoverByScreen[sid] doubleValue] + area);
+                }
             }
         }
         CFRelease(list);
     }
 
-    for (NSNumber *sid in expectedByScreen) {
-        if ([expectedByScreen[sid] integerValue] < 1) {
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        NSNumber *sid = bar.screenID;
+        if (!sid || [fullscreenIDs containsObject:sid]) {
             continue;
         }
         NSScreen *screen = nil;
@@ -1104,16 +1706,33 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         if (!screen) {
             continue;
         }
-        CGFloat screenArea = screen.frame.size.width * screen.frame.size.height;
-        if (screenArea < 1.0) {
+
+        NSInteger chips = [self windowChipCountOnBar:bar];
+        NSInteger stable = [self.lastStableWindowCountByScreen[sid] integerValue];
+        NSInteger basis = MAX(chips, stable);
+        if (self.itemsFrozenForDesktopReveal && self.frozenItemsByScreenID[sid].count > 0) {
+            basis = MAX(basis, 1);
+        }
+        if (basis < 1) {
             continue;
         }
-        CGFloat cover = [coverAreaByScreen[sid] doubleValue] / screenArea;
-        /* Windows have been swept away — desktop is revealed. */
-        if (cover < 0.18) {
+
+        NSRect sf = screen.frame;
+        NSRect center = NSInsetRect(sf, NSWidth(sf) * 0.18, NSHeight(sf) * 0.18);
+        CGFloat centerArea = NSWidth(center) * NSHeight(center);
+        CGFloat centerCover = centerArea > 1.0
+                                  ? [centerCoverByScreen[sid] doubleValue] / centerArea
+                                  : 1.0;
+        NSInteger onScreen = [onScreenByScreen[sid] integerValue];
+
+        BOOL desktopShown = (centerCover < 0.12) || (onScreen == 0);
+        /* Require freeze (or imminent freeze) so empty-desktop after closing windows is not peek. */
+        if (desktopShown &&
+            (self.itemsFrozenForDesktopReveal || [self shouldFreezeForDesktopReveal])) {
             [ids addObject:sid];
         }
     }
+
     return ids;
 }
 
@@ -1159,27 +1778,16 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         return;
     }
 
-    BOOL finderFront = [NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier
-                        isEqualToString:@"com.apple.finder"];
-    BOOL anyNonNormal = NO;
+    BOOL anyNonNormal = self.itemsFrozenForDesktopReveal ||
+                        self.desktopRevealScreenIDs.count > 0 ||
+                        self.fullscreenScreenIDs.count > 0;
     for (MLTaskbarScreenBar *bar in self.bars) {
         if (bar.mode != MLTaskbarBarModeNormal || !bar.window.isVisible) {
             anyNonNormal = YES;
             break;
         }
     }
-    if (!anyNonNormal && !finderFront &&
-        self.fullscreenScreenIDs.count == 0 && self.desktopRevealScreenIDs.count == 0) {
-        [self.visibilitySafetyTimer invalidate];
-        self.visibilitySafetyTimer = nil;
-        return;
-    }
-
-    NSTimeInterval interval = (finderFront ||
-                               self.desktopRevealScreenIDs.count > 0 ||
-                               self.fullscreenScreenIDs.count > 0)
-                                  ? 0.2
-                                  : 0.75;
+    NSTimeInterval interval = anyNonNormal ? 0.2 : 0.45;
     if (self.visibilitySafetyTimer &&
         fabs(self.visibilitySafetyTimer.timeInterval - interval) < 0.01) {
         return;
@@ -1199,19 +1807,76 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         return;
     }
 
-    NSSet<NSNumber *> *rawFS = [self detectFullscreenScreenIDs];
-    NSSet<NSNumber *> *reveal = [self detectDesktopRevealScreenIDsExcludingFullscreen:rawFS];
+    /* Startup grace: never peek; clear any stuck offset and learn live census. */
+    if (![self isDesktopRevealArmed]) {
+        BOOL stuckPeek = self.itemsFrozenForDesktopReveal || self.desktopRevealScreenIDs.count > 0;
+        if (!stuckPeek) {
+            for (MLTaskbarScreenBar *b in self.bars) {
+                if (b.mode == MLTaskbarBarModePeek || NSMinY(b.barView.frame) < -0.5) {
+                    stuckPeek = YES;
+                    break;
+                }
+            }
+        }
+        if (stuckPeek) {
+            [self unfreezeDesktopRevealAndRefresh];
+        }
+        [self updateStableLiveCensus];
 
-    /* Hysteresis: need consecutive confirms to hide; one clear sample restores immediately. */
+        NSSet<NSNumber *> *rawFS = [self detectFullscreenScreenIDs];
+        NSMutableSet<NSNumber *> *committedFS = [NSMutableSet set];
+        NSMutableDictionary<NSNumber *, NSNumber *> *nextStreaks = [NSMutableDictionary dictionary];
+        NSSet<NSNumber *> *previousFS = self.fullscreenScreenIDs ?: [NSSet set];
+        for (NSScreen *screen in NSScreen.screens) {
+            NSNumber *sid = [[self class] screenIDForScreen:screen];
+            if ([rawFS containsObject:sid]) {
+                NSInteger streak = [self.fullscreenHideStreaks[sid] integerValue] + 1;
+                nextStreaks[sid] = @(streak);
+                if (streak >= (NSInteger)MLTaskbarHideConfirmCount || [previousFS containsObject:sid]) {
+                    [committedFS addObject:sid];
+                }
+            }
+        }
+        self.fullscreenHideStreaks = nextStreaks;
+        self.fullscreenScreenIDs = committedFS;
+        self.desktopRevealScreenIDs = [NSSet set];
+        [self applyBarVisibility];
+        return;
+    }
+
+    [self updateStableLiveCensus];
+
+    if ([self shouldFreezeForDesktopReveal]) {
+        [self freezeDesktopReveal];
+    }
+
+    if (self.itemsFrozenForDesktopReveal) {
+        [self restoreFrozenItemsOntoBars];
+        if ([self shouldUnfreezeDesktopReveal]) {
+            [self unfreezeDesktopRevealAndRefresh];
+            [self updateVisibilitySafetyTimer];
+            return;
+        }
+        NSMutableSet<NSNumber *> *all = [NSMutableSet set];
+        for (MLTaskbarScreenBar *bar in self.bars) {
+            if (bar.screenID) {
+                [all addObject:bar.screenID];
+            }
+        }
+        self.desktopRevealScreenIDs = all;
+        self.fullscreenScreenIDs = [NSSet set];
+        [self applyBarVisibility];
+        return;
+    }
+
+    NSSet<NSNumber *> *rawFS = [self detectFullscreenScreenIDs];
+
     NSMutableSet<NSNumber *> *committedFS = [NSMutableSet set];
     NSMutableDictionary<NSNumber *, NSNumber *> *nextStreaks = [NSMutableDictionary dictionary];
     NSSet<NSNumber *> *previousFS = self.fullscreenScreenIDs ?: [NSSet set];
 
     for (NSScreen *screen in NSScreen.screens) {
         NSNumber *sid = [[self class] screenIDForScreen:screen];
-        if ([reveal containsObject:sid]) {
-            continue;
-        }
         if ([rawFS containsObject:sid]) {
             NSInteger streak = [self.fullscreenHideStreaks[sid] integerValue] + 1;
             nextStreaks[sid] = @(streak);
@@ -1221,29 +1886,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         }
     }
     self.fullscreenHideStreaks = nextStreaks;
-
-    BOOL fsChanged = ![previousFS isEqualToSet:committedFS];
-    BOOL revealChanged = ![self.desktopRevealScreenIDs isEqualToSet:reveal];
     self.fullscreenScreenIDs = committedFS;
-    self.desktopRevealScreenIDs = reveal;
-
-    if (fsChanged || revealChanged) {
-        if (fsChanged) {
-            for (NSNumber *sid in committedFS) {
-                if (![previousFS containsObject:sid]) {
-                    NSLog(@"[Taskbar] hide bar screen=%@ (fullscreen confirmed)", sid);
-                }
-            }
-            for (NSNumber *sid in previousFS) {
-                if (![committedFS containsObject:sid]) {
-                    NSLog(@"[Taskbar] show bar screen=%@ (fullscreen cleared)", sid);
-                }
-            }
-        }
-        if (revealChanged) {
-            NSLog(@"[Taskbar] desktop reveal screens=%@", reveal);
-        }
-    }
+    self.desktopRevealScreenIDs = [NSSet set];
 
     [self applyBarVisibility];
 }
@@ -1272,26 +1916,25 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         }
 
         MLTaskbarBarMode previous = bar.mode;
-        if ([fs containsObject:bar.screenID]) {
-            bar.mode = MLTaskbarBarModeHidden;
-            [bar.window orderOut:nil];
-            continue;
-        }
 
-        if ([reveal containsObject:bar.screenID]) {
+        /* Peek screens must never be treated as fullscreen-hidden in the same pass. */
+        if ([reveal containsObject:bar.screenID] || self.itemsFrozenForDesktopReveal) {
             bar.mode = MLTaskbarBarModePeek;
-            NSRect frame = [self peekFrameForScreen:screen height:[self barHeightForBar:bar]];
-            BOOL animate = (previous == MLTaskbarBarModeNormal || previous == MLTaskbarBarModePeek);
-            [self setBar:bar frame:frame animated:animate];
+            BOOL animate = (previous != MLTaskbarBarModePeek);
+            [self applyPeekPresentationForBar:bar peeking:YES animated:animate];
             [bar.window orderFrontRegardless];
             continue;
         }
 
+        if ([fs containsObject:bar.screenID]) {
+            bar.mode = MLTaskbarBarModeHidden;
+            [self applyPeekPresentationForBar:bar peeking:NO animated:NO];
+            [bar.window orderOut:nil];
+            continue;
+        }
+
         bar.mode = MLTaskbarBarModeNormal;
-        NSRect frame = [self normalFrameForScreen:screen height:[self barHeightForBar:bar]];
-        /* Leaving peek/hidden: restore immediately (no wait for delayed rechecks). */
-        BOOL animate = (previous == MLTaskbarBarModePeek);
-        [self setBar:bar frame:frame animated:animate];
+        [self applyPeekPresentationForBar:bar peeking:NO animated:(previous == MLTaskbarBarModePeek)];
         [bar.window orderFrontRegardless];
     }
 
@@ -1353,13 +1996,17 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 
 - (void)refreshAfterCustomMinimize {
     [self.monitor pollNow];
-    [self rebuildItems];
+    if (!self.itemsFrozenForDesktopReveal) {
+        [self rebuildItemsImmediate:YES];
+    }
 }
 
 - (void)softStateDidChange:(NSNotification *)note {
     (void)note;
     [self.monitor pollNow];
-    [self rebuildItems];
+    if (!self.itemsFrozenForDesktopReveal) {
+        [self rebuildItemsImmediate:YES];
+    }
 }
 
 - (CGWindowID)rememberWindowForCustomMinimizePID:(pid_t)pid
@@ -1387,7 +2034,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
                            restoreFrame:restoreFrame
                                screenID:screenID
                                axWindow:axWindow];
-    [self rebuildItems];
+    [self rebuildItemsImmediate:YES];
 }
 
 - (void)updateSoftHideMethod:(MLWindowHideMethod)method forWindowID:(CGWindowID)windowID {
@@ -1396,7 +2043,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID {
     [self.monitor markSoftMinimizedWindowID:windowID];
-    [self rebuildItems];
+    [self rebuildItemsImmediate:YES];
 }
 
 #pragma mark - MLTaskbarViewDelegate
