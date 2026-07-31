@@ -13,12 +13,23 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <dlfcn.h>
 
-enum { MLTaskbarBarHeight = 40 };
+enum {
+    MLTaskbarBarHeight = 40,
+    MLTaskbarPeekOffset = 12,
+    MLTaskbarHideConfirmCount = 2,
+};
+
+typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
+    MLTaskbarBarModeNormal = 0,
+    MLTaskbarBarModePeek = 1,   /* Show Desktop: keep bar, slide down slightly */
+    MLTaskbarBarModeHidden = 2, /* Immersive / Space fullscreen */
+};
 
 @interface MLTaskbarScreenBar : NSObject
 @property (nonatomic, strong) NSNumber *screenID;
 @property (nonatomic, strong) NSWindow *window;
 @property (nonatomic, strong) MLTaskbarView *barView;
+@property (nonatomic, assign) MLTaskbarBarMode mode;
 @end
 
 @implementation MLTaskbarScreenBar
@@ -33,6 +44,9 @@ enum { MLTaskbarBarHeight = 40 };
 @property (nonatomic, strong) MLMinimizeInterceptor *minimizeInterceptor;
 @property (nonatomic, strong) MLWorkAreaEnforcer *workAreaEnforcer;
 @property (nonatomic, strong) NSSet<NSNumber *> *fullscreenScreenIDs;
+@property (nonatomic, strong) NSSet<NSNumber *> *desktopRevealScreenIDs;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSNumber *> *fullscreenHideStreaks;
+@property (nonatomic, strong) NSTimer *visibilitySafetyTimer;
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL hiddenForOverlay;
 @property (nonatomic, assign) BOOL fullscreenCheckPending;
@@ -52,6 +66,9 @@ enum { MLTaskbarBarHeight = 40 };
         _enabled = YES;
         _bars = [NSMutableArray array];
         _displayNameCache = [NSMutableDictionary dictionary];
+        _fullscreenHideStreaks = [NSMutableDictionary dictionary];
+        _fullscreenScreenIDs = [NSSet set];
+        _desktopRevealScreenIDs = [NSSet set];
     }
     return self;
 }
@@ -515,10 +532,52 @@ enum { MLTaskbarBarHeight = 40 };
     return map;
 }
 
-- (MLTaskbarScreenBar *)makeBarForScreen:(NSScreen *)screen {
+- (CGFloat)barHeightForBar:(MLTaskbarScreenBar *)bar {
+    if (bar.barView.barHeight > 0) {
+        return bar.barView.barHeight;
+    }
+    return (CGFloat)MLTaskbarBarHeight;
+}
+
+- (NSRect)normalFrameForScreen:(NSScreen *)screen height:(CGFloat)height {
     NSRect visible = screen.visibleFrame;
+    return NSMakeRect(NSMinX(visible), NSMinY(visible), NSWidth(visible), height);
+}
+
+- (NSRect)peekFrameForScreen:(NSScreen *)screen height:(CGFloat)height {
+    NSRect frame = [self normalFrameForScreen:screen height:height];
+    frame.origin.y -= (CGFloat)MLTaskbarPeekOffset;
+    return frame;
+}
+
+- (NSRect)desiredFrameForBar:(MLTaskbarScreenBar *)bar screen:(NSScreen *)screen {
+    CGFloat height = [self barHeightForBar:bar];
+    if (bar.mode == MLTaskbarBarModePeek) {
+        return [self peekFrameForScreen:screen height:height];
+    }
+    return [self normalFrameForScreen:screen height:height];
+}
+
+- (void)setBar:(MLTaskbarScreenBar *)bar frame:(NSRect)frame animated:(BOOL)animated {
+    if (!bar.window) {
+        return;
+    }
+    if (NSEqualRects(bar.window.frame, frame)) {
+        return;
+    }
+    if (animated && bar.window.isVisible) {
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
+            context.duration = 0.18;
+            [[bar.window animator] setFrame:frame display:YES];
+        }];
+    } else {
+        [bar.window setFrame:frame display:YES];
+    }
+}
+
+- (MLTaskbarScreenBar *)makeBarForScreen:(NSScreen *)screen {
     CGFloat height = (CGFloat)MLTaskbarBarHeight;
-    NSRect frame = NSMakeRect(NSMinX(visible), NSMinY(visible), NSWidth(visible), height);
+    NSRect frame = [self normalFrameForScreen:screen height:height];
 
     NSWindow *w = [[NSWindow alloc] initWithContentRect:frame
                                               styleMask:NSWindowStyleMaskBorderless
@@ -546,6 +605,7 @@ enum { MLTaskbarBarHeight = 40 };
     bar.screenID = [[self class] screenIDForScreen:screen];
     bar.window = w;
     bar.barView = view;
+    bar.mode = MLTaskbarBarModeNormal;
     return bar;
 }
 
@@ -559,10 +619,9 @@ enum { MLTaskbarBarHeight = 40 };
         if (screen) {
             [keep addObject:bar];
             [wanted removeObject:bar.screenID];
-            NSRect visible = screen.visibleFrame;
-            CGFloat height = bar.barView.barHeight > 0 ? bar.barView.barHeight : (CGFloat)MLTaskbarBarHeight;
-            NSRect frame = NSMakeRect(NSMinX(visible), NSMinY(visible), NSWidth(visible), height);
-            [bar.window setFrame:frame display:YES];
+            if (bar.mode != MLTaskbarBarModeHidden) {
+                [self setBar:bar frame:[self desiredFrameForBar:bar screen:screen] animated:NO];
+            }
         } else {
             [bar.window orderOut:nil];
             bar.window = nil;
@@ -645,7 +704,11 @@ enum { MLTaskbarBarHeight = 40 };
     self.started = NO;
     self.fullscreenCheckPending = NO;
     self.startupVisibilityGeneration += 1;
-    self.fullscreenScreenIDs = nil;
+    [self.visibilitySafetyTimer invalidate];
+    self.visibilitySafetyTimer = nil;
+    self.fullscreenScreenIDs = [NSSet set];
+    self.desktopRevealScreenIDs = [NSSet set];
+    [self.fullscreenHideStreaks removeAllObjects];
     [self.workAreaEnforcer stop];
     self.workAreaEnforcer = nil;
     [self.minimizeInterceptor stop];
@@ -677,6 +740,7 @@ enum { MLTaskbarBarHeight = 40 };
     (void)note;
     [self rebuildItems];
     [self scheduleFullscreenVisibilityCheck];
+    [self updateVisibilitySafetyTimer];
     /* Video / Space fullscreen often settles after activation. */
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
@@ -707,7 +771,10 @@ enum { MLTaskbarBarHeight = 40 };
 
 - (void)overlayWillShow {
     self.hiddenForOverlay = YES;
+    [self.visibilitySafetyTimer invalidate];
+    self.visibilitySafetyTimer = nil;
     for (MLTaskbarScreenBar *bar in self.bars) {
+        bar.mode = MLTaskbarBarModeHidden;
         [bar.window orderOut:nil];
     }
 }
@@ -720,19 +787,54 @@ enum { MLTaskbarBarHeight = 40 };
     }
 }
 
++ (BOOL)isSystemWindowOwner:(NSString *)owner {
+    if (owner.length == 0) {
+        return NO;
+    }
+    static NSSet<NSString *> *owners;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        owners = [NSSet setWithArray:@[
+            @"Window Server",
+            @"Dock",
+            @"SystemUIServer",
+            @"Control Center",
+            @"Notification Center",
+            @"loginwindow",
+            @"Wallpaper",
+            @"Spotlight",
+            @"Screenshot",
+            @"CoreServicesUIAgent",
+            @"UserNotificationCenter",
+            @"Universal Control",
+            @"AirPlayUIAgent",
+            @"WiFiAgent",
+            @"TextInputMenuAgent",
+            @"ViewBridgeAuxiliary",
+            @"Accessibility",
+            @"AXVisualSupportAgent",
+        ]];
+    });
+    return [owners containsObject:owner];
+}
+
 /**
  * Screens where immersive / OS fullscreen content should cover the taskbar.
- * - Video / Space fullscreen / presentation: an on-screen window covers the full
- *   display (including menu-bar band). Ordinary zoom-to-visibleFrame does NOT match.
+ * - Frontmost app has an on-screen window covering the full display (incl. menu bar).
  * - Frontmost app reports AXFullScreen on a window we can map to a screen.
  *
- * Do NOT treat visibleFrame ≈ frame alone as fullscreen: auto-hide menu bar + Dock
- * (and unsettled WindowServer insets right after login) look identical and would
- * permanently or intermittently hide the taskbar on a normal desktop.
+ * Do NOT treat visibleFrame ≈ frame alone as fullscreen.
+ * Do NOT treat Finder / Show Desktop chrome as immersive fullscreen.
  */
 - (NSSet<NSNumber *> *)detectFullscreenScreenIDs {
     NSMutableSet<NSNumber *> *ids = [NSMutableSet set];
     pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
+    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
+    pid_t frontPid = front.processIdentifier;
+    NSString *frontBundle = front.bundleIdentifier ?: @"";
+    if ([frontBundle isEqualToString:@"com.apple.finder"] || frontPid == selfPid) {
+        return ids;
+    }
 
     CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
                                                      kCGWindowListExcludeDesktopElements,
@@ -750,23 +852,16 @@ enum { MLTaskbarBarHeight = 40 };
             if (pidRef) {
                 CFNumberGetValue(pidRef, kCFNumberIntType, &pid);
             }
-            if (pid <= 0 || pid == selfPid) {
+            /* Cover-based hide only for the frontmost app — avoids sticky false hides. */
+            if (pid <= 0 || pid == selfPid || pid != frontPid) {
                 continue;
             }
 
             CFStringRef ownerRef = CFDictionaryGetValue(info, kCGWindowOwnerName);
             if (ownerRef && CFGetTypeID(ownerRef) == CFStringGetTypeID()) {
                 NSString *owner = (__bridge NSString *)ownerRef;
-                /* Login / system chrome can briefly span the display without being immersive. */
-                if ([owner isEqualToString:@"Window Server"] ||
-                    [owner isEqualToString:@"Dock"] ||
-                    [owner isEqualToString:@"SystemUIServer"] ||
-                    [owner isEqualToString:@"Control Center"] ||
-                    [owner isEqualToString:@"Notification Center"] ||
-                    [owner isEqualToString:@"loginwindow"] ||
-                    [owner isEqualToString:@"Wallpaper"] ||
-                    [owner isEqualToString:@"Spotlight"] ||
-                    [owner isEqualToString:@"Screenshot"]) {
+                if ([[self class] isSystemWindowOwner:owner] ||
+                    [owner isEqualToString:@"Finder"]) {
                     continue;
                 }
             }
@@ -776,7 +871,6 @@ enum { MLTaskbarBarHeight = 40 };
             if (layerRef) {
                 CFNumberGetValue(layerRef, kCFNumberIntType, &layer);
             }
-            /* Skip desktop wallpaper / shield / extreme overlays; keep normal + floating video. */
             if (layer < 0 || layer > 25) {
                 continue;
             }
@@ -814,7 +908,6 @@ enum { MLTaskbarBarHeight = 40 };
                     continue;
                 }
                 CGFloat cover = (inter.size.width * inter.size.height) / screenArea;
-                /* Must cover the menu-bar band too — distinguishes from Zoom to visibleFrame. */
                 BOOL coversDisplayHeight = bounds.size.height >= sf.size.height - 4.0;
                 BOOL coversDisplayWidth = bounds.size.width >= sf.size.width - 4.0;
                 BOOL bottomAtScreen = fabs(CGRectGetMinY(bounds) - NSMinY(sf)) <= 8.0;
@@ -832,66 +925,195 @@ enum { MLTaskbarBarHeight = 40 };
     }
 
     /* AXFullScreen on the frontmost app (Douyin / players often set this). */
-    if (AXIsProcessTrusted()) {
-        NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
-        pid_t frontPid = front.processIdentifier;
-        if (frontPid > 0 && frontPid != selfPid) {
-            AXUIElementRef appRef = AXUIElementCreateApplication(frontPid);
-            if (appRef) {
-                CFTypeRef windowsRef = NULL;
-                if (AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef) == kAXErrorSuccess &&
-                    windowsRef && CFGetTypeID(windowsRef) == CFArrayGetTypeID()) {
-                    CFArrayRef axWindows = (CFArrayRef)windowsRef;
-                    CFIndex n = CFArrayGetCount(axWindows);
-                    for (CFIndex i = 0; i < n; i++) {
-                        AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
-                        CFTypeRef fsRef = NULL;
-                        BOOL isFS = NO;
-                        if (AXUIElementCopyAttributeValue(win, CFSTR("AXFullScreen"), &fsRef) == kAXErrorSuccess &&
-                            fsRef) {
-                            if (CFGetTypeID(fsRef) == CFBooleanGetTypeID()) {
-                                isFS = CFBooleanGetValue((CFBooleanRef)fsRef);
-                            }
-                            CFRelease(fsRef);
+    if (AXIsProcessTrusted() && frontPid > 0 && frontPid != selfPid) {
+        AXUIElementRef appRef = AXUIElementCreateApplication(frontPid);
+        if (appRef) {
+            CFTypeRef windowsRef = NULL;
+            if (AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef) == kAXErrorSuccess &&
+                windowsRef && CFGetTypeID(windowsRef) == CFArrayGetTypeID()) {
+                CFArrayRef axWindows = (CFArrayRef)windowsRef;
+                CFIndex n = CFArrayGetCount(axWindows);
+                for (CFIndex i = 0; i < n; i++) {
+                    AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
+                    CFTypeRef fsRef = NULL;
+                    BOOL isFS = NO;
+                    if (AXUIElementCopyAttributeValue(win, CFSTR("AXFullScreen"), &fsRef) == kAXErrorSuccess &&
+                        fsRef) {
+                        if (CFGetTypeID(fsRef) == CFBooleanGetTypeID()) {
+                            isFS = CFBooleanGetValue((CFBooleanRef)fsRef);
                         }
-                        if (!isFS) {
-                            continue;
-                        }
-                        /* Map fullscreen window to a screen via AX frame; skip if unmapped. */
-                        CFTypeRef posRef = NULL;
-                        CFTypeRef sizeRef = NULL;
-                        CGPoint pos = CGPointZero;
-                        CGSize size = CGSizeZero;
-                        BOOL have = NO;
-                        if (AXUIElementCopyAttributeValue(win, kAXPositionAttribute, &posRef) == kAXErrorSuccess &&
-                            posRef) {
-                            have = AXValueGetValue((AXValueRef)posRef, (AXValueType)kAXValueCGPointType, &pos);
-                            CFRelease(posRef);
-                        }
-                        if (AXUIElementCopyAttributeValue(win, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess &&
-                            sizeRef) {
-                            have = have && AXValueGetValue((AXValueRef)sizeRef, (AXValueType)kAXValueCGSizeType, &size);
-                            CFRelease(sizeRef);
-                        }
-                        if (have && size.width > 2.0 && size.height > 2.0) {
-                            NSRect main = NSScreen.mainScreen.frame;
-                            NSRect cocoa = NSMakeRect(pos.x, NSMaxY(main) - pos.y - size.height,
-                                                      size.width, size.height);
-                            NSScreen *screen = [self screenForWindowBounds:NSRectToCGRect(cocoa)];
-                            if (screen) {
-                                [ids addObject:[[self class] screenIDForScreen:screen]];
-                            }
+                        CFRelease(fsRef);
+                    }
+                    if (!isFS) {
+                        continue;
+                    }
+                    CFTypeRef posRef = NULL;
+                    CFTypeRef sizeRef = NULL;
+                    CGPoint pos = CGPointZero;
+                    CGSize size = CGSizeZero;
+                    BOOL have = NO;
+                    if (AXUIElementCopyAttributeValue(win, kAXPositionAttribute, &posRef) == kAXErrorSuccess &&
+                        posRef) {
+                        have = AXValueGetValue((AXValueRef)posRef, (AXValueType)kAXValueCGPointType, &pos);
+                        CFRelease(posRef);
+                    }
+                    if (AXUIElementCopyAttributeValue(win, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess &&
+                        sizeRef) {
+                        have = have && AXValueGetValue((AXValueRef)sizeRef, (AXValueType)kAXValueCGSizeType, &size);
+                        CFRelease(sizeRef);
+                    }
+                    if (have && size.width > 2.0 && size.height > 2.0) {
+                        NSRect main = NSScreen.mainScreen.frame;
+                        NSRect cocoa = NSMakeRect(pos.x, NSMaxY(main) - pos.y - size.height,
+                                                  size.width, size.height);
+                        NSScreen *screen = [self screenForWindowBounds:NSRectToCGRect(cocoa)];
+                        if (screen) {
+                            [ids addObject:[[self class] screenIDForScreen:screen]];
                         }
                     }
                 }
-                if (windowsRef) {
-                    CFRelease(windowsRef);
-                }
-                CFRelease(appRef);
             }
+            if (windowsRef) {
+                CFRelease(windowsRef);
+            }
+            CFRelease(appRef);
         }
     }
 
+    return ids;
+}
+
+/**
+ * Show Desktop / Exposé: Finder is frontmost, known app windows exist for the screen,
+ * but almost none of them remain on-screen (pushed away). Not the same as an empty desktop.
+ */
+- (NSSet<NSNumber *> *)detectDesktopRevealScreenIDsExcludingFullscreen:(NSSet<NSNumber *> *)fullscreenIDs {
+    NSMutableSet<NSNumber *> *ids = [NSMutableSet set];
+    NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
+    if (![front.bundleIdentifier isEqualToString:@"com.apple.finder"]) {
+        return ids;
+    }
+
+    pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
+    NSMutableDictionary<NSNumber *, NSNumber *> *expectedByScreen = [NSMutableDictionary dictionary];
+    for (MLTaskbarWindowInfo *w in self.monitor.snapshot.windows ?: @[]) {
+        if (w.pid == selfPid || w.pid == front.processIdentifier) {
+            continue;
+        }
+        if (w.minimized) {
+            continue;
+        }
+        NSScreen *screen = [self screenForWindowBounds:w.bounds];
+        if (!screen) {
+            continue;
+        }
+        NSNumber *sid = [[self class] screenIDForScreen:screen];
+        if ([fullscreenIDs containsObject:sid]) {
+            continue;
+        }
+        expectedByScreen[sid] = @([expectedByScreen[sid] integerValue] + 1);
+    }
+    if (expectedByScreen.count == 0) {
+        return ids;
+    }
+
+    NSMutableDictionary<NSNumber *, NSNumber *> *coverAreaByScreen = [NSMutableDictionary dictionary];
+    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
+                                                     kCGWindowListExcludeDesktopElements,
+                                                 kCGNullWindowID);
+    if (list) {
+        CFIndex count = CFArrayGetCount(list);
+        for (CFIndex i = 0; i < count; i++) {
+            CFDictionaryRef info = (CFDictionaryRef)CFArrayGetValueAtIndex(list, i);
+            if (!info) {
+                continue;
+            }
+            CFNumberRef pidRef = CFDictionaryGetValue(info, kCGWindowOwnerPID);
+            pid_t pid = 0;
+            if (pidRef) {
+                CFNumberGetValue(pidRef, kCFNumberIntType, &pid);
+            }
+            if (pid <= 0 || pid == selfPid || pid == front.processIdentifier) {
+                continue;
+            }
+            CFStringRef ownerRef = CFDictionaryGetValue(info, kCGWindowOwnerName);
+            if (ownerRef && CFGetTypeID(ownerRef) == CFStringGetTypeID()) {
+                NSString *owner = (__bridge NSString *)ownerRef;
+                if ([[self class] isSystemWindowOwner:owner] ||
+                    [owner isEqualToString:@"Finder"]) {
+                    continue;
+                }
+            }
+            CFNumberRef layerRef = CFDictionaryGetValue(info, kCGWindowLayer);
+            int layer = 0;
+            if (layerRef) {
+                CFNumberGetValue(layerRef, kCFNumberIntType, &layer);
+            }
+            if (layer < 0 || layer > 25) {
+                continue;
+            }
+            CFNumberRef alphaRef = CFDictionaryGetValue(info, kCGWindowAlpha);
+            if (alphaRef) {
+                double alpha = 1.0;
+                CFNumberGetValue(alphaRef, kCFNumberDoubleType, &alpha);
+                if (alpha < 0.5) {
+                    continue;
+                }
+            }
+            CGRect bounds = CGRectZero;
+            CFDictionaryRef boundsDict = CFDictionaryGetValue(info, kCGWindowBounds);
+            if (!boundsDict || !CGRectMakeWithDictionaryRepresentation(boundsDict, &bounds)) {
+                continue;
+            }
+            if (bounds.size.width < 80.0 || bounds.size.height < 60.0) {
+                continue;
+            }
+            for (NSNumber *sid in expectedByScreen) {
+                NSScreen *screen = nil;
+                for (NSScreen *s in NSScreen.screens) {
+                    if ([[[self class] screenIDForScreen:s] isEqualToNumber:sid]) {
+                        screen = s;
+                        break;
+                    }
+                }
+                if (!screen) {
+                    continue;
+                }
+                CGRect inter = CGRectIntersection(bounds, NSRectToCGRect(screen.frame));
+                if (CGRectIsNull(inter) || CGRectIsEmpty(inter)) {
+                    continue;
+                }
+                CGFloat area = inter.size.width * inter.size.height;
+                coverAreaByScreen[sid] = @([coverAreaByScreen[sid] doubleValue] + area);
+            }
+        }
+        CFRelease(list);
+    }
+
+    for (NSNumber *sid in expectedByScreen) {
+        if ([expectedByScreen[sid] integerValue] < 1) {
+            continue;
+        }
+        NSScreen *screen = nil;
+        for (NSScreen *s in NSScreen.screens) {
+            if ([[[self class] screenIDForScreen:s] isEqualToNumber:sid]) {
+                screen = s;
+                break;
+            }
+        }
+        if (!screen) {
+            continue;
+        }
+        CGFloat screenArea = screen.frame.size.width * screen.frame.size.height;
+        if (screenArea < 1.0) {
+            continue;
+        }
+        CGFloat cover = [coverAreaByScreen[sid] doubleValue] / screenArea;
+        /* Windows have been swept away — desktop is revealed. */
+        if (cover < 0.18) {
+            [ids addObject:sid];
+        }
+    }
     return ids;
 }
 
@@ -930,37 +1152,150 @@ enum { MLTaskbarBarHeight = 40 };
     });
 }
 
+- (void)updateVisibilitySafetyTimer {
+    if (!self.started || self.hiddenForOverlay || !self.enabled) {
+        [self.visibilitySafetyTimer invalidate];
+        self.visibilitySafetyTimer = nil;
+        return;
+    }
+
+    BOOL finderFront = [NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier
+                        isEqualToString:@"com.apple.finder"];
+    BOOL anyNonNormal = NO;
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (bar.mode != MLTaskbarBarModeNormal || !bar.window.isVisible) {
+            anyNonNormal = YES;
+            break;
+        }
+    }
+    if (!anyNonNormal && !finderFront &&
+        self.fullscreenScreenIDs.count == 0 && self.desktopRevealScreenIDs.count == 0) {
+        [self.visibilitySafetyTimer invalidate];
+        self.visibilitySafetyTimer = nil;
+        return;
+    }
+
+    NSTimeInterval interval = (finderFront ||
+                               self.desktopRevealScreenIDs.count > 0 ||
+                               self.fullscreenScreenIDs.count > 0)
+                                  ? 0.2
+                                  : 0.75;
+    if (self.visibilitySafetyTimer &&
+        fabs(self.visibilitySafetyTimer.timeInterval - interval) < 0.01) {
+        return;
+    }
+    [self.visibilitySafetyTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.visibilitySafetyTimer = [NSTimer scheduledTimerWithTimeInterval:interval
+                                                                 repeats:YES
+                                                                   block:^(__unused NSTimer *timer) {
+                                                                       [weakSelf refreshFullscreenVisibility];
+                                                                   }];
+    [[NSRunLoop mainRunLoop] addTimer:self.visibilitySafetyTimer forMode:NSRunLoopCommonModes];
+}
+
 - (void)refreshFullscreenVisibility {
     if (!self.started) {
         return;
     }
-    NSSet<NSNumber *> *next = [self detectFullscreenScreenIDs];
-    if (self.fullscreenScreenIDs && [self.fullscreenScreenIDs isEqualToSet:next]) {
-        [self applyBarVisibility];
-        return;
+
+    NSSet<NSNumber *> *rawFS = [self detectFullscreenScreenIDs];
+    NSSet<NSNumber *> *reveal = [self detectDesktopRevealScreenIDsExcludingFullscreen:rawFS];
+
+    /* Hysteresis: need consecutive confirms to hide; one clear sample restores immediately. */
+    NSMutableSet<NSNumber *> *committedFS = [NSMutableSet set];
+    NSMutableDictionary<NSNumber *, NSNumber *> *nextStreaks = [NSMutableDictionary dictionary];
+    NSSet<NSNumber *> *previousFS = self.fullscreenScreenIDs ?: [NSSet set];
+
+    for (NSScreen *screen in NSScreen.screens) {
+        NSNumber *sid = [[self class] screenIDForScreen:screen];
+        if ([reveal containsObject:sid]) {
+            continue;
+        }
+        if ([rawFS containsObject:sid]) {
+            NSInteger streak = [self.fullscreenHideStreaks[sid] integerValue] + 1;
+            nextStreaks[sid] = @(streak);
+            if (streak >= (NSInteger)MLTaskbarHideConfirmCount || [previousFS containsObject:sid]) {
+                [committedFS addObject:sid];
+            }
+        }
     }
-    self.fullscreenScreenIDs = next;
+    self.fullscreenHideStreaks = nextStreaks;
+
+    BOOL fsChanged = ![previousFS isEqualToSet:committedFS];
+    BOOL revealChanged = ![self.desktopRevealScreenIDs isEqualToSet:reveal];
+    self.fullscreenScreenIDs = committedFS;
+    self.desktopRevealScreenIDs = reveal;
+
+    if (fsChanged || revealChanged) {
+        if (fsChanged) {
+            for (NSNumber *sid in committedFS) {
+                if (![previousFS containsObject:sid]) {
+                    NSLog(@"[Taskbar] hide bar screen=%@ (fullscreen confirmed)", sid);
+                }
+            }
+            for (NSNumber *sid in previousFS) {
+                if (![committedFS containsObject:sid]) {
+                    NSLog(@"[Taskbar] show bar screen=%@ (fullscreen cleared)", sid);
+                }
+            }
+        }
+        if (revealChanged) {
+            NSLog(@"[Taskbar] desktop reveal screens=%@", reveal);
+        }
+    }
+
     [self applyBarVisibility];
 }
 
 - (void)applyBarVisibility {
     if (self.hiddenForOverlay) {
         for (MLTaskbarScreenBar *bar in self.bars) {
+            bar.mode = MLTaskbarBarModeHidden;
             [bar.window orderOut:nil];
         }
+        [self updateVisibilitySafetyTimer];
         return;
     }
     if (!self.started || !self.enabled) {
         return;
     }
+
+    NSDictionary<NSNumber *, NSScreen *> *screensByID = [self screensByID];
     NSSet<NSNumber *> *fs = self.fullscreenScreenIDs ?: [NSSet set];
+    NSSet<NSNumber *> *reveal = self.desktopRevealScreenIDs ?: [NSSet set];
+
     for (MLTaskbarScreenBar *bar in self.bars) {
-        if ([fs containsObject:bar.screenID]) {
-            [bar.window orderOut:nil];
-        } else {
-            [bar.window orderFrontRegardless];
+        NSScreen *screen = screensByID[bar.screenID];
+        if (!screen || !bar.window) {
+            continue;
         }
+
+        MLTaskbarBarMode previous = bar.mode;
+        if ([fs containsObject:bar.screenID]) {
+            bar.mode = MLTaskbarBarModeHidden;
+            [bar.window orderOut:nil];
+            continue;
+        }
+
+        if ([reveal containsObject:bar.screenID]) {
+            bar.mode = MLTaskbarBarModePeek;
+            NSRect frame = [self peekFrameForScreen:screen height:[self barHeightForBar:bar]];
+            BOOL animate = (previous == MLTaskbarBarModeNormal || previous == MLTaskbarBarModePeek);
+            [self setBar:bar frame:frame animated:animate];
+            [bar.window orderFrontRegardless];
+            continue;
+        }
+
+        bar.mode = MLTaskbarBarModeNormal;
+        NSRect frame = [self normalFrameForScreen:screen height:[self barHeightForBar:bar]];
+        /* Leaving peek/hidden: restore immediately (no wait for delayed rechecks). */
+        BOOL animate = (previous == MLTaskbarBarModePeek);
+        [self setBar:bar frame:frame animated:animate];
+        [bar.window orderFrontRegardless];
     }
+
+    [self updateVisibilitySafetyTimer];
 }
 
 - (NSRect)animationTargetRectForPID:(pid_t)pid

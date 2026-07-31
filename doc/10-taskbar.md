@@ -488,6 +488,18 @@ MVP 可硬编码默认值；Prefs / schema 后做：
 
 对填满 `visibleFrame`（或副屏 `visible≈frame` 时填满 `screen.frame`）的窗口，AX 缩至 `visibleFrame` 减去底栏高度。跳过 soft-hidden、`AXFullScreen`、已贴 work rect 的窗。比较一律走 `MLScreenGeometry`（先把 CG Quartz bounds 转 Cocoa）。
 
-### 10.6 全屏藏栏
+### 10.6 全屏藏栏 / 显示桌面 peek
 
-按「整屏覆盖窗 + `AXFullScreen`」判断；**不用**单独的 `visibleFrame≈frame`（自动隐藏菜单栏会误伤普通桌面）。
+可见性三态（Overlay 优先）：
+
+| 模式 | 条件 | 行为 |
+|------|------|------|
+| `hidden` | 前台 App 整屏覆盖窗，或前台 `AXFullScreen`（连续确认） | `orderOut` |
+| `peek` | 「显示桌面」：访达前台，且该屏已知窗口几乎都不在屏上 | 保持显示，底栏下移约 12pt |
+| `normal` | 其它 | 贴 `visibleFrame` 底边 |
+
+规则：
+- **不用**单独的 `visibleFrame≈frame`（自动隐藏菜单栏会误伤普通桌面）。
+- 盖屏判定仅认**前台**非系统、非访达窗口；避免启动瞬态 / 显示桌面误藏。
+- 进入 `hidden` 需连续 2 次确认；退出 `hidden` / `peek` **立刻** `orderFront` 复位。
+- 非 normal 时以 0.2s（peek/fullscreen）或 0.75s（异常隐藏）保底轮询，防止粘住。
