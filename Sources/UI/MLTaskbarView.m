@@ -3,7 +3,12 @@
 #import "MLStrings.h"
 #import "MLTaskbarIconCache.h"
 
+#import <ApplicationServices/ApplicationServices.h>
+
 @implementation MLTaskbarItem
+@end
+
+@implementation MLTaskbarMenuFlags
 @end
 
 @interface MLTaskbarView ()
@@ -310,33 +315,95 @@
     }
 }
 
+- (NSMenuItem *)menuItemWithTitle:(NSString *)title
+                           action:(MLTaskbarMenuAction)action
+                          enabled:(BOOL)enabled {
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                                                  action:@selector(contextMenuAction:)
+                                           keyEquivalent:@""];
+    item.target = self;
+    item.tag = (NSInteger)action;
+    item.enabled = enabled;
+    return item;
+}
+
+- (NSMenu *)meolaunchSubmenu {
+    NSMenu *sub = [[NSMenu alloc] initWithTitle:[MLStrings t:@"taskbar.submenu.meolaunch"]];
+    [sub addItem:[self menuItemWithTitle:[MLStrings t:@"taskbar.about"]
+                                  action:MLTaskbarMenuActionAbout
+                                 enabled:YES]];
+    [sub addItem:[self menuItemWithTitle:[MLStrings t:@"menu.preferences"]
+                                  action:MLTaskbarMenuActionPreferences
+                                 enabled:YES]];
+    [sub addItem:[NSMenuItem separatorItem]];
+    [sub addItem:[self menuItemWithTitle:[MLStrings t:@"menu.quit"]
+                                  action:MLTaskbarMenuActionQuit
+                                 enabled:YES]];
+    return sub;
+}
+
 - (void)rightMouseDown:(NSEvent *)event {
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger idx = [self indexAtPoint:p];
-    if (idx < 0 || idx >= (NSInteger)self.items.count) {
-        return;
+    if (idx >= (NSInteger)self.items.count) {
+        idx = -1;
     }
     self.menuIndex = idx;
-    MLTaskbarItem *item = self.items[(NSUInteger)idx];
+
+    MLTaskbarMenuFlags *flags = [[MLTaskbarMenuFlags alloc] init];
+    if ([self.delegate respondsToSelector:@selector(taskbarView:menuFlags:forIndex:)]) {
+        [self.delegate taskbarView:self menuFlags:flags forIndex:idx];
+    } else if (idx >= 0) {
+        MLTaskbarItem *chip = self.items[(NSUInteger)idx];
+        flags.hasWindow = (chip.kind == MLTaskbarItemRunningWindow && chip.windowID != 0);
+        flags.minimized = chip.minimized;
+        flags.pinned = chip.pinned;
+        flags.fullscreenSupported = flags.hasWindow;
+    }
+
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Taskbar"];
-    NSString *title = item.pinned ? [MLStrings t:@"taskbar.unpin"] : [MLStrings t:@"taskbar.pin"];
-    NSMenuItem *pinItem = [[NSMenuItem alloc] initWithTitle:title
-                                                     action:@selector(togglePin:)
-                                              keyEquivalent:@""];
-    pinItem.target = self;
-    [menu addItem:pinItem];
+
+    if (idx >= 0) {
+        BOOL winOK = flags.hasWindow && AXIsProcessTrusted();
+        [menu addItem:[self menuItemWithTitle:[MLStrings t:@"taskbar.close"]
+                                       action:MLTaskbarMenuActionClose
+                                      enabled:winOK]];
+        NSString *minTitle = flags.minimized ? [MLStrings t:@"taskbar.restore"]
+                                             : [MLStrings t:@"taskbar.minimize"];
+        [menu addItem:[self menuItemWithTitle:minTitle
+                                       action:MLTaskbarMenuActionMinimizeToggle
+                                      enabled:winOK]];
+        NSString *fsTitle = flags.fullscreen ? [MLStrings t:@"taskbar.exit_fullscreen"]
+                                             : [MLStrings t:@"taskbar.enter_fullscreen"];
+        [menu addItem:[self menuItemWithTitle:fsTitle
+                                       action:MLTaskbarMenuActionFullscreenToggle
+                                      enabled:(winOK && flags.fullscreenSupported)]];
+        [menu addItem:[NSMenuItem separatorItem]];
+
+        NSString *pinTitle = flags.pinned ? [MLStrings t:@"taskbar.unpin"]
+                                          : [MLStrings t:@"taskbar.pin"];
+        [menu addItem:[self menuItemWithTitle:pinTitle
+                                       action:MLTaskbarMenuActionPinToggle
+                                      enabled:YES]];
+        [menu addItem:[NSMenuItem separatorItem]];
+    }
+
+    NSMenuItem *mlRoot = [[NSMenuItem alloc] initWithTitle:[MLStrings t:@"taskbar.submenu.meolaunch"]
+                                                    action:nil
+                                             keyEquivalent:@""];
+    mlRoot.submenu = [self meolaunchSubmenu];
+    [menu addItem:mlRoot];
+
     [NSMenu popUpContextMenu:menu withEvent:event forView:self];
 }
 
-- (void)togglePin:(id)sender {
-    (void)sender;
-    if (self.menuIndex < 0) {
-        return;
-    }
-    if ([self.delegate respondsToSelector:@selector(taskbarView:didRequestPinToggleAtIndex:)]) {
-        [self.delegate taskbarView:self didRequestPinToggleAtIndex:self.menuIndex];
-    }
+- (void)contextMenuAction:(NSMenuItem *)sender {
+    MLTaskbarMenuAction action = (MLTaskbarMenuAction)sender.tag;
+    NSInteger idx = self.menuIndex;
     self.menuIndex = -1;
+    if ([self.delegate respondsToSelector:@selector(taskbarView:didSelectAction:atIndex:)]) {
+        [self.delegate taskbarView:self didSelectAction:action atIndex:idx];
+    }
 }
 
 @end

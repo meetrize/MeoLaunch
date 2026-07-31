@@ -41,6 +41,38 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Unpin",
             @"zh" : @"取消钉住",
         },
+        @"taskbar.close" : @{
+            @"en" : @"Close",
+            @"zh" : @"关闭",
+        },
+        @"taskbar.minimize" : @{
+            @"en" : @"Minimize",
+            @"zh" : @"最小化",
+        },
+        @"taskbar.restore" : @{
+            @"en" : @"Restore",
+            @"zh" : @"还原",
+        },
+        @"taskbar.enter_fullscreen" : @{
+            @"en" : @"Enter Full Screen",
+            @"zh" : @"进入全屏",
+        },
+        @"taskbar.exit_fullscreen" : @{
+            @"en" : @"Exit Full Screen",
+            @"zh" : @"退出全屏",
+        },
+        @"taskbar.submenu.meolaunch" : @{
+            @"en" : @"MeoLaunch",
+            @"zh" : @"MeoLaunch",
+        },
+        @"taskbar.about" : @{
+            @"en" : @"About MeoLaunch",
+            @"zh" : @"关于 MeoLaunch",
+        },
+        @"taskbar.about.body" : @{
+            @"en" : @"Version %@ (%@)",
+            @"zh" : @"版本 %@（%@）",
+        },
         @"prefs.title" : @{
             @"en" : @"MeoLaunch Preferences",
             @"zh" : @"MeoLaunch 设置",

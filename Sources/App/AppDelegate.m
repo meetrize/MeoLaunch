@@ -11,6 +11,7 @@
 #import "MLTaskbarController.h"
 #import "MLTaskbarIconCache.h"
 #import "MLTaskbarPinStore.h"
+#import "MLTaskbarView.h"
 
 #include "ml_app_index.h"
 #include "ml_layout.h"
@@ -20,7 +21,7 @@
 
 static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibilityGuide";
 
-@interface AppDelegate () <MLHotCornerMonitorDelegate, MLHotKeyManagerDelegate, MLOverlayControllerDelegate>
+@interface AppDelegate () <MLHotCornerMonitorDelegate, MLHotKeyManagerDelegate, MLOverlayControllerDelegate, MLTaskbarAppActions>
 @property (nonatomic, strong) NSStatusItem *statusItem;
 @property (nonatomic, strong) NSMenuItem *showOverlayItem;
 @property (nonatomic, strong) NSMenuItem *retryHotCornerItem;
@@ -72,6 +73,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.taskbar = [[MLTaskbarController alloc] initWithPinStore:self.taskbarPins
                                                          monitor:self.runningApps
                                                        iconCache:self.taskbarIcons];
+    self.taskbar.appActions = self;
 
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(configDidChange:)
@@ -339,6 +341,33 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 - (void)quit:(id)sender {
     (void)sender;
     [NSApp terminate:nil];
+}
+
+- (void)taskbarShowAbout {
+    NSBundle *bundle = [NSBundle mainBundle];
+    NSString *name = bundle.infoDictionary[@"CFBundleName"] ?: @"MeoLaunch";
+    NSString *shortV = bundle.infoDictionary[@"CFBundleShortVersionString"] ?: @"—";
+    NSString *build = bundle.infoDictionary[@"CFBundleVersion"] ?: @"—";
+    NSString *body = [NSString stringWithFormat:[MLStrings t:@"taskbar.about.body"], shortV, build];
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = name;
+    alert.informativeText = body;
+    alert.alertStyle = NSAlertStyleInformational;
+    [alert addButtonWithTitle:@"OK"];
+    NSImage *icon = [NSApp applicationIconImage];
+    if (icon) {
+        alert.icon = icon;
+    }
+    [alert runModal];
+}
+
+- (void)taskbarShowPreferences {
+    [self showPrefs:nil];
+}
+
+- (void)taskbarQuitApp {
+    [self quit:nil];
 }
 
 - (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {

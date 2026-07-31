@@ -17,7 +17,7 @@
 | 图标 + 标题 | 每个条目绘制 **小图标 + 截断标题**（见 §4 显示单元） |
 | 状态色 | 有可见窗口 / 仅钉住未运行，视觉区分（**不展示「仅有进程无窗口」**） |
 | 左键 | 窗口芯片：未激活→前置；已最前→软最小化；已最小化→还原几何。钉住未运行→启动 |
-| 右键 | 钉住 / 取消钉住（按 **app path**，非按窗口） |
+| 右键 | 见 [11-taskbar-context-menu.md](./11-taskbar-context-menu.md)：关闭 / 最小化↔还原 / 全屏 / 钉住 / MeoLaunch▸ |
 | 持久化 | 钉住列表写入 `taskbar_pins.json`（仅 path） |
 
 ### 非目标（明确不做）
@@ -366,11 +366,18 @@ rebuildItems():
 
   fitToWidth(items)  /* 可选：丢弃右侧未钉住 */
 
-click(item):
+click(item):  /* 左键，见 §10.3 */
   if PinnedOnly: activate/open path
   else if minimized or soft-hidden: raiseAndFocus + restoreFrame
-  else if windowID is frontmost of frontmost app: softMinimize (same as yellow button)
+  else if windowID is topmost user window: softMinimize
   else: raiseAndFocus + activate app
+
+contextMenu(index):  /* 右键，见 11-taskbar-context-menu.md */
+  if index < 0: MeoLaunch ▸ (关于 / 设置 / 退出)
+  else:
+    关闭 | 最小化↔还原 | 全屏进出  (需窗 + Accessibility)
+    钉住 / 取消钉住
+    MeoLaunch ▸ …
 
 pinToggle(item):
   pinned ? unpin(path) : pin(path)

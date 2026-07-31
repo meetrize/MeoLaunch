@@ -6,11 +6,15 @@
 @class MLRunningAppsMonitor;
 @class MLTaskbarIconCache;
 
+@protocol MLTaskbarAppActions;
+
 typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 
 @interface MLTaskbarController : NSObject
 
 @property (nonatomic, assign, getter=isEnabled) BOOL enabled;
+/** About / Preferences / Quit — typically AppDelegate. */
+@property (nonatomic, weak) id<MLTaskbarAppActions> appActions;
 
 - (instancetype)initWithPinStore:(MLTaskbarPinStore *)pins
                          monitor:(MLRunningAppsMonitor *)monitor

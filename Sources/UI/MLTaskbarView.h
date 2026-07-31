@@ -10,6 +10,16 @@ typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
     MLTaskbarItemRunningWindow,
 };
 
+typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
+    MLTaskbarMenuActionClose = 0,
+    MLTaskbarMenuActionMinimizeToggle,
+    MLTaskbarMenuActionFullscreenToggle,
+    MLTaskbarMenuActionPinToggle,
+    MLTaskbarMenuActionAbout,
+    MLTaskbarMenuActionPreferences,
+    MLTaskbarMenuActionQuit,
+};
+
 @interface MLTaskbarItem : NSObject
 @property (nonatomic, copy) NSString *path;
 @property (nonatomic, copy) NSString *bundleID;
@@ -24,9 +34,30 @@ typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
 @property (nonatomic, assign) NSUInteger seenOrder;
 @end
 
+/** Live flags for context menu (read at popup time). index < 0 = empty bar. */
+@interface MLTaskbarMenuFlags : NSObject
+@property (nonatomic, assign) BOOL hasWindow;
+@property (nonatomic, assign) BOOL minimized;
+@property (nonatomic, assign) BOOL fullscreen;
+@property (nonatomic, assign) BOOL fullscreenSupported;
+@property (nonatomic, assign) BOOL pinned;
+@end
+
+@protocol MLTaskbarAppActions <NSObject>
+- (void)taskbarShowAbout;
+- (void)taskbarShowPreferences;
+- (void)taskbarQuitApp;
+@end
+
 @protocol MLTaskbarViewDelegate <NSObject>
 - (void)taskbarView:(MLTaskbarView *)view didClickItemAtIndex:(NSInteger)index;
-- (void)taskbarView:(MLTaskbarView *)view didRequestPinToggleAtIndex:(NSInteger)index;
+- (void)taskbarView:(MLTaskbarView *)view
+    didSelectAction:(MLTaskbarMenuAction)action
+            atIndex:(NSInteger)index;
+/** Fill live menu state; index < 0 means empty bar (no chip). */
+- (void)taskbarView:(MLTaskbarView *)view
+     menuFlags:(MLTaskbarMenuFlags *)flags
+      forIndex:(NSInteger)index;
 @end
 
 @interface MLTaskbarView : NSView

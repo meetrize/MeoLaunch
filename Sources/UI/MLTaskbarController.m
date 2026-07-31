@@ -2734,18 +2734,213 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     [self activateOrLaunchItem:view.items[(NSUInteger)index]];
 }
 
-- (void)taskbarView:(MLTaskbarView *)view didRequestPinToggleAtIndex:(NSInteger)index {
+- (BOOL)readFullscreenForAXWindow:(AXUIElementRef)win {
+    if (!win) {
+        return NO;
+    }
+    CFTypeRef fsRef = NULL;
+    if (AXUIElementCopyAttributeValue(win, CFSTR("AXFullScreen"), &fsRef) != kAXErrorSuccess || !fsRef) {
+        return NO;
+    }
+    BOOL on = NO;
+    if (CFGetTypeID(fsRef) == CFBooleanGetTypeID()) {
+        on = CFBooleanGetValue((CFBooleanRef)fsRef);
+    }
+    CFRelease(fsRef);
+    return on;
+}
+
+- (BOOL)canReadFullscreenForAXWindow:(AXUIElementRef)win {
+    if (!win) {
+        return NO;
+    }
+    CFTypeRef fsRef = NULL;
+    AXError err = AXUIElementCopyAttributeValue(win, CFSTR("AXFullScreen"), &fsRef);
+    if (fsRef) {
+        CFRelease(fsRef);
+    }
+    return err == kAXErrorSuccess;
+}
+
+- (void)taskbarView:(MLTaskbarView *)view
+         menuFlags:(MLTaskbarMenuFlags *)flags
+          forIndex:(NSInteger)index {
+    (void)view;
+    if (!flags) {
+        return;
+    }
+    flags.hasWindow = NO;
+    flags.minimized = NO;
+    flags.fullscreen = NO;
+    flags.fullscreenSupported = NO;
+    flags.pinned = NO;
     if (index < 0 || index >= (NSInteger)view.items.count) {
         return;
     }
     MLTaskbarItem *item = view.items[(NSUInteger)index];
-    if (item.path.length == 0) {
+    flags.pinned = item.pinned;
+    flags.hasWindow = (item.kind == MLTaskbarItemRunningWindow && item.windowID != 0);
+    flags.minimized = [self isItemSoftHiddenOrMinimized:item];
+    if (!flags.hasWindow || !AXIsProcessTrusted()) {
         return;
     }
-    if (item.pinned) {
-        [self.pinStore unpinPath:item.path];
+    AXUIElementRef win = [self copyAXWindowForItem:item];
+    if (!win) {
+        /* Soft-hidden may still have retained AX. */
+        MLWindowSoftRecord *soft =
+            item.windowID != 0 ? [self.monitor.softState recordForWindowID:item.windowID] : nil;
+        if (soft.axWindow) {
+            win = (AXUIElementRef)CFRetain(soft.axWindow);
+        }
+    }
+    if (win) {
+        flags.fullscreenSupported = [self canReadFullscreenForAXWindow:win];
+        flags.fullscreen = flags.fullscreenSupported ? [self readFullscreenForAXWindow:win] : NO;
+        CFRelease(win);
+    }
+}
+
+- (void)closeWindowForItem:(MLTaskbarItem *)item {
+    if (!item || item.windowID == 0 || !AXIsProcessTrusted()) {
+        return;
+    }
+    BOOL wasSoft = [self isItemSoftHiddenOrMinimized:item];
+    if (wasSoft) {
+        [self raiseAndFocusWindowForItem:item];
+    }
+
+    AXUIElementRef win = [self copyAXWindowForItem:item];
+    if (!win) {
+        MLWindowSoftRecord *soft = [self.monitor.softState recordForWindowID:item.windowID];
+        if (soft.axWindow) {
+            win = (AXUIElementRef)CFRetain(soft.axWindow);
+        }
+    }
+    if (!win) {
+        NSLog(@"[Taskbar] close failed — no AX window wid=%u", (unsigned)item.windowID);
+        return;
+    }
+
+    /* Prefer close button press (widely supported). */
+    BOOL closed = NO;
+    CFTypeRef btnRef = NULL;
+    if (AXUIElementCopyAttributeValue(win, kAXCloseButtonAttribute, &btnRef) == kAXErrorSuccess &&
+        btnRef) {
+        if (CFGetTypeID(btnRef) == AXUIElementGetTypeID()) {
+            AXError err = AXUIElementPerformAction((AXUIElementRef)btnRef, kAXPressAction);
+            closed = (err == kAXErrorSuccess);
+        }
+        CFRelease(btnRef);
+    }
+    if (!closed) {
+        /* Fallback: some apps expose AXClose on the window. */
+        AXUIElementPerformAction(win, CFSTR("AXPress"));
+    }
+    CFRelease(win);
+
+    if (item.windowID != 0) {
+        [self.monitor.softState removeClosedWindowID:item.windowID];
+    }
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       [weakSelf.monitor pollNow];
+                       [weakSelf rebuildItemsImmediate:YES];
+                   });
+}
+
+- (void)toggleMinimizeForItem:(MLTaskbarItem *)item {
+    if (!item || item.windowID == 0) {
+        return;
+    }
+    if ([self isItemSoftHiddenOrMinimized:item]) {
+        [self activateApplicationForItem:item];
+        [self raiseAndFocusWindowForItem:item];
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                           [weakSelf raiseAndFocusWindowForItem:item];
+                           [weakSelf activateApplicationForItem:item];
+                       });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.22 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                           [weakSelf raiseAndFocusWindowForItem:item];
+                       });
     } else {
-        [self.pinStore pinPath:item.path];
+        [self softMinimizeItem:item];
+    }
+}
+
+- (void)toggleFullscreenForItem:(MLTaskbarItem *)item {
+    if (!item || item.windowID == 0 || !AXIsProcessTrusted()) {
+        return;
+    }
+    if ([self isItemSoftHiddenOrMinimized:item]) {
+        [self raiseAndFocusWindowForItem:item];
+    }
+    AXUIElementRef win = [self copyAXWindowForItem:item];
+    if (!win) {
+        return;
+    }
+    if (![self canReadFullscreenForAXWindow:win]) {
+        CFRelease(win);
+        return;
+    }
+    BOOL on = [self readFullscreenForAXWindow:win];
+    AXUIElementSetAttributeValue(win, CFSTR("AXFullScreen"), on ? kCFBooleanFalse : kCFBooleanTrue);
+    CFRelease(win);
+    [self activateApplicationForItem:item];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       [weakSelf refreshFullscreenVisibility];
+                   });
+}
+
+- (void)taskbarView:(MLTaskbarView *)view
+    didSelectAction:(MLTaskbarMenuAction)action
+            atIndex:(NSInteger)index {
+    (void)view;
+    switch (action) {
+        case MLTaskbarMenuActionAbout:
+            [self.appActions taskbarShowAbout];
+            return;
+        case MLTaskbarMenuActionPreferences:
+            [self.appActions taskbarShowPreferences];
+            return;
+        case MLTaskbarMenuActionQuit:
+            [self.appActions taskbarQuitApp];
+            return;
+        default:
+            break;
+    }
+
+    if (index < 0 || index >= (NSInteger)view.items.count) {
+        return;
+    }
+    MLTaskbarItem *item = view.items[(NSUInteger)index];
+    switch (action) {
+        case MLTaskbarMenuActionClose:
+            [self closeWindowForItem:item];
+            break;
+        case MLTaskbarMenuActionMinimizeToggle:
+            [self toggleMinimizeForItem:item];
+            break;
+        case MLTaskbarMenuActionFullscreenToggle:
+            [self toggleFullscreenForItem:item];
+            break;
+        case MLTaskbarMenuActionPinToggle:
+            if (item.path.length == 0) {
+                break;
+            }
+            if (item.pinned) {
+                [self.pinStore unpinPath:item.path];
+            } else {
+                [self.pinStore pinPath:item.path];
+            }
+            break;
+        default:
+            break;
     }
 }
 
