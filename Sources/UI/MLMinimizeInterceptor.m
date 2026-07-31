@@ -1,9 +1,7 @@
 #import "MLMinimizeInterceptor.h"
 
-#import "MLCGSAlpha.h"
 #import "MLScreenGeometry.h"
 #import "MLTaskbarController.h"
-#import "MLWindowSoftState.h"
 
 #import <ApplicationServices/ApplicationServices.h>
 #import <dlfcn.h>
@@ -84,46 +82,6 @@ static CGWindowID MLAXCopyCGWindowID(AXUIElementRef win) {
     return wid;
 }
 
-/**
- * Hide without 1×1 tuck (Finder clamps tiny sizes and won't grow back).
- * Finder: always AXMinimized (system remembers frame; CGS alpha is unreliable).
- * Others: CGS alpha=0 if verified, else AXMinimized=true.
- * No local proxy animation — avoids double-animate with Dock genie.
- */
-static MLWindowHideMethod MLSoftMinimizeWindow(AXUIElementRef win, CGWindowID windowID, pid_t pid) {
-    BOOL isFinder = NO;
-    if (pid > 0) {
-        NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
-        isFinder = [app.bundleIdentifier isEqualToString:@"com.apple.finder"];
-    }
-
-    if (!isFinder && windowID != kCGNullWindowID && windowID != 0 && MLCGSWindowAlphaAvailable()) {
-        if (MLCGSSetWindowAlpha(windowID, 0.0f)) {
-            NSLog(@"[Taskbar] soft hide wid=%u via alpha", (unsigned)windowID);
-            return MLWindowHideMethodAlpha;
-        }
-    }
-    if (!win) {
-        return MLWindowHideMethodNone;
-    }
-    AXError err = AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanTrue);
-    if (err != kAXErrorSuccess) {
-        NSLog(@"[Taskbar] soft hide wid=%u AXMinimized failed err=%d", (unsigned)windowID, (int)err);
-        return MLWindowHideMethodNone;
-    }
-    Boolean isMin = false;
-    CFTypeRef minRef = NULL;
-    if (AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute, &minRef) == kAXErrorSuccess && minRef) {
-        if (CFGetTypeID(minRef) == CFBooleanGetTypeID()) {
-            isMin = CFBooleanGetValue((CFBooleanRef)minRef);
-        }
-        CFRelease(minRef);
-    }
-    NSLog(@"[Taskbar] soft hide wid=%u via AXMinimized confirmed=%d finder=%d",
-          (unsigned)windowID, (int)isMin, (int)isFinder);
-    return MLWindowHideMethodAXMinimized;
-}
-
 static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
     (void)proxy;
     MLMinimizeInterceptor *self = (__bridge MLMinimizeInterceptor *)refcon;
@@ -187,35 +145,16 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
     }
 
     CGWindowID wid = MLAXCopyCGWindowID(win);
-
-    NSScreen *screen = [MLScreenGeometry screenForCocoaRect:cocoaFrame];
-    NSNumber *screenID = [MLScreenGeometry screenIDForScreen:screen];
-
-    CGWindowID remembered =
-        [self.taskbar rememberWindowForCustomMinimizePID:pid
-                                                   title:title ?: @""
-                                                  bounds:NSRectToCGRect(cocoaFrame)
-                                                windowID:(wid != kCGNullWindowID ? wid : 0)];
-    if (wid == kCGNullWindowID || wid == 0) {
-        wid = remembered;
+    if (wid == kCGNullWindowID) {
+        wid = 0;
     }
 
-    /* Mark soft BEFORE hide so poll never drops the chip. */
-    if (wid != 0) {
-        [self.taskbar markSoftHiddenWindowID:wid
-                                         pid:pid
-                                       title:title ?: @""
-                               restoreFrame:cocoaFrame
-                                   screenID:screenID
-                                   axWindow:win];
-    }
-
-    MLWindowHideMethod method = MLSoftMinimizeWindow(win, wid, pid);
-    if (wid != 0 && method != MLWindowHideMethodNone) {
-        [self.taskbar updateSoftHideMethod:method forWindowID:wid];
-    }
+    [self.taskbar softMinimizeWindowWithAX:win
+                                  windowID:wid
+                                       pid:pid
+                                     title:title ?: @""
+                              restoreFrame:cocoaFrame];
     CFRelease(win);
-    [self.taskbar refreshAfterCustomMinimize];
 
     return NULL; /* Swallow yellow-button click; we own minimize. */
 }

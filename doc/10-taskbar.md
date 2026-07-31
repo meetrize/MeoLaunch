@@ -16,7 +16,7 @@
 | 按屏过滤 | 每条任务栏**只显示落在该显示器上的窗口**；钉住且未运行的启动器可在各屏显示 |
 | 图标 + 标题 | 每个条目绘制 **小图标 + 截断标题**（见 §4 显示单元） |
 | 状态色 | 有可见窗口 / 仅钉住未运行，视觉区分（**不展示「仅有进程无窗口」**） |
-| 左键 | 有窗口 → `activate` 所属 app；未运行钉住 → `openApplicationAtURL` |
+| 左键 | 窗口芯片：未激活→前置；已最前→软最小化；已最小化→还原几何。钉住未运行→启动 |
 | 右键 | 钉住 / 取消钉住（按 **app path**，非按窗口） |
 | 持久化 | 钉住列表写入 `taskbar_pins.json`（仅 path） |
 
@@ -367,8 +367,10 @@ rebuildItems():
   fitToWidth(items)  /* 可选：丢弃右侧未钉住 */
 
 click(item):
-  if item.pid != 0: activate(app)   /* MVP 不按 windowID 聚焦 */
-  else: openApplicationAtURL(path)
+  if PinnedOnly: activate/open path
+  else if minimized or soft-hidden: raiseAndFocus + restoreFrame
+  else if windowID is frontmost of frontmost app: softMinimize (same as yellow button)
+  else: raiseAndFocus + activate app
 
 pinToggle(item):
   pinned ? unpin(path) : pin(path)
@@ -471,12 +473,16 @@ MVP 可硬编码默认值；Prefs / schema 后做：
 4. **禁止** 1×1 tuck / 屏外乱改 size（访达会钳制小尺寸导致无法还原）。  
 5. soft 记录保留最小化时的 `AXUIElement`，供恢复精确回指。
 
-### 10.3 点击恢复
+### 10.3 点击：激活 / 最小化 / 还原
 
-1. 优先用 soft 里保留的 `AXUIElement`；其次 `_AXUIElementGetWindow` 按 `windowID`；标题仅弱兜底；**禁止**用 App 显示名（如 `"Finder"`）当窗口标题。  
-2. 按 `hideMethod`：alpha→1 或 `AXMinimized=false`，再反复套 `restoreFrame`（先 size 后 position，最长约 1.2s 重试）。  
-3. Raise + 激活（soft 恢复时 **不用** `ActivateAllWindows`）。  
-4. **仅当 AX 读回的 frame 与 `restoreFrame` 误差 ≤20pt** 才 `clearVerified`；禁止把「已 deminiaturize / 尺寸>80」当成成功（否则会过早丢掉恢复帧）。
+左键窗口芯片（现场判定，不单信 debounce 后的 `item.active`）：
+
+1. **已最小化或 soft-hidden** → 优先用 soft 里保留的 `AXUIElement`；其次 `_AXUIElementGetWindow` 按 `windowID`；标题仅弱兜底；**禁止**用 App 显示名当窗口标题。按 `hideMethod`：alpha→1 或 `AXMinimized=false`，再反复套 `restoreFrame`（先 size 后 position，最长约 1.2s 重试）。Raise + 激活（soft 恢复时 **不用** `ActivateAllWindows`）。**仅当 AX 读回的 frame 与 `restoreFrame` 误差 ≤20pt** 才 `clearVerified`。
+2. **已是屏幕 z 序最前的用户窗**（`topmostUserWindowIDExcludingSelf` 匹配；**不**依赖 `frontmostApplication`，避免点任务栏抢焦点后第一次点击被当成「激活」）→ 软最小化。
+3. **可见但非最前** → raise + activate 该 `windowID`。
+4. 钉住未运行 → 启动 / 激活 app。
+
+黄钮与任务栏再点共用同一软最小化入口，避免两套还原逻辑。
 
 ### 10.4 芯片存活硬规则
 

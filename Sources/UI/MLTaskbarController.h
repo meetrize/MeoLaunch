@@ -48,4 +48,16 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID;
 
+/**
+ * Shared soft-minimize pipeline (yellow button + taskbar re-click).
+ * Marks soft-hidden first, then hides via alpha / AXMinimized.
+ * @param win May be NULL if only alpha hide is attempted with a known windowID.
+ * @return YES if the window was hidden successfully.
+ */
+- (BOOL)softMinimizeWindowWithAX:(AXUIElementRef)win
+                        windowID:(CGWindowID)windowID
+                             pid:(pid_t)pid
+                           title:(NSString *)title
+                    restoreFrame:(NSRect)restoreFrame;
+
 @end
