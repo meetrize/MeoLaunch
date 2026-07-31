@@ -23,5 +23,7 @@
 - (void)show;
 - (void)hide;
 - (BOOL)isVisible;
+/** P2: apply overlay icon LRU cap from prefs. */
+- (void)setIconCacheMaxEntries:(NSUInteger)maxEntries;
 
 @end

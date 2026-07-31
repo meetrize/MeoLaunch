@@ -153,6 +153,18 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Hot size (pt)",
             @"zh" : @"热区大小 (pt)",
         },
+        @"prefs.taskbar_enabled" : @{
+            @"en" : @"Show taskbar",
+            @"zh" : @"显示任务栏",
+        },
+        @"prefs.window_poll" : @{
+            @"en" : @"Window poll",
+            @"zh" : @"窗口轮询",
+        },
+        @"prefs.overlay_icon_cache" : @{
+            @"en" : @"Overlay icons",
+            @"zh" : @"叠层图标缓存",
+        },
         @"prefs.scan_title" : @{
             @"en" : @"App Folders",
             @"zh" : @"应用目录",

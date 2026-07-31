@@ -78,8 +78,8 @@
     self.enteredAt = nil;
     self.armed = YES;
 
-    /* ~60 Hz — more reliable at screen edges */
-    self.timer = [NSTimer timerWithTimeInterval:1.0 / 60.0
+    /* ~25 Hz — enough for edge detection without 60Hz idle cost */
+    self.timer = [NSTimer timerWithTimeInterval:1.0 / 25.0
                                          target:self
                                        selector:@selector(tick)
                                        userInfo:nil

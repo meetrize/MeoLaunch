@@ -46,6 +46,7 @@
 @property (nonatomic, assign) NSInteger selectedVisibleIndex;
 
 - (void)reloadData;
+- (void)clearFolderCompositeCache;
 - (size_t)visibleItemCount;
 - (NSInteger)pageCount;
 - (void)goToPage:(NSInteger)page;

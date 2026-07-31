@@ -62,7 +62,12 @@
     "blur": true,
     "fade_ms": 100,
     "menubar_icon": true,
-    "lsuielement": true
+    "lsuielement": true,
+    "overlay_icon_cache_max": 128
+  },
+  "taskbar": {
+    "enabled": true,
+    "window_poll_seconds": 1.0
   },
   "launch_at_login": false
 }
@@ -84,6 +89,9 @@
 | `paging.wheel_threshold` | number | 滚轮累积阈值 |
 | `scan.roots` | string[] | `~` 展开为 home |
 | `ui.lsuielement` | bool | 不进 Dock（改后需重启生效） |
+| `ui.overlay_icon_cache_max` | int | Overlay 图标 LRU 上限（32–256，默认 128） |
+| `taskbar.enabled` | bool | 是否显示任务栏（默认 true） |
+| `taskbar.window_poll_seconds` | number | 窗口轮询间隔秒（0.5–5.0，默认 1.0） |
 
 ## 4. 读写策略
 

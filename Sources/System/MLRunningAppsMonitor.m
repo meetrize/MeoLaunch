@@ -39,6 +39,8 @@ NSNotificationName const MLRunningAppsDidChangeNotification = @"MLRunningAppsDid
 /** High-frequency CG census (no AX) — catches open/close/display-move without waiting for AX. */
 @property (nonatomic, strong) NSTimer *censusTimer;
 @property (nonatomic, copy) NSString *lastCensusToken;
+@property (nonatomic, assign) NSTimeInterval censusBoostUntil;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSValue *> *pollAXWindowsByPid;
 @end
 
 /** Per-process AXObserver (window create/destroy/miniaturize/title). */
@@ -444,6 +446,57 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     return t;
 }
 
+#pragma mark - Poll-scoped AX windows cache
+
+- (void)beginPollAXWindowsCache {
+    [self endPollAXWindowsCache];
+    self.pollAXWindowsByPid = [NSMutableDictionary dictionary];
+}
+
+- (void)endPollAXWindowsCache {
+    for (NSValue *v in self.pollAXWindowsByPid.allValues) {
+        CFArrayRef arr = (CFArrayRef)v.pointerValue;
+        if (arr) {
+            CFRelease(arr);
+        }
+    }
+    [self.pollAXWindowsByPid removeAllObjects];
+    self.pollAXWindowsByPid = nil;
+}
+
+/** Borrowed CFArrayRef owned by poll cache; NULL if unavailable. */
+- (CFArrayRef)axWindowsArrayForPID:(pid_t)pid {
+    if (pid <= 0 || !AXIsProcessTrusted()) {
+        return NULL;
+    }
+    if (!self.pollAXWindowsByPid) {
+        self.pollAXWindowsByPid = [NSMutableDictionary dictionary];
+    }
+    NSNumber *key = @(pid);
+    NSValue *hit = self.pollAXWindowsByPid[key];
+    if (hit) {
+        return (CFArrayRef)hit.pointerValue;
+    }
+    AXUIElementRef appRef = AXUIElementCreateApplication(pid);
+    if (!appRef) {
+        return NULL;
+    }
+    CFTypeRef windowsRef = NULL;
+    AXError err = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef);
+    CFRelease(appRef);
+    if (err != kAXErrorSuccess || !windowsRef || CFGetTypeID(windowsRef) != CFArrayGetTypeID()) {
+        if (windowsRef) {
+            CFRelease(windowsRef);
+        }
+        return NULL;
+    }
+    CFArrayRef arr = (CFArrayRef)windowsRef;
+    CFRetain(arr);
+    CFRelease(windowsRef);
+    self.pollAXWindowsByPid[key] = [NSValue valueWithPointer:(const void *)arr];
+    return arr;
+}
+
 /**
  * When CGWindowName is blank (common without Screen Recording), read kAXTitle.
  * Batched per PID. Used for Cursor editor titles and browser current-tab titles.
@@ -481,21 +534,11 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
 
     for (NSNumber *pidNum in needByPid) {
         pid_t pid = (pid_t)pidNum.intValue;
-        AXUIElementRef appRef = AXUIElementCreateApplication(pid);
-        if (!appRef) {
-            continue;
-        }
-        CFTypeRef windowsRef = NULL;
-        AXError err = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef);
-        if (err != kAXErrorSuccess || !windowsRef || CFGetTypeID(windowsRef) != CFArrayGetTypeID()) {
-            if (windowsRef) {
-                CFRelease(windowsRef);
-            }
-            CFRelease(appRef);
+        CFArrayRef axWindows = [self axWindowsArrayForPID:pid];
+        if (!axWindows) {
             continue;
         }
 
-        CFArrayRef axWindows = (CFArrayRef)windowsRef;
         NSMutableDictionary<NSNumber *, NSString *> *titleByWid = [NSMutableDictionary dictionary];
         CFIndex count = CFArrayGetCount(axWindows);
         for (CFIndex i = 0; i < count; i++) {
@@ -517,8 +560,6 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
             }
             CFRelease(titleRef);
         }
-        CFRelease(windowsRef);
-        CFRelease(appRef);
 
         NSArray<MLTaskbarWindowInfo *> *need = needByPid[pidNum];
         NSString *appName = [self appDisplayNameForPid:pid path:need.firstObject.path];
@@ -801,22 +842,11 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
             continue;
         }
 
-        AXUIElementRef appRef = AXUIElementCreateApplication(pid);
-        if (!appRef) {
+        CFArrayRef axWindows = [self axWindowsArrayForPID:pid];
+        if (!axWindows) {
             continue;
         }
 
-        CFTypeRef windowsRef = NULL;
-        AXError err = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef);
-        if (err != kAXErrorSuccess || !windowsRef || CFGetTypeID(windowsRef) != CFArrayGetTypeID()) {
-            if (windowsRef) {
-                CFRelease(windowsRef);
-            }
-            CFRelease(appRef);
-            continue;
-        }
-
-        CFArrayRef axWindows = (CFArrayRef)windowsRef;
         CFIndex count = CFArrayGetCount(axWindows);
         for (CFIndex i = 0; i < count && windows.count < cap; i++) {
             AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
@@ -899,9 +929,6 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
             [alreadyPathTitle addObject:dedupe];
             [withWindows addObject:path];
         }
-
-        CFRelease(windowsRef);
-        CFRelease(appRef);
     }
 }
 
@@ -917,28 +944,19 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     if (!getWid) {
         return [NSSet set];
     }
-    AXUIElementRef appRef = AXUIElementCreateApplication(pid);
-    if (!appRef) {
+    CFArrayRef axWindows = [self axWindowsArrayForPID:pid];
+    if (!axWindows) {
         return [NSSet set];
     }
-    CFTypeRef windowsRef = NULL;
     NSMutableSet<NSNumber *> *out = [NSMutableSet set];
-    if (AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef) == kAXErrorSuccess &&
-        windowsRef && CFGetTypeID(windowsRef) == CFArrayGetTypeID()) {
-        CFArrayRef axWindows = (CFArrayRef)windowsRef;
-        CFIndex count = CFArrayGetCount(axWindows);
-        for (CFIndex i = 0; i < count; i++) {
-            AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
-            CGWindowID wid = 0;
-            if (getWid(win, &wid) == kAXErrorSuccess && wid != 0) {
-                [out addObject:@(wid)];
-            }
+    CFIndex count = CFArrayGetCount(axWindows);
+    for (CFIndex i = 0; i < count; i++) {
+        AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
+        CGWindowID wid = 0;
+        if (getWid(win, &wid) == kAXErrorSuccess && wid != 0) {
+            [out addObject:@(wid)];
         }
     }
-    if (windowsRef) {
-        CFRelease(windowsRef);
-    }
-    CFRelease(appRef);
     return out;
 }
 
@@ -1004,40 +1022,31 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         return [NSSet set];
     }
     MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
-    AXUIElementRef appRef = AXUIElementCreateApplication(pid);
-    if (!appRef) {
+    CFArrayRef axWindows = [self axWindowsArrayForPID:pid];
+    if (!axWindows) {
         return [NSSet set];
     }
-    CFTypeRef windowsRef = NULL;
     NSMutableSet<NSNumber *> *out = [NSMutableSet set];
-    if (AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef) == kAXErrorSuccess &&
-        windowsRef && CFGetTypeID(windowsRef) == CFArrayGetTypeID()) {
-        CFArrayRef axWindows = (CFArrayRef)windowsRef;
-        CFIndex count = CFArrayGetCount(axWindows);
-        for (CFIndex i = 0; i < count; i++) {
-            AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
-            CFTypeRef minRef = NULL;
-            Boolean isMin = false;
-            if (AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute, &minRef) == kAXErrorSuccess &&
-                minRef) {
-                if (CFGetTypeID(minRef) == CFBooleanGetTypeID()) {
-                    isMin = CFBooleanGetValue((CFBooleanRef)minRef);
-                }
-                CFRelease(minRef);
+    CFIndex count = CFArrayGetCount(axWindows);
+    for (CFIndex i = 0; i < count; i++) {
+        AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
+        CFTypeRef minRef = NULL;
+        Boolean isMin = false;
+        if (AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute, &minRef) == kAXErrorSuccess &&
+            minRef) {
+            if (CFGetTypeID(minRef) == CFBooleanGetTypeID()) {
+                isMin = CFBooleanGetValue((CFBooleanRef)minRef);
             }
-            if (!isMin) {
-                continue;
-            }
-            CGWindowID wid = 0;
-            if (getWid && getWid(win, &wid) == kAXErrorSuccess && wid != 0) {
-                [out addObject:@(wid)];
-            }
+            CFRelease(minRef);
+        }
+        if (!isMin) {
+            continue;
+        }
+        CGWindowID wid = 0;
+        if (getWid && getWid(win, &wid) == kAXErrorSuccess && wid != 0) {
+            [out addObject:@(wid)];
         }
     }
-    if (windowsRef) {
-        CFRelease(windowsRef);
-    }
-    CFRelease(appRef);
     return out;
 }
 
@@ -1143,6 +1152,8 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
 }
 
 - (void)pollWindowsWithOptions:(MLPollOptions)options {
+    /* Always scope AX windows cache for this poll so Fast-path helpers cannot retain forever. */
+    [self beginPollAXWindowsCache];
     if ((options & MLPollOptionSkipPidRebuild) == 0) {
         [self rebuildPidMapFromWorkspace];
     }
@@ -1239,10 +1250,12 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         self.snapshot = snap;
         /* Keep census in sync even when snapshot fingerprint is unchanged. */
         self.lastCensusToken = [self computeWindowCensusToken];
+        [self endPollAXWindowsCache];
         return;
     }
     [self publishSnapshot:snap fingerprint:fp];
     self.lastCensusToken = [self computeWindowCensusToken];
+    [self endPollAXWindowsCache];
 }
 
 - (void)appDidLaunch:(NSNotification *)note {
@@ -1736,13 +1749,42 @@ static void MLAXObserverCallback(AXObserverRef observer,
     if (!self.running) {
         return;
     }
+    NSTimeInterval now = [NSDate date].timeIntervalSinceReferenceDate;
+    if (self.censusBoostUntil > 0 && now >= self.censusBoostUntil) {
+        self.censusBoostUntil = 0;
+        [self rescheduleCensusTimer];
+    }
+
     NSString *token = [self computeWindowCensusToken];
     if ([token isEqualToString:self.lastCensusToken ?: @""]) {
         return;
     }
     self.lastCensusToken = token;
+    /* Burst to 12Hz for ~2s after CG sees a structural change. */
+    self.censusBoostUntil = now + 2.0;
+    [self rescheduleCensusTimer];
     /* CG already saw the change — refresh taskbar without waiting for AX. */
     [self pollWindowsWithOptions:MLPollOptionsFast];
+}
+
+- (void)rescheduleCensusTimer {
+    if (!self.running) {
+        return;
+    }
+    NSTimeInterval now = [NSDate date].timeIntervalSinceReferenceDate;
+    BOOL boost = (self.censusBoostUntil > now);
+    NSTimeInterval interval = boost ? (1.0 / 12.0) : (1.0 / 4.0);
+    if (self.censusTimer && fabs(self.censusTimer.timeInterval - interval) < 0.001) {
+        return;
+    }
+    [self.censusTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.censusTimer = [NSTimer scheduledTimerWithTimeInterval:interval
+                                                        repeats:YES
+                                                          block:^(__unused NSTimer *timer) {
+                                                              [weakSelf censusTick];
+                                                          }];
+    [[NSRunLoop mainRunLoop] addTimer:self.censusTimer forMode:NSRunLoopCommonModes];
 }
 
 - (void)start {
@@ -1765,18 +1807,36 @@ static void MLAXObserverCallback(AXObserverRef observer,
     [self syncAXWindowObservers];
     [self pollWindows];
 
-    __weak typeof(self) weakSelf = self;
-    /* ~12 Hz CG census: open/close/cross-screen move without AX latency. */
-    self.censusTimer = [NSTimer scheduledTimerWithTimeInterval:(1.0 / 12.0)
-                                                        repeats:YES
-                                                          block:^(__unused NSTimer *timer) {
-                                                              [weakSelf censusTick];
-                                                          }];
-    [[NSRunLoop mainRunLoop] addTimer:self.censusTimer forMode:NSRunLoopCommonModes];
+    self.censusBoostUntil = 0;
+    /* Idle ~4 Hz CG census; bursts to 12 Hz for 2s after token change. */
+    [self rescheduleCensusTimer];
 
     /* Slow full poll: titles / AX ghost cleanup / observer sync. */
     NSTimeInterval interval = self.windowPollInterval > 0.2 ? self.windowPollInterval : 1.0;
+    __weak typeof(self) weakSelf = self;
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:interval
+                                                     repeats:YES
+                                                       block:^(__unused NSTimer *timer) {
+                                                           [weakSelf syncAXWindowObservers];
+                                                           [weakSelf pollWindows];
+                                                       }];
+    [[NSRunLoop mainRunLoop] addTimer:self.pollTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)applyWindowPollInterval:(NSTimeInterval)seconds {
+    if (seconds < 0.5) {
+        seconds = 0.5;
+    }
+    if (seconds > 5.0) {
+        seconds = 5.0;
+    }
+    self.windowPollInterval = seconds;
+    if (!self.running) {
+        return;
+    }
+    [self.pollTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:seconds
                                                      repeats:YES
                                                        block:^(__unused NSTimer *timer) {
                                                            [weakSelf syncAXWindowObservers];
@@ -1794,11 +1854,13 @@ static void MLAXObserverCallback(AXObserverRef observer,
     self.censusTimer = nil;
     [self.pollTimer invalidate];
     self.pollTimer = nil;
+    self.censusBoostUntil = 0;
+    self.lastCensusToken = nil;
+    [self endPollAXWindowsCache];
     [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
     [self removeAllAXWatches];
     self.axStructuralPollPending = NO;
     self.axGeometryPollPending = NO;
-    self.lastCensusToken = nil;
     self.snapshot = [self emptySnapshot];
     self.lastFingerprint = nil;
     [self.pidPathMap removeAllObjects];

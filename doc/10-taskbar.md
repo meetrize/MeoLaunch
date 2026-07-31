@@ -412,24 +412,21 @@ pinToggle(item):
 
 ---
 
-## 8. 配置扩展（可选）
+## 8. 配置扩展
 
-MVP 可硬编码默认值；Prefs / schema 后做：
+Prefs / schema（见 [06-config-schema.md](./06-config-schema.md)）：
 
 ```json
 "taskbar": {
   "enabled": true,
-  "icon_size": 32,
-  "height": 40,
-  "item_max_width": 160,
-  "item_min_width": 72,
-  "title_max_chars": 40,
-  "max_window_entries": 24,
-  "window_poll_seconds": 1.0,
-  "max_icons_cached": 48
+  "window_poll_seconds": 1.0
+},
+"ui": {
+  "overlay_icon_cache_max": 128
 }
 ```
 
+其余（`icon_size` / `height` / `title_max_chars` 等）仍硬编码默认值。
 ---
 
 ## 9. 任务卡顺序

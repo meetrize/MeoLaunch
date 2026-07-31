@@ -23,7 +23,11 @@
     NSTimeInterval _gapAnimStart;
     NSInteger _edgeFlipSide; /* -1 left, 0 none, +1 right */
     NSTimeInterval _edgeEnterTime;
+    NSMutableDictionary<NSString *, NSImage *> *_folderCompositeCache;
+    NSMutableArray<NSString *> *_folderCompositeLRU;
 }
+
+enum { MLFolderCompositeMaxEntries = 16 };
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
     self = [super initWithFrame:frameRect];
@@ -49,6 +53,8 @@
         _edgeFlipSide = 0;
         _edgeEnterTime = 0;
         _dragIconBaseSize = NSZeroSize;
+        _folderCompositeCache = [NSMutableDictionary dictionary];
+        _folderCompositeLRU = [NSMutableArray array];
         self.wantsLayer = NO;
     }
     return self;
@@ -183,11 +189,25 @@
 
 #pragma mark - Public API
 
+- (void)clearFolderCompositeCache {
+    [_folderCompositeCache removeAllObjects];
+    [_folderCompositeLRU removeAllObjects];
+}
+
+- (void)setLayout:(const MLLayout *)layout {
+    if (_layout == layout) {
+        return;
+    }
+    _layout = layout;
+    [self clearFolderCompositeCache];
+}
+
 - (void)reloadData {
     size_t total = [self visibleItemCount];
     if (self.selectedVisibleIndex >= (NSInteger)total) {
         self.selectedVisibleIndex = total > 0 ? (NSInteger)total - 1 : -1;
     }
+    [self clearFolderCompositeCache];
     [self ensureSelectionPageVisible];
     [self setNeedsDisplay:YES];
     [self prefetchVisibleIcons];
@@ -498,6 +518,18 @@
         return nil;
     }
 
+    NSString *fid = folder->id ? [NSString stringWithUTF8String:folder->id] : nil;
+    NSString *cacheKey = nil;
+    if (fid.length > 0) {
+        cacheKey = [NSString stringWithFormat:@"%@|%.0fx%.0f", fid, size.width, size.height];
+        NSImage *hit = _folderCompositeCache[cacheKey];
+        if (hit) {
+            [_folderCompositeLRU removeObject:cacheKey];
+            [_folderCompositeLRU addObject:cacheKey];
+            return hit;
+        }
+    }
+
     NSImage *img = [[NSImage alloc] initWithSize:size];
     [img lockFocus];
 
@@ -510,6 +542,7 @@
     CGFloat gap = size.width * 0.06;
     CGFloat cell = (size.width - pad * 2.0 - gap) * 0.5;
     size_t n = folder->count < 4 ? folder->count : 4;
+    BOOL complete = YES;
     for (size_t i = 0; i < n; i++) {
         const char *cpath = folder->items[i].path;
         if (!cpath) {
@@ -518,9 +551,8 @@
         NSString *pathStr = [NSString stringWithUTF8String:cpath];
         NSImage *icon = [self.iconCache cachedIconForPath:pathStr];
         if (!icon) {
-            icon = [[NSWorkspace sharedWorkspace] iconForFile:pathStr];
-        }
-        if (!icon) {
+            complete = NO;
+            [self requestIconForPath:pathStr];
             continue;
         }
         int col = (int)(i % 2);
@@ -538,6 +570,20 @@
     }
 
     [img unlockFocus];
+
+    /* Only cache complete composites so missing icons can still appear after load. */
+    if (complete && cacheKey.length > 0 && img) {
+        _folderCompositeCache[cacheKey] = img;
+        [_folderCompositeLRU removeObject:cacheKey];
+        [_folderCompositeLRU addObject:cacheKey];
+        while (_folderCompositeLRU.count > (NSUInteger)MLFolderCompositeMaxEntries) {
+            NSString *oldest = _folderCompositeLRU.firstObject;
+            [_folderCompositeLRU removeObjectAtIndex:0];
+            if (oldest) {
+                [_folderCompositeCache removeObjectForKey:oldest];
+            }
+        }
+    }
     return img;
 }
 
@@ -560,7 +606,10 @@
         if (node && node->u.folder && node->u.folder->count > 0 && node->u.folder->items[0].path) {
             NSString *path = [NSString stringWithUTF8String:node->u.folder->items[0].path];
             NSImage *cached = [self.iconCache cachedIconForPath:path];
-            return cached ?: [[NSWorkspace sharedWorkspace] iconForFile:path];
+            if (!cached) {
+                [self requestIconForPath:path];
+            }
+            return cached;
         }
         return nil;
     }
@@ -568,7 +617,11 @@
     if (!path.length) {
         return nil;
     }
-    return [self.iconCache cachedIconForPath:path];
+    NSImage *cached = [self.iconCache cachedIconForPath:path];
+    if (!cached) {
+        [self requestIconForPath:path];
+    }
+    return cached;
 }
 
 #pragma mark - Input
@@ -690,9 +743,8 @@
 }
 
 - (void)prefetchVisibleIcons {
+    /* P1: current page only — neighbor pages load on flip (lower Active peak). */
     [self prefetchIconsForPage:self.currentPage];
-    [self prefetchIconsForPage:self.currentPage - 1];
-    [self prefetchIconsForPage:self.currentPage + 1];
 }
 
 #pragma mark - Drawing
@@ -774,10 +826,7 @@
             NSString *path = [NSString stringWithUTF8String:cpath];
             NSImage *icon = [self.iconCache cachedIconForPath:path];
             if (!icon) {
-                icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
                 [self requestIconForPath:path];
-            }
-            if (!icon) {
                 continue;
             }
             int col = (int)(i % 2);
@@ -1190,9 +1239,7 @@
                 NSString *path = [NSString stringWithUTF8String:node->u.folder->items[0].path];
                 icon = [self.iconCache cachedIconForPath:path];
                 if (!icon) {
-                    icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-                    icon = [icon copy];
-                    icon.size = iconRect.size;
+                    [self requestIconForPath:path];
                 }
             }
         }
@@ -1201,9 +1248,8 @@
         if (!icon) {
             NSString *path = [self appPathAtVisible:(size_t)_dragSourceVis];
             if (path.length) {
-                icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-                icon = [icon copy];
-                icon.size = iconRect.size;
+                [self requestIconForPath:path];
+                icon = [self.iconCache cachedIconForPath:path];
             }
         }
     }

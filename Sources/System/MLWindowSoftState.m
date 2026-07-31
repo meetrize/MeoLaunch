@@ -1,4 +1,5 @@
 #import "MLWindowSoftState.h"
+#import "MLDebugLog.h"
 
 NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoftStateDidChangeNotification";
 
@@ -84,7 +85,7 @@ NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoft
                     seenOrder:(NSUInteger)seenOrder
                      axWindow:(AXUIElementRef)axWindow {
     if (windowID == 0) {
-        NSLog(@"[Taskbar] soft mark skipped — windowID=0 pid=%d title=%@", (int)pid, title ?: @"");
+        MLDebugLog(@"[Taskbar] soft mark skipped — windowID=0 pid=%d title=%@", (int)pid, title ?: @"");
         return;
     }
     MLWindowSoftRecord *r = self.byID[@(windowID)];
@@ -115,7 +116,7 @@ NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoft
     if (axWindow) {
         r.axWindow = axWindow;
     }
-    NSLog(@"[Taskbar] soft mark wid=%u pid=%d method=%ld frame=(%.0f,%.0f %.0fx%.0f) ax=%p",
+    MLDebugLog(@"[Taskbar] soft mark wid=%u pid=%d method=%ld frame=(%.0f,%.0f %.0fx%.0f) ax=%p",
           (unsigned)windowID, (int)pid, (long)r.hideMethod,
           r.restoreFrameCocoa.origin.x, r.restoreFrameCocoa.origin.y,
           r.restoreFrameCocoa.size.width, r.restoreFrameCocoa.size.height,
@@ -129,7 +130,7 @@ NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoft
         return;
     }
     r.hideMethod = method;
-    NSLog(@"[Taskbar] soft hideMethod wid=%u → %ld", (unsigned)windowID, (long)method);
+    MLDebugLog(@"[Taskbar] soft hideMethod wid=%u → %ld", (unsigned)windowID, (long)method);
     [self notify];
 }
 
@@ -137,7 +138,7 @@ NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoft
     if (windowID == 0 || !self.byID[@(windowID)]) {
         return;
     }
-    NSLog(@"[Taskbar] soft clear verified wid=%u", (unsigned)windowID);
+    MLDebugLog(@"[Taskbar] soft clear verified wid=%u", (unsigned)windowID);
     [self.byID removeObjectForKey:@(windowID)];
     [self notify];
 }
@@ -146,7 +147,7 @@ NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoft
     if (windowID == 0 || !self.byID[@(windowID)]) {
         return;
     }
-    NSLog(@"[Taskbar] soft remove closed wid=%u", (unsigned)windowID);
+    MLDebugLog(@"[Taskbar] soft remove closed wid=%u", (unsigned)windowID);
     [self.byID removeObjectForKey:@(windowID)];
     [self notify];
 }

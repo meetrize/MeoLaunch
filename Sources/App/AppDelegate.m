@@ -39,6 +39,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLTaskbarController *taskbar;
 @property (nonatomic, assign) MLAppIndex appIndex;
 @property (nonatomic, strong) NSTimer *rescanDebounceTimer;
+/** Drop stale background scans when a newer rescan started. */
+@property (nonatomic, assign) NSUInteger appScanGeneration;
 @end
 
 @implementation AppDelegate
@@ -74,6 +76,9 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
                                                          monitor:self.runningApps
                                                        iconCache:self.taskbarIcons];
     self.taskbar.appActions = self;
+    self.taskbar.enabled = self.config.taskbarEnabled;
+    [self.overlay setIconCacheMaxEntries:self.config.overlayIconCacheMax];
+    [self.runningApps applyWindowPollInterval:self.config.taskbarWindowPollSeconds];
 
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(configDidChange:)
@@ -97,7 +102,9 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
     [self setupStatusItem];
     [self setupHotCornerWithAccessibility];
-    [self.taskbar start];
+    if (self.config.taskbarEnabled) {
+        [self.taskbar start];
+    }
 
     NSLog(@"[MeoLaunch] ready — layout + configurable scan roots + taskbar");
 }
@@ -121,9 +128,22 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     [self.hotKey applyConfig:self.config];
     [self.hotKey registerDefaultHotKey];
 
+    [self.overlay setIconCacheMaxEntries:self.config.overlayIconCacheMax];
+    [self.runningApps applyWindowPollInterval:self.config.taskbarWindowPollSeconds];
+    if (self.config.taskbarEnabled) {
+        self.taskbar.enabled = YES;
+        [self.taskbar start];
+    } else {
+        [self.taskbar stop];
+        self.taskbar.enabled = NO;
+    }
+
     [self.overlay reloadWithAppIndex:&_appIndex];
-    NSLog(@"[MeoLaunch] config applied live (%dx%d)",
-          self.config.gridConfig.cols, self.config.gridConfig.rows);
+    NSLog(@"[MeoLaunch] config applied live (%dx%d) taskbar=%d poll=%.2f icons=%lu",
+          self.config.gridConfig.cols, self.config.gridConfig.rows,
+          (int)self.config.taskbarEnabled,
+          self.config.taskbarWindowPollSeconds,
+          (unsigned long)self.config.overlayIconCacheMax);
 }
 
 - (void)setupHotCornerWithAccessibility {
@@ -197,26 +217,44 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         ];
     }
 
-    const char **croots = (const char **)calloc(roots.count, sizeof(char *));
-    if (!croots) {
-        NSLog(@"[MeoLaunch] app scan OOM");
-        return;
-    }
-    for (NSUInteger i = 0; i < roots.count; i++) {
-        croots[i] = roots[i].UTF8String;
-    }
-    int rc = ml_app_index_scan(&_appIndex, croots, roots.count);
-    free(croots);
-    if (rc != 0) {
-        NSLog(@"[MeoLaunch] app scan failed (%d)", rc);
-        return;
-    }
-    NSLog(@"[MeoLaunch] scanned %zu apps from %zu roots", _appIndex.count, (size_t)roots.count);
-    int layoutChanges = [self.layoutStore syncWithAppIndex:&_appIndex];
-    NSLog(@"[MeoLaunch] layout sync changes=%d root=%zu",
-          layoutChanges,
-          self.layoutStore.layout ? self.layoutStore.layout->count : 0);
-    [self.overlay reloadWithAppIndex:&_appIndex];
+    NSArray<NSString *> *rootsCopy = [roots copy];
+    NSUInteger gen = ++self.appScanGeneration;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        MLAppIndex scanned = {0};
+        const char **croots = (const char **)calloc(rootsCopy.count, sizeof(char *));
+        if (!croots) {
+            NSLog(@"[MeoLaunch] app scan OOM");
+            return;
+        }
+        for (NSUInteger i = 0; i < rootsCopy.count; i++) {
+            croots[i] = rootsCopy[i].UTF8String;
+        }
+        int rc = ml_app_index_scan(&scanned, croots, rootsCopy.count);
+        free(croots);
+        if (rc != 0) {
+            NSLog(@"[MeoLaunch] app scan failed (%d)", rc);
+            ml_app_index_clear(&scanned);
+            return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) self = weakSelf;
+            MLAppIndex result = scanned;
+            if (!self || gen != self.appScanGeneration) {
+                ml_app_index_clear(&result);
+                return;
+            }
+            ml_app_index_clear(&self->_appIndex);
+            self->_appIndex = result;
+            NSLog(@"[MeoLaunch] scanned %zu apps from %zu roots",
+                  self->_appIndex.count, (size_t)rootsCopy.count);
+            int layoutChanges = [self.layoutStore syncWithAppIndex:&self->_appIndex];
+            NSLog(@"[MeoLaunch] layout sync changes=%d root=%zu",
+                  layoutChanges,
+                  self.layoutStore.layout ? self.layoutStore.layout->count : 0);
+            [self.overlay reloadWithAppIndex:&self->_appIndex];
+        });
+    });
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {

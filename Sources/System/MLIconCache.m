@@ -5,6 +5,8 @@
 @property (nonatomic, strong) NSMutableArray<NSString *> *lru; /* most-recent at end */
 @property (nonatomic, strong) NSMutableSet<NSString *> *inflight;
 @property (nonatomic, strong) dispatch_queue_t queue;
+/** Bumped on purge so in-flight loads do not repopulate the cache. */
+@property (nonatomic, assign) NSUInteger loadGeneration;
 @end
 
 @implementation MLIconCache
@@ -67,13 +69,20 @@
         [self.inflight addObject:path];
     }
 
+    NSUInteger gen;
+    @synchronized (self.cache) {
+        gen = self.loadGeneration;
+    }
+
     dispatch_async(self.queue, ^{
         NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
         [icon setSize:NSMakeSize(128, 128)];
         NSImage *copy = [icon copy];
 
         @synchronized (self.cache) {
-            if (copy) {
+            if (gen != self.loadGeneration) {
+                /* Purged while loading — drop result. */
+            } else if (copy) {
                 self.cache[path] = copy;
                 [self touchKey:path];
                 [self evictIfNeeded];
@@ -84,15 +93,21 @@
         }
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            onLoaded(path, copy);
+            if (gen == self.loadGeneration) {
+                onLoaded(path, copy);
+            }
         });
     });
 }
 
 - (void)purge {
     @synchronized (self.cache) {
+        self.loadGeneration += 1;
         [self.cache removeAllObjects];
         [self.lru removeAllObjects];
+    }
+    @synchronized (self.inflight) {
+        [self.inflight removeAllObjects];
     }
 }
 

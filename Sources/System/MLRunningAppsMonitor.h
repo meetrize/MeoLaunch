@@ -43,6 +43,8 @@ FOUNDATION_EXPORT NSNotificationName const MLRunningAppsDidChangeNotification;
 
 - (void)start;
 - (void)stop;
+/** Apply poll interval; recreates timer if already running. */
+- (void)applyWindowPollInterval:(NSTimeInterval)seconds;
 /** Force an immediate window snapshot refresh. */
 - (void)pollNow;
 - (CGRect)cachedBoundsForWindowID:(CGWindowID)windowID;

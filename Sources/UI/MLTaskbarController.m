@@ -1,6 +1,7 @@
 #import "MLTaskbarController.h"
 
 #import "MLCGSAlpha.h"
+#import "MLDebugLog.h"
 #import "MLMinimizeInterceptor.h"
 #import "MLRunningAppsMonitor.h"
 #import "MLScreenGeometry.h"
@@ -70,6 +71,11 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 @property (nonatomic, strong) NSTimer *itemsCommitTimer;
 /** Until this time, refuse painting a much-smaller chip set (exit Show Desktop settle). */
 @property (nonatomic, assign) NSTimeInterval stickyDisplayUntil;
+/** One frontmost wid per rebuild pass — avoids N× CGWindowList on multi-monitor. */
+@property (nonatomic, assign) CGWindowID rebuildPassFrontmostWID;
+@property (nonatomic, assign) BOOL rebuildPassFrontmostValid;
+@property (nonatomic, assign) CGWindowID cachedTopmostUserWID;
+@property (nonatomic, assign) NSTimeInterval cachedTopmostUserAt;
 @property (nonatomic, strong) NSTimer *visibilitySafetyTimer;
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL hiddenForOverlay;
@@ -271,6 +277,11 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
  * so NSWorkspace.frontmostApplication is unreliable at click time.
  */
 - (CGWindowID)topmostUserWindowIDExcludingSelf {
+    NSTimeInterval now = [NSDate date].timeIntervalSinceReferenceDate;
+    if (self.cachedTopmostUserAt > 0 && (now - self.cachedTopmostUserAt) < 0.08 &&
+        self.cachedTopmostUserWID != 0) {
+        return self.cachedTopmostUserWID;
+    }
     pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
     CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
                                                      kCGWindowListExcludeDesktopElements,
@@ -333,6 +344,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         break;
     }
     CFRelease(list);
+    self.cachedTopmostUserWID = best;
+    self.cachedTopmostUserAt = now;
     return best;
 }
 
@@ -523,7 +536,9 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     }
 
     NSMutableArray<MLTaskbarItem *> *windowItems = [NSMutableArray array];
-    CGWindowID frontWid = [self frontmostTrackedWindowID];
+    CGWindowID frontWid = self.rebuildPassFrontmostValid
+                              ? self.rebuildPassFrontmostWID
+                              : [self frontmostTrackedWindowID];
     for (MLTaskbarWindowInfo *w in uniqueWindows) {
         NSString *display = [self displayNameForPath:w.path];
         NSString *title = w.title.length > 0 ? w.title : display;
@@ -662,8 +677,11 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         pendingWindows += [self windowChipCountInItems:bar.pendingItems];
         shownWindows += [self windowChipCountOnBar:bar];
     }
+    /* Large chip drop while reveal-armed → freeze even if cover heuristic is still catching up. */
     if (!force && shownWindows >= 2 && pendingWindows + 1 < shownWindows &&
-        [self looksLikeDesktopReveal]) {
+        [self isDesktopRevealArmed] &&
+        ([self looksLikeDesktopReveal] || [self shouldFreezeForDesktopReveal] ||
+         pendingWindows * 2 < shownWindows)) {
         [self freezeDesktopReveal];
         return;
     }
@@ -915,7 +933,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     }
     self.desktopRevealScreenIDs = all;
     self.fullscreenScreenIDs = [NSSet set];
-    NSLog(@"[Taskbar] desktop reveal FREEZE baseline=%ld chips=%ld",
+    MLDebugLog(@"[Taskbar] desktop reveal FREEZE baseline=%ld chips=%ld",
           (long)self.freezeLiveBaseline, (long)[self frozenWindowChipTotal]);
     [self applyBarVisibility];
 }
@@ -976,7 +994,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     [self computePendingItemsForAllBars];
     [self scheduleItemsCommitWithDelay:MLTaskbarExitSettleDelay];
     [self updateStableLiveCensus];
-    NSLog(@"[Taskbar] desktop reveal UNFREEZE + settle commit");
+    MLDebugLog(@"[Taskbar] desktop reveal UNFREEZE + settle commit");
 }
 
 - (NSInteger)liveNonMinimizedWindowCount {
@@ -1061,6 +1079,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 }
 
 - (void)computePendingItemsForAllBars {
+    self.rebuildPassFrontmostWID = [self frontmostTrackedWindowID];
+    self.rebuildPassFrontmostValid = YES;
     NSDictionary<NSNumber *, NSScreen *> *screensByID = [self screensByID];
     for (MLTaskbarScreenBar *bar in self.bars) {
         NSScreen *screen = screensByID[bar.screenID];
@@ -1068,10 +1088,12 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
             [self rebuildItemsForBar:bar screen:screen];
         }
     }
+    self.rebuildPassFrontmostValid = NO;
 }
 
 /**
- * @param immediate YES = paint now (pin / soft-min). NO = debounce (monitor churn).
+ * @param immediate YES = paint now (pin / soft-min). NO = debounce (monitor / Show Desktop churn).
+ * Monitor paths must use NO so Show Desktop can freeze before chips morph.
  */
 - (void)rebuildItemsImmediate:(BOOL)immediate {
     if (!self.started) {
@@ -1081,9 +1103,14 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         [self restoreFrozenItemsOntoBars];
         return;
     }
+    if ([self shouldFreezeForDesktopReveal]) {
+        [self freezeDesktopReveal];
+        return;
+    }
     [self computePendingItemsForAllBars];
     if (immediate) {
         [self cancelItemsCommitTimer];
+        /* force=YES only for intentional user-driven paints (pin / soft-min callers). */
         [self commitPendingItemsForce:YES];
     } else {
         [self scheduleItemsCommitWithDelay:MLTaskbarItemsCommitDelay];
@@ -1091,6 +1118,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 }
 
 - (void)rebuildItems {
+    /* Always debounce — coalesces Show Desktop window-list churn before paint. */
     [self rebuildItemsImmediate:NO];
 }
 
@@ -1392,6 +1420,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     }
     [self.bars removeAllObjects];
     [self.iconCache purge];
+    [self.displayNameCache removeAllObjects];
 }
 
 - (void)pinsDidChange:(NSNotification *)note {
@@ -1409,6 +1438,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     }
     [self refreshFullscreenVisibility];
     if (!self.itemsFrozenForDesktopReveal) {
+        /* Debounce monitor churn so Show Desktop can freeze before chips drop. */
         [self rebuildItemsImmediate:NO];
     } else {
         [self restoreFrozenItemsOntoBars];
@@ -2143,7 +2173,7 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
 
     if (!isFinder && windowID != kCGNullWindowID && windowID != 0 && MLCGSWindowAlphaAvailable()) {
         if (MLCGSSetWindowAlpha(windowID, 0.0f)) {
-            NSLog(@"[Taskbar] soft hide wid=%u via alpha", (unsigned)windowID);
+            MLDebugLog(@"[Taskbar] soft hide wid=%u via alpha", (unsigned)windowID);
             return MLWindowHideMethodAlpha;
         }
     }
@@ -2155,6 +2185,7 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         NSLog(@"[Taskbar] soft hide wid=%u AXMinimized failed err=%d", (unsigned)windowID, (int)err);
         return MLWindowHideMethodNone;
     }
+#if ML_ENABLE_DEBUG_LOG
     Boolean isMin = false;
     CFTypeRef minRef = NULL;
     if (AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute, &minRef) == kAXErrorSuccess && minRef) {
@@ -2163,8 +2194,9 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         }
         CFRelease(minRef);
     }
-    NSLog(@"[Taskbar] soft hide wid=%u via AXMinimized confirmed=%d finder=%d",
+    MLDebugLog(@"[Taskbar] soft hide wid=%u via AXMinimized confirmed=%d finder=%d",
           (unsigned)windowID, (int)isMin, (int)isFinder);
+#endif
     return MLWindowHideMethodAXMinimized;
 }
 
@@ -2390,10 +2422,10 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     BOOL matched = [self frame:got matchesRestore:restoreFrame tolerance:20.0];
     if (matched && clearIfMatched && wid != 0) {
         [self.monitor.softState clearVerifiedWindowID:wid];
-        NSLog(@"[Taskbar] soft restore verified wid=%u frame=(%.0f,%.0f %.0fx%.0f)",
+        MLDebugLog(@"[Taskbar] soft restore verified wid=%u frame=(%.0f,%.0f %.0fx%.0f)",
               (unsigned)wid, got.origin.x, got.origin.y, got.size.width, got.size.height);
     } else if (!matched) {
-        NSLog(@"[Taskbar] soft restore mismatch wid=%u got=(%.0f,%.0f %.0fx%.0f) want=(%.0f,%.0f %.0fx%.0f)",
+        MLDebugLog(@"[Taskbar] soft restore mismatch wid=%u got=(%.0f,%.0f %.0fx%.0f) want=(%.0f,%.0f %.0fx%.0f)",
               (unsigned)wid,
               got.origin.x, got.origin.y, got.size.width, got.size.height,
               restoreFrame.origin.x, restoreFrame.origin.y, restoreFrame.size.width, restoreFrame.size.height);
@@ -2585,15 +2617,15 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
 
         if (wasSoft) {
             if (verified) {
-                NSLog(@"[Taskbar] soft restore ok wid=%u", (unsigned)wid);
+                MLDebugLog(@"[Taskbar] soft restore ok wid=%u", (unsigned)wid);
             } else if (needsGeometry) {
-                NSLog(@"[Taskbar] soft restore pending wid=%u (chip kept, retries scheduled)",
+                MLDebugLog(@"[Taskbar] soft restore pending wid=%u (chip kept, retries scheduled)",
                       (unsigned)wid);
             }
         }
     } else {
         AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
-        NSLog(@"[Taskbar] soft restore fail — no AX target wid=%u", (unsigned)wid);
+        MLDebugLog(@"[Taskbar] soft restore fail — no AX target wid=%u", (unsigned)wid);
     }
 
     CFRelease(windowsRef);

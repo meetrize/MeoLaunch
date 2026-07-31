@@ -24,6 +24,9 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @property (nonatomic, assign, readwrite) MLLanguage language;
 @property (nonatomic, copy, readwrite) NSArray<NSString *> *scanRoots;
 @property (nonatomic, assign, readwrite) NSInteger scanRefreshSeconds;
+@property (nonatomic, assign, readwrite) BOOL taskbarEnabled;
+@property (nonatomic, assign, readwrite) NSTimeInterval taskbarWindowPollSeconds;
+@property (nonatomic, assign, readwrite) NSUInteger overlayIconCacheMax;
 @property (nonatomic, strong) NSTimer *saveTimer;
 @end
 
@@ -148,6 +151,9 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     [MLStrings setLanguage:self.language];
     self.scanRoots = [[self class] builtInScanRoots];
     self.scanRefreshSeconds = 60;
+    self.taskbarEnabled = YES;
+    self.taskbarWindowPollSeconds = 1.0;
+    self.overlayIconCacheMax = 128;
 }
 
 - (void)applyScanDictionary:(NSDictionary *)scan {
@@ -274,6 +280,25 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
             self.language = [MLStrings languageFromCode:[ui[@"language"] description]];
             [MLStrings setLanguage:self.language];
         }
+        if (ui[@"overlay_icon_cache_max"]) {
+            NSInteger n = [ui[@"overlay_icon_cache_max"] integerValue];
+            if (n < 32) n = 32;
+            if (n > 256) n = 256;
+            self.overlayIconCacheMax = (NSUInteger)n;
+        }
+    }
+
+    NSDictionary *tb = root[@"taskbar"];
+    if ([tb isKindOfClass:[NSDictionary class]]) {
+        if (tb[@"enabled"]) {
+            self.taskbarEnabled = [tb[@"enabled"] boolValue];
+        }
+        if (tb[@"window_poll_seconds"]) {
+            NSTimeInterval s = [tb[@"window_poll_seconds"] doubleValue];
+            if (s < 0.5) s = 0.5;
+            if (s > 5.0) s = 5.0;
+            self.taskbarWindowPollSeconds = s;
+        }
     }
 
     [self applyScanDictionary:root[@"scan"]];
@@ -328,8 +353,13 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
             @"fade_ms" : @(self.fadeMs),
             @"overlay_opacity" : @(self.overlayOpacity),
             @"language" : [MLStrings codeForLanguage:self.language],
+            @"overlay_icon_cache_max" : @(self.overlayIconCacheMax > 0 ? self.overlayIconCacheMax : 128),
             @"menubar_icon" : @YES,
             @"lsuielement" : @YES,
+        },
+        @"taskbar" : @{
+            @"enabled" : @(self.taskbarEnabled),
+            @"window_poll_seconds" : @(self.taskbarWindowPollSeconds > 0 ? self.taskbarWindowPollSeconds : 1.0),
         },
         @"launch_at_login" : @NO,
     };
@@ -558,6 +588,37 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     }
     self.language = language;
     [MLStrings setLanguage:language];
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateTaskbarEnabled:(BOOL)enabled {
+    if (self.taskbarEnabled == enabled) {
+        return;
+    }
+    self.taskbarEnabled = enabled;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateTaskbarWindowPollSeconds:(NSTimeInterval)seconds {
+    if (seconds < 0.5) seconds = 0.5;
+    if (seconds > 5.0) seconds = 5.0;
+    if (fabs(self.taskbarWindowPollSeconds - seconds) < 0.01) {
+        return;
+    }
+    self.taskbarWindowPollSeconds = seconds;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateOverlayIconCacheMax:(NSUInteger)maxEntries {
+    if (maxEntries < 32) maxEntries = 32;
+    if (maxEntries > 256) maxEntries = 256;
+    if (self.overlayIconCacheMax == maxEntries) {
+        return;
+    }
+    self.overlayIconCacheMax = maxEntries;
     [self notifyChanged];
     [self scheduleSave];
 }

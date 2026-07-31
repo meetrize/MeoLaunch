@@ -13,6 +13,7 @@
 #include "ml_layout.h"
 
 #include <mach/mach.h>
+#include <malloc/malloc.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <string.h>
@@ -44,7 +45,9 @@
 @property (nonatomic, assign, readwrite) BOOL visible;
 @property (nonatomic, assign) BOOL animating;
 @property (nonatomic, assign) NSUInteger showGeneration;
+@property (nonatomic, assign) NSUInteger iconPurgeGeneration;
 @property (nonatomic, strong) NSRunningApplication *previousApp;
+@property (nonatomic, strong) NSTimer *searchDebounceTimer;
 @end
 
 /** Lets clicks fall through to the dismiss catcher below. */
@@ -68,7 +71,7 @@ static void MLLogMemory(NSString *tag) {
         return;
     }
     double mb = (double)info.phys_footprint / (1024.0 * 1024.0);
-    NSLog(@"[MeoLaunch] mem %@ phys_footprint=%.1fMB icons_cache later", tag, mb);
+    NSLog(@"[MeoLaunch] mem %@ phys_footprint=%.1fMB", tag, mb);
 }
 
 - (instancetype)initWithConfigStore:(MLConfigStore *)config
@@ -118,6 +121,9 @@ static void MLLogMemory(NSString *tag) {
 }
 
 - (void)syncPageIndicator {
+    if (!self.gridView || !self.pageIndicator) {
+        return;
+    }
     NSInteger pages = [self.gridView pageCount];
     NSInteger page = self.gridView.currentPage;
     [self.pageIndicator updateWithPage:page pageCount:pages];
@@ -141,6 +147,9 @@ static void MLLogMemory(NSString *tag) {
 }
 
 - (void)applyFilterWithQuery:(NSString *)query preservePage:(BOOL)preservePage {
+    if (!self.gridView) {
+        return;
+    }
     NSInteger page = preservePage ? self.gridView.currentPage : 0;
     NSInteger sel = preservePage ? self.gridView.selectedVisibleIndex : -1;
 
@@ -292,15 +301,91 @@ static void MLLogMemory(NSString *tag) {
         self.window.backgroundColor = [NSColor clearColor];
         self.tintView.layer.backgroundColor =
             [[NSColor blackColor] colorWithAlphaComponent:opacity].CGColor;
-        self.blurView.state = NSVisualEffectStateActive;
+        /* Only keep the expensive material live while overlay is showing. */
+        self.blurView.state = self.visible ? NSVisualEffectStateActive
+                                          : NSVisualEffectStateInactive;
     } else {
         self.window.backgroundColor =
             [[NSColor blackColor] colorWithAlphaComponent:opacity];
         self.tintView.layer.backgroundColor = [NSColor clearColor].CGColor;
+        self.blurView.state = NSVisualEffectStateInactive;
     }
 }
 
+/** Drop fullscreen Overlay window + icon bitmaps so Idle returns near cold-start footprint.
+ * Must not [NSWindow close] with releasedWhenClosed while AppKit animations/autoreleases
+ * still hold the window — that caused EXC_BAD_ACCESS in objc_release on hide. */
+- (void)destroyOverlayWindow {
+    [self cancelDelayedIconPurge];
+    [self.searchDebounceTimer invalidate];
+    self.searchDebounceTimer = nil;
+
+    /* Invalidate in-flight icon callbacks before tearing down the grid. */
+    [self.iconCache purge];
+    [self releaseFilterBuffer];
+
+    NSWindow *w = self.window;
+    if (!w) {
+        return;
+    }
+
+    [w makeFirstResponder:nil];
+    [w endEditingFor:nil];
+    [w orderOut:nil];
+    w.alphaValue = 1.0;
+
+    /* Detach expensive blur first; keep strong locals so hierarchy release is orderly. */
+    NSVisualEffectView *blur = self.blurView;
+    blur.state = NSVisualEffectStateInactive;
+    [blur removeFromSuperview];
+    self.blurView = nil;
+
+    [self.gridView clearFolderCompositeCache];
+    self.gridView.iconCache = nil;
+    [self.gridView removeFromSuperview];
+    self.gridView = nil;
+
+    [self.tintView removeFromSuperview];
+    self.tintView = nil;
+    [self.dismissBackground removeFromSuperview];
+    self.dismissBackground = nil;
+    [self.searchField removeFromSuperview];
+    self.searchField = nil;
+    [self.folderTitleField removeFromSuperview];
+    self.folderTitleField = nil;
+    [self.extractDropZone removeFromSuperview];
+    self.extractDropZone = nil;
+    self.extractDropLabel = nil;
+    [self.pageIndicator removeFromSuperview];
+    self.pageIndicator = nil;
+
+    /* Replace content view after children are gone. Do NOT close/releasedWhenClosed. */
+    self.window = nil;
+    w.contentView = [[NSView alloc] initWithFrame:NSZeroRect];
+    w = nil;
+
+    /* Drain autorelease then ask libmalloc to return free pages (best-effort). */
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @autoreleasepool {
+            malloc_zone_pressure_relief(NULL, 0);
+        }
+        MLLogMemory(@"hide-relieved");
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                           if (!weakSelf || weakSelf.visible) {
+                               return;
+                           }
+                           malloc_zone_pressure_relief(NULL, 0);
+                           MLLogMemory(@"hide-relieved+0.5s");
+                       });
+    });
+}
+
 - (void)layoutChrome {
+    if (!self.window) {
+        return;
+    }
     NSView *content = self.window.contentView;
     NSRect bounds = content.bounds;
     CGFloat searchW = 420.0;
@@ -621,10 +706,45 @@ static void MLLogMemory(NSString *tag) {
           NSStringFromClass([self.window.firstResponder class]));
 }
 
+- (void)releaseFilterBuffer {
+    free(self.filterIndices);
+    self.filterIndices = NULL;
+    self.filterCapacity = 0;
+    self.filterCount = 0;
+    if (self.gridView) {
+        self.gridView.visibleIndices = NULL;
+        self.gridView.visibleCount = 0;
+    }
+}
+
+- (void)scheduleDelayedIconPurge {
+    self.iconPurgeGeneration += 1;
+    NSUInteger gen = self.iconPurgeGeneration;
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       __strong typeof(weakSelf) self = weakSelf;
+                       if (!self || self.iconPurgeGeneration != gen) {
+                           return;
+                       }
+                       if (self.visible || self.animating) {
+                           return;
+                       }
+                       [self.iconCache purge];
+                       MLLogMemory(@"delayed-purge");
+                       NSLog(@"[MeoLaunch] Overlay icon cache purged (30s idle)");
+                   });
+}
+
+- (void)cancelDelayedIconPurge {
+    self.iconPurgeGeneration += 1;
+}
+
 - (void)show {
     /* Cancel stuck fade state from a previous interrupted hide/show */
     self.animating = NO;
     self.showGeneration += 1;
+    [self cancelDelayedIconPurge];
     NSUInteger gen = self.showGeneration;
 
     [self ensureWindow];
@@ -654,6 +774,10 @@ static void MLLogMemory(NSString *tag) {
     if ([self.delegate respondsToSelector:@selector(overlayControllerWillShow:)]) {
         [self.delegate overlayControllerWillShow:self];
     }
+
+    /* Re-enable blur / chrome after hide released CA backing. */
+    [self applyBackdropAppearance];
+    [self layoutChrome];
 
     NSTimeInterval dur = [self fadeDuration];
     self.window.alphaValue = 1.0;
@@ -705,18 +829,26 @@ static void MLLogMemory(NSString *tag) {
 }
 
 - (void)finishHide {
+    [self.searchDebounceTimer invalidate];
+    self.searchDebounceTimer = nil;
     if (self.openFolderId.length > 0) {
         [self commitFolderTitleIfNeeded];
         self.openFolderId = nil;
+        /* folderTitleField may already be gone on re-entrant hide */
         self.folderTitleField.hidden = YES;
     }
-    [self.window orderOut:nil];
-    self.window.alphaValue = 1.0;
-    [self resetChromeAlpha];
+
+    /* Stop any in-flight window alpha animation before teardown. */
+    NSWindow *w = self.window;
+    if (w) {
+        [w.animator setAlphaValue:w.alphaValue];
+        w.alphaValue = 1.0;
+        [w orderOut:nil];
+        [w makeFirstResponder:nil];
+    }
+
     self.visible = NO;
     self.animating = NO;
-    [self.iconCache purge];
-    MLLogMemory(@"hide-purged");
 
     NSRunningApplication *prev = self.previousApp;
     self.previousApp = nil;
@@ -726,7 +858,18 @@ static void MLLogMemory(NSString *tag) {
     if ([self.delegate respondsToSelector:@selector(overlayControllerDidHide:)]) {
         [self.delegate overlayControllerDidHide:self];
     }
-    NSLog(@"[MeoLaunch] Overlay hidden (icon cache purged)");
+
+    /* Defer destroy one turn so AppKit animation/autorelease cleanup finishes first. */
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self || self.visible) {
+            return;
+        }
+        [self destroyOverlayWindow];
+        MLLogMemory(@"hide-destroyed");
+        NSLog(@"[MeoLaunch] Overlay hidden (window destroyed, icons purged)");
+    });
 }
 
 - (void)hide {
@@ -738,16 +881,17 @@ static void MLLogMemory(NSString *tag) {
     NSUInteger gen = self.showGeneration;
 
     NSTimeInterval dur = [self fadeDuration];
-    if (dur <= 0) {
+    if (dur <= 0 || !self.window) {
         [self finishHide];
         return;
     }
 
     self.animating = YES;
+    NSWindow *w = self.window;
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
         ctx.duration = dur;
         ctx.allowsImplicitAnimation = YES;
-        self.window.animator.alphaValue = 0.0;
+        w.animator.alphaValue = 0.0;
     } completionHandler:^{
         if (self.showGeneration != gen) {
             return;
@@ -771,13 +915,39 @@ static void MLLogMemory(NSString *tag) {
     return self.visible;
 }
 
+- (void)setIconCacheMaxEntries:(NSUInteger)maxEntries {
+    if (maxEntries < 32) {
+        maxEntries = 32;
+    }
+    if (maxEntries > 256) {
+        maxEntries = 256;
+    }
+    self.iconCache.maxEntries = maxEntries;
+    /* Cap dropped a lot → free memory now; else next insert evicts via LRU. */
+    if (self.iconCache.cachedCount > maxEntries) {
+        [self.iconCache purge];
+    }
+}
+
 #pragma mark - NSTextFieldDelegate
 
 - (void)controlTextDidChange:(NSNotification *)obj {
     if (obj.object == self.folderTitleField) {
         return;
     }
-    [self applyFilterWithQuery:self.searchField.stringValue ?: @""];
+    [self.searchDebounceTimer invalidate];
+    __weak typeof(self) weakSelf = self;
+    self.searchDebounceTimer = [NSTimer scheduledTimerWithTimeInterval:0.06
+                                                                repeats:NO
+                                                                  block:^(__unused NSTimer *timer) {
+                                                                      __strong typeof(weakSelf) self = weakSelf;
+                                                                      if (!self) {
+                                                                          return;
+                                                                      }
+                                                                      self.searchDebounceTimer = nil;
+                                                                      [self applyFilterWithQuery:self.searchField.stringValue ?: @""];
+                                                                  }];
+    [[NSRunLoop mainRunLoop] addTimer:self.searchDebounceTimer forMode:NSRunLoopCommonModes];
 }
 
 - (void)controlTextDidEndEditing:(NSNotification *)obj {
@@ -849,6 +1019,9 @@ doCommandBySelector:(SEL)commandSelector {
 }
 
 - (void)resetChromeAlpha {
+    if (!self.window) {
+        return;
+    }
     self.gridView.alphaValue = 1.0;
     self.blurView.alphaValue = 1.0;
     self.tintView.alphaValue = 1.0;

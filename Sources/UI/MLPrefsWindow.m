@@ -36,6 +36,13 @@
 @property (nonatomic, strong) NSPopUpButton *cornerPopup;
 @property (nonatomic, strong) NSTextField *sizeLabel;
 @property (nonatomic, strong) NSTextField *sizeField;
+@property (nonatomic, strong) NSButton *taskbarEnabled;
+@property (nonatomic, strong) NSTextField *pollLabel;
+@property (nonatomic, strong) NSSlider *pollSlider;
+@property (nonatomic, strong) NSTextField *pollValueLabel;
+@property (nonatomic, strong) NSTextField *iconCacheLabel;
+@property (nonatomic, strong) NSSlider *iconCacheSlider;
+@property (nonatomic, strong) NSTextField *iconCacheValueLabel;
 @property (nonatomic, strong) NSTextField *scanTitle;
 @property (nonatomic, strong) NSTextField *scanHint;
 @property (nonatomic, strong) NSTextField *sysLabel;
@@ -101,7 +108,7 @@
         return;
     }
 
-    NSRect rect = NSMakeRect(0, 0, 520, 660);
+    NSRect rect = NSMakeRect(0, 0, 520, 780);
     NSWindow *w = [[NSWindow alloc] initWithContentRect:rect
                                               styleMask:NSWindowStyleMaskTitled |
                                                         NSWindowStyleMaskClosable |
@@ -109,7 +116,7 @@
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
     w.releasedWhenClosed = NO;
-    w.minSize = NSMakeSize(480, 560);
+    w.minSize = NSMakeSize(480, 640);
     w.level = NSStatusWindowLevel + 1;
     w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
                            NSWindowCollectionBehaviorFullScreenAuxiliary;
@@ -222,6 +229,42 @@
     self.sizeField.action = @selector(prefsChanged:);
     [c addSubview:self.sizeField];
     y += 36;
+
+    self.taskbarEnabled = [NSButton checkboxWithTitle:@""
+                                               target:self
+                                               action:@selector(prefsChanged:)];
+    self.taskbarEnabled.frame = NSMakeRect(pad, y, 320, 24);
+    [c addSubview:self.taskbarEnabled];
+    y += 32;
+
+    self.pollLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.pollLabel];
+    self.pollSlider = [NSSlider sliderWithValue:10
+                                       minValue:5
+                                       maxValue:50
+                                         target:self
+                                         action:@selector(pollChanged:)];
+    self.pollSlider.numberOfTickMarks = 10;
+    self.pollSlider.allowsTickMarkValuesOnly = NO;
+    self.pollSlider.tickMarkPosition = NSTickMarkPositionBelow;
+    self.pollSlider.frame = NSMakeRect(136, y - 2, 280, 28);
+    [c addSubview:self.pollSlider];
+    self.pollValueLabel = [self makeLabel:@"1.0s" frame:NSMakeRect(420, y, 50, 22)];
+    self.pollValueLabel.alignment = NSTextAlignmentRight;
+    [c addSubview:self.pollValueLabel];
+    y += 40;
+
+    self.iconCacheLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.iconCacheLabel];
+    self.iconCacheSlider = [self makeIntSliderMin:32 max:256 action:@selector(iconCacheChanged:)];
+    self.iconCacheSlider.numberOfTickMarks = 8;
+    self.iconCacheSlider.allowsTickMarkValuesOnly = YES;
+    self.iconCacheSlider.frame = NSMakeRect(136, y - 2, 280, 28);
+    [c addSubview:self.iconCacheSlider];
+    self.iconCacheValueLabel = [self makeLabel:@"128" frame:NSMakeRect(420, y, 50, 22)];
+    self.iconCacheValueLabel.alignment = NSTextAlignmentRight;
+    [c addSubview:self.iconCacheValueLabel];
+    y += 40;
 
     self.scanTitle = [self makeLabel:@"" frame:NSMakeRect(pad, y, 200, 20)];
     self.scanTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
@@ -344,6 +387,9 @@
     }
 
     self.sizeLabel.stringValue = [MLStrings t:@"prefs.hot_size"];
+    self.taskbarEnabled.title = [MLStrings t:@"prefs.taskbar_enabled"];
+    self.pollLabel.stringValue = [MLStrings t:@"prefs.window_poll"];
+    self.iconCacheLabel.stringValue = [MLStrings t:@"prefs.overlay_icon_cache"];
     self.scanTitle.stringValue = [MLStrings t:@"prefs.scan_title"];
     self.scanHint.stringValue = [MLStrings t:@"prefs.scan_hint"];
     self.sysLabel.stringValue = [MLStrings t:@"prefs.system_dirs"];
@@ -420,6 +466,29 @@
     (void)sender;
     self.opacityValueLabel.stringValue =
         [NSString stringWithFormat:@"%.0f%%", self.opacitySlider.doubleValue];
+    [self applyLive];
+}
+
+- (NSTimeInterval)pollSecondsFromSlider {
+    /* Slider is tenths of a second: 5…50 → 0.5…5.0 */
+    return self.pollSlider.doubleValue / 10.0;
+}
+
+- (void)updatePollValueLabel {
+    self.pollValueLabel.stringValue =
+        [NSString stringWithFormat:@"%.1fs", [self pollSecondsFromSlider]];
+}
+
+- (void)pollChanged:(id)sender {
+    (void)sender;
+    [self updatePollValueLabel];
+    [self applyLive];
+}
+
+- (void)iconCacheChanged:(id)sender {
+    (void)sender;
+    self.iconCacheValueLabel.stringValue =
+        [NSString stringWithFormat:@"%.0f", self.iconCacheSlider.doubleValue];
     [self applyLive];
 }
 
@@ -595,6 +664,17 @@
     self.hotCornerEnabled.state = self.config.hotCornerEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [self selectPopupForPosition:self.config.hotCornerPosition];
     self.sizeField.stringValue = [NSString stringWithFormat:@"%.0f", self.config.hotCornerSizePt];
+    self.taskbarEnabled.state = self.config.taskbarEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    NSTimeInterval poll = self.config.taskbarWindowPollSeconds;
+    if (poll < 0.5) poll = 0.5;
+    if (poll > 5.0) poll = 5.0;
+    self.pollSlider.doubleValue = poll * 10.0;
+    [self updatePollValueLabel];
+    NSUInteger iconMax = self.config.overlayIconCacheMax;
+    if (iconMax < 32) iconMax = 32;
+    if (iconMax > 256) iconMax = 256;
+    self.iconCacheSlider.doubleValue = (double)iconMax;
+    self.iconCacheValueLabel.stringValue = [NSString stringWithFormat:@"%lu", (unsigned long)iconMax];
     self.pathLabel.stringValue =
         [NSString stringWithFormat:[MLStrings t:@"prefs.config_path"],
                                    [MLConfigStore configFileURL].path];
@@ -617,6 +697,10 @@
                                position:[self positionFromPopup]
                                  sizePt:size
                                 delayMs:self.config.hotCornerDelayMs];
+
+    [self.config updateTaskbarEnabled:(self.taskbarEnabled.state == NSControlStateValueOn)];
+    [self.config updateTaskbarWindowPollSeconds:[self pollSecondsFromSlider]];
+    [self.config updateOverlayIconCacheMax:(NSUInteger)lround(self.iconCacheSlider.doubleValue)];
 }
 
 - (void)show {
