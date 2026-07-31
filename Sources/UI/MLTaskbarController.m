@@ -33,6 +33,7 @@ enum { MLTaskbarBarHeight = 40 };
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL hiddenForOverlay;
 @property (nonatomic, assign) BOOL fullscreenCheckPending;
+@property (nonatomic, assign) NSUInteger startupVisibilityGeneration;
 @end
 
 @implementation MLTaskbarController
@@ -570,6 +571,10 @@ enum { MLTaskbarBarHeight = 40 };
         }
         MLTaskbarScreenBar *bar = [self makeBarForScreen:screen];
         [self.bars addObject:bar];
+        /* Fail-open: show immediately, then hide only if detection confirms fullscreen. */
+        if (!self.hiddenForOverlay) {
+            [bar.window orderFrontRegardless];
+        }
     }
 
     [self rebuildItems];
@@ -610,6 +615,7 @@ enum { MLTaskbarBarHeight = 40 };
 
     [self.monitor start];
     [self syncBarsToScreens];
+    [self scheduleStartupVisibilityRechecks];
 
     self.minimizeInterceptor = [[MLMinimizeInterceptor alloc] init];
     self.minimizeInterceptor.taskbar = self;
@@ -627,6 +633,7 @@ enum { MLTaskbarBarHeight = 40 };
     }
     self.started = NO;
     self.fullscreenCheckPending = NO;
+    self.startupVisibilityGeneration += 1;
     self.fullscreenScreenIDs = nil;
     [self.workAreaEnforcer stop];
     self.workAreaEnforcer = nil;
@@ -704,22 +711,17 @@ enum { MLTaskbarBarHeight = 40 };
 
 /**
  * Screens where immersive / OS fullscreen content should cover the taskbar.
- * - Space fullscreen: visibleFrame ≈ frame (menu bar + Dock insets gone)
- * - Video / HTML5 / presentation: an on-screen window covers the full display
- *   (including menu-bar band). Ordinary zoom-to-visibleFrame does NOT match.
- * - Frontmost app reports AXFullScreen on a window for that screen.
+ * - Video / Space fullscreen / presentation: an on-screen window covers the full
+ *   display (including menu-bar band). Ordinary zoom-to-visibleFrame does NOT match.
+ * - Frontmost app reports AXFullScreen on a window we can map to a screen.
+ *
+ * Do NOT treat visibleFrame ≈ frame alone as fullscreen: auto-hide menu bar + Dock
+ * (and unsettled WindowServer insets right after login) look identical and would
+ * permanently or intermittently hide the taskbar on a normal desktop.
  */
 - (NSSet<NSNumber *> *)detectFullscreenScreenIDs {
     NSMutableSet<NSNumber *> *ids = [NSMutableSet set];
     pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
-
-    for (NSScreen *screen in NSScreen.screens) {
-        CGFloat topInset = NSMaxY(screen.frame) - NSMaxY(screen.visibleFrame);
-        CGFloat bottomInset = NSMinY(screen.visibleFrame) - NSMinY(screen.frame);
-        if (topInset < 2.0 && bottomInset < 2.0) {
-            [ids addObject:[[self class] screenIDForScreen:screen]];
-        }
-    }
 
     CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
                                                      kCGWindowListExcludeDesktopElements,
@@ -739,6 +741,23 @@ enum { MLTaskbarBarHeight = 40 };
             }
             if (pid <= 0 || pid == selfPid) {
                 continue;
+            }
+
+            CFStringRef ownerRef = CFDictionaryGetValue(info, kCGWindowOwnerName);
+            if (ownerRef && CFGetTypeID(ownerRef) == CFStringGetTypeID()) {
+                NSString *owner = (__bridge NSString *)ownerRef;
+                /* Login / system chrome can briefly span the display without being immersive. */
+                if ([owner isEqualToString:@"Window Server"] ||
+                    [owner isEqualToString:@"Dock"] ||
+                    [owner isEqualToString:@"SystemUIServer"] ||
+                    [owner isEqualToString:@"Control Center"] ||
+                    [owner isEqualToString:@"Notification Center"] ||
+                    [owner isEqualToString:@"loginwindow"] ||
+                    [owner isEqualToString:@"Wallpaper"] ||
+                    [owner isEqualToString:@"Spotlight"] ||
+                    [owner isEqualToString:@"Screenshot"]) {
+                    continue;
+                }
             }
 
             CFNumberRef layerRef = CFDictionaryGetValue(info, kCGWindowLayer);
@@ -827,7 +846,7 @@ enum { MLTaskbarBarHeight = 40 };
                         if (!isFS) {
                             continue;
                         }
-                        /* Map fullscreen window to a screen via AX frame if possible. */
+                        /* Map fullscreen window to a screen via AX frame; skip if unmapped. */
                         CFTypeRef posRef = NULL;
                         CFTypeRef sizeRef = NULL;
                         CGPoint pos = CGPointZero;
@@ -851,8 +870,6 @@ enum { MLTaskbarBarHeight = 40 };
                             if (screen) {
                                 [ids addObject:[[self class] screenIDForScreen:screen]];
                             }
-                        } else if (NSScreen.mainScreen) {
-                            [ids addObject:[[self class] screenIDForScreen:NSScreen.mainScreen]];
                         }
                     }
                 }
@@ -865,6 +882,25 @@ enum { MLTaskbarBarHeight = 40 };
     }
 
     return ids;
+}
+
+- (void)scheduleStartupVisibilityRechecks {
+    self.startupVisibilityGeneration += 1;
+    NSUInteger generation = self.startupVisibilityGeneration;
+    __weak typeof(self) weakSelf = self;
+    /* Login / launch-at-login: WindowServer insets and transient cover windows settle late. */
+    static const double delays[] = { 0.4, 1.2, 3.0 };
+    for (size_t i = 0; i < sizeof(delays) / sizeof(delays[0]); i++) {
+        double delay = delays[i];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                           __strong typeof(weakSelf) self = weakSelf;
+                           if (!self || !self.started || self.startupVisibilityGeneration != generation) {
+                               return;
+                           }
+                           [self refreshFullscreenVisibility];
+                       });
+    }
 }
 
 - (void)scheduleFullscreenVisibilityCheck {
