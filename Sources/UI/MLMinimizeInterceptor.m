@@ -1,8 +1,9 @@
 #import "MLMinimizeInterceptor.h"
 
 #import "MLCGSAlpha.h"
-#import "MLMinimizeAnimator.h"
+#import "MLScreenGeometry.h"
 #import "MLTaskbarController.h"
+#import "MLWindowSoftState.h"
 
 #import <ApplicationServices/ApplicationServices.h>
 #import <dlfcn.h>
@@ -16,15 +17,7 @@
 @implementation MLMinimizeInterceptor
 
 static CGPoint MLCocoaPointToAX(NSPoint cocoa) {
-    /* AX uses top-left origin of the main display. */
-    NSRect main = NSScreen.mainScreen.frame;
-    return CGPointMake(cocoa.x, NSMaxY(main) - cocoa.y);
-}
-
-static NSRect MLAXRectToCocoa(CGPoint axPos, CGSize axSize) {
-    NSRect main = NSScreen.mainScreen.frame;
-    CGFloat cocoaY = NSMaxY(main) - axPos.y - axSize.height;
-    return NSMakeRect(axPos.x, cocoaY, axSize.width, axSize.height);
+    return [MLScreenGeometry axPositionFromCocoaRect:NSMakeRect(cocoa.x, cocoa.y, 1, 1)];
 }
 
 static BOOL MLAXGetRole(AXUIElementRef el, CFStringRef attr, NSString **out) {
@@ -71,32 +64,6 @@ static AXUIElementRef MLAXCopyWindowElement(AXUIElementRef el) {
     return NULL;
 }
 
-static BOOL MLAXReadFrame(AXUIElementRef win, NSRect *outCocoa) {
-    if (!win || !outCocoa) {
-        return NO;
-    }
-    CFTypeRef posRef = NULL;
-    CFTypeRef sizeRef = NULL;
-    CGPoint pos = CGPointZero;
-    CGSize size = CGSizeZero;
-    BOOL havePos = NO;
-    BOOL haveSize = NO;
-    if (AXUIElementCopyAttributeValue(win, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) {
-        havePos = AXValueGetValue((AXValueRef)posRef, (AXValueType)kAXValueCGPointType, &pos);
-        CFRelease(posRef);
-    }
-    if (AXUIElementCopyAttributeValue(win, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) {
-        haveSize = AXValueGetValue((AXValueRef)sizeRef, (AXValueType)kAXValueCGSizeType, &size);
-        CFRelease(sizeRef);
-    }
-    if (!havePos || !haveSize || size.width < 2.0 || size.height < 2.0) {
-        return NO;
-    }
-    *outCocoa = MLAXRectToCocoa(pos, size);
-    return YES;
-}
-
-/** Private AX → CGWindowID (stable; avoids multi-monitor AX parking). */
 static CGWindowID MLAXCopyCGWindowID(AXUIElementRef win) {
     if (!win) {
         return kCGNullWindowID;
@@ -117,104 +84,44 @@ static CGWindowID MLAXCopyCGWindowID(AXUIElementRef win) {
     return wid;
 }
 
-static NSImage *MLCaptureWindowImage(pid_t pid, NSRect cocoaBounds, NSString *title) {
-    (void)title;
-    NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
-    NSImage *icon = app.icon;
-    if (!icon && app.bundleURL.path.length > 0) {
-        icon = [[NSWorkspace sharedWorkspace] iconForFile:app.bundleURL.path];
-    }
-
-    NSSize size = cocoaBounds.size;
-    if (size.width < 2.0 || size.height < 2.0) {
-        size = NSMakeSize(320, 220);
-    }
-    NSImage *shot = [[NSImage alloc] initWithSize:size];
-    [shot lockFocus];
-    [[NSColor colorWithCalibratedWhite:0.18 alpha:0.95] setFill];
-    NSBezierPath *round = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(0, 0, size.width, size.height)
-                                                          xRadius:10.0
-                                                          yRadius:10.0];
-    [round fill];
-    if (icon) {
-        CGFloat side = MIN(96.0, MIN(size.width, size.height) * 0.35);
-        NSRect iconRect = NSMakeRect((size.width - side) * 0.5, (size.height - side) * 0.5, side, side);
-        [icon drawInRect:iconRect
-                fromRect:NSZeroRect
-               operation:NSCompositingOperationSourceOver
-                fraction:1.0
-          respectFlipped:YES
-                   hints:nil];
-    }
-    [shot unlockFocus];
-    return shot;
-}
-
-static NSRect MLFallbackTargetOnWindowScreen(NSRect cocoaFrame) {
-    NSScreen *screen = nil;
-    CGFloat best = -1;
-    for (NSScreen *s in NSScreen.screens) {
-        CGRect inter = CGRectIntersection(NSRectToCGRect(cocoaFrame), s.frame);
-        CGFloat a = CGRectIsNull(inter) ? 0 : inter.size.width * inter.size.height;
-        if (a > best) {
-            best = a;
-            screen = s;
-        }
-    }
-    if (!screen) {
-        return cocoaFrame;
-    }
-    NSRect vis = screen.visibleFrame;
-    return NSMakeRect(NSMidX(vis) - 40.0, NSMinY(vis) + 4.0, 80.0, 32.0);
-}
-
 /**
- * Hide WITHOUT AXMinimized — Dock genie always flies to the primary display and
- * would duplicate our local taskbar proxy animation.
- *
- * 1) CGS alpha=0 if privileged (rare)
- * 2) Else tuck to a 1×1 under this screen's taskbar chip (same display, under our bar)
- * Restore uses the frozen pre-minimize frame — tuck size is never kept.
+ * Hide without 1×1 tuck (Finder clamps tiny sizes and won't grow back).
+ * Finder: always AXMinimized (system remembers frame; CGS alpha is unreliable).
+ * Others: CGS alpha=0 if verified, else AXMinimized=true.
+ * No local proxy animation — avoids double-animate with Dock genie.
  */
-static void MLApplyCocoaFrameAX(AXUIElementRef win, NSRect cocoa) {
-    if (!win || cocoa.size.width < 1.0 || cocoa.size.height < 1.0) {
-        return;
+static MLWindowHideMethod MLSoftMinimizeWindow(AXUIElementRef win, CGWindowID windowID, pid_t pid) {
+    BOOL isFinder = NO;
+    if (pid > 0) {
+        NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+        isFinder = [app.bundleIdentifier isEqualToString:@"com.apple.finder"];
     }
-    NSRect main = NSScreen.mainScreen.frame;
-    CGSize axSize = CGSizeMake(cocoa.size.width, cocoa.size.height);
-    CGPoint axPos = CGPointMake(cocoa.origin.x, NSMaxY(main) - cocoa.origin.y - cocoa.size.height);
-    AXValueRef sizeVal = AXValueCreate((AXValueType)kAXValueCGSizeType, &axSize);
-    AXValueRef posVal = AXValueCreate((AXValueType)kAXValueCGPointType, &axPos);
-    if (sizeVal) {
-        AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal);
-        CFRelease(sizeVal);
-    }
-    if (posVal) {
-        AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal);
-        CFRelease(posVal);
-    }
-}
 
-static BOOL MLSoftMinimizeWindow(AXUIElementRef win, CGWindowID windowID, NSRect tuckRect) {
-    if (windowID != kCGNullWindowID && windowID != 0 && MLCGSWindowAlphaAvailable()) {
+    if (!isFinder && windowID != kCGNullWindowID && windowID != 0 && MLCGSWindowAlphaAvailable()) {
         if (MLCGSSetWindowAlpha(windowID, 0.0f)) {
-            return YES;
+            NSLog(@"[Taskbar] soft hide wid=%u via alpha", (unsigned)windowID);
+            return MLWindowHideMethodAlpha;
         }
     }
     if (!win) {
-        return NO;
+        return MLWindowHideMethodNone;
     }
-    /* Keep un-minimized so Dock never genies to the primary screen. */
-    AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanFalse);
-
-    NSRect tuck = tuckRect;
-    if (NSIsEmptyRect(tuck)) {
-        tuck = NSMakeRect(0, 0, 1, 1);
+    AXError err = AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanTrue);
+    if (err != kAXErrorSuccess) {
+        NSLog(@"[Taskbar] soft hide wid=%u AXMinimized failed err=%d", (unsigned)windowID, (int)err);
+        return MLWindowHideMethodNone;
     }
-    /* 1×1 under the chip — covered by our opaque taskbar after the proxy lands. */
-    tuck.size = NSMakeSize(1.0, 1.0);
-    MLApplyCocoaFrameAX(win, tuck);
-    return YES;
+    Boolean isMin = false;
+    CFTypeRef minRef = NULL;
+    if (AXUIElementCopyAttributeValue(win, kAXMinimizedAttribute, &minRef) == kAXErrorSuccess && minRef) {
+        if (CFGetTypeID(minRef) == CFBooleanGetTypeID()) {
+            isMin = CFBooleanGetValue((CFBooleanRef)minRef);
+        }
+        CFRelease(minRef);
+    }
+    NSLog(@"[Taskbar] soft hide wid=%u via AXMinimized confirmed=%d finder=%d",
+          (unsigned)windowID, (int)isMin, (int)isFinder);
+    return MLWindowHideMethodAXMinimized;
 }
 
 static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
@@ -274,67 +181,43 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
     MLAXGetRole(win, kAXTitleAttribute, &title);
 
     NSRect cocoaFrame = NSZeroRect;
-    if (!MLAXReadFrame(win, &cocoaFrame)) {
+    if (![MLScreenGeometry readCocoaFrame:&cocoaFrame fromAXWindow:win]) {
         CFRelease(win);
         return event;
     }
 
     CGWindowID wid = MLAXCopyCGWindowID(win);
 
-    NSImage *shot = MLCaptureWindowImage(pid, cocoaFrame, title);
-    if (!shot) {
-        shot = [[NSImage alloc] initWithSize:cocoaFrame.size];
-        [shot lockFocus];
-        [[NSColor colorWithCalibratedWhite:0.25 alpha:0.9] setFill];
-        NSRectFill(NSMakeRect(0, 0, cocoaFrame.size.width, cocoaFrame.size.height));
-        [shot unlockFocus];
-    }
+    NSScreen *screen = [MLScreenGeometry screenForCocoaRect:cocoaFrame];
+    NSNumber *screenID = [MLScreenGeometry screenIDForScreen:screen];
 
     CGWindowID remembered =
         [self.taskbar rememberWindowForCustomMinimizePID:pid
                                                    title:title ?: @""
-                                                  bounds:NSRectToCGRect(cocoaFrame)];
+                                                  bounds:NSRectToCGRect(cocoaFrame)
+                                                windowID:(wid != kCGNullWindowID ? wid : 0)];
     if (wid == kCGNullWindowID || wid == 0) {
         wid = remembered;
     }
 
-    /*
-     * Fast path: do NOT rebuildItems here (expensive). Aim at existing chip or
-     * the window's own screen taskbar strip; refine after hide via refresh.
-     */
-    NSRect target = [self.taskbar animationTargetRectForPID:pid
-                                                      title:title ?: @""
-                                               windowBounds:NSRectToCGRect(cocoaFrame)];
-    if (NSIsEmptyRect(target)) {
-        target = MLFallbackTargetOnWindowScreen(cocoaFrame);
+    /* Mark soft BEFORE hide so poll never drops the chip. */
+    if (wid != 0) {
+        [self.taskbar markSoftHiddenWindowID:wid
+                                         pid:pid
+                                       title:title ?: @""
+                               restoreFrame:cocoaFrame
+                                   screenID:screenID
+                                   axWindow:win];
     }
 
-    AXUIElementRef winKeep = (AXUIElementRef)CFRetain(win);
+    MLWindowHideMethod method = MLSoftMinimizeWindow(win, wid, pid);
+    if (wid != 0 && method != MLWindowHideMethodNone) {
+        [self.taskbar updateSoftHideMethod:method forWindowID:wid];
+    }
     CFRelease(win);
-    CGWindowID widKeep = wid;
-    NSRect tuckKeep = target;
+    [self.taskbar refreshAfterCustomMinimize];
 
-    /*
-     * 1) Proxy covers the real window on THIS screen
-     * 2) Tuck real window under THIS screen's taskbar (no AXMinimized → no Dock genie)
-     * 3) Shrink proxy to THIS screen's taskbar chip — the only visible animation
-     */
-    [MLMinimizeAnimator animateImage:shot
-                            fromRect:cocoaFrame
-                              toRect:target
-                           onCovered:^{
-                               if (widKeep != 0) {
-                                   [self.taskbar markSoftMinimizedWindowID:widKeep];
-                               }
-                               MLSoftMinimizeWindow(winKeep, widKeep, tuckKeep);
-                           }
-                          completion:^{
-                              CFRelease(winKeep);
-                              [self.taskbar refreshAfterCustomMinimize];
-                          }];
-
-    /* Swallow the click so the yellow button does not trigger Dock minimize. */
-    return NULL;
+    return NULL; /* Swallow yellow-button click; we own minimize. */
 }
 
 - (void)start {
@@ -361,7 +244,7 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
     CFRunLoopAddSource(CFRunLoopGetMain(), self.source, kCFRunLoopCommonModes);
     CGEventTapEnable(self.tap, true);
     self.started = YES;
-    NSLog(@"[MeoLaunch] minimize interceptor started (local taskbar anim, no Dock genie)");
+    NSLog(@"[MeoLaunch] minimize interceptor started (instant hide, no proxy animation)");
 }
 
 - (void)stop {
@@ -381,10 +264,6 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         CFRelease(self.tap);
         self.tap = NULL;
     }
-}
-
-- (void)dealloc {
-    [self stop];
 }
 
 @end

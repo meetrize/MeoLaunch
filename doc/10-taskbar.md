@@ -442,3 +442,52 @@ MVP 可硬编码默认值；Prefs / schema 后做：
 | **T5** | 右键钉住、与 Overlay z-order |
 
 详细验收与禁止项见 [07-agent-playbook.md](./07-agent-playbook.md)。
+
+---
+
+## 10. 自定义最小化 / 恢复 / 工作区 / 全屏藏栏（现行实现）
+
+> 本节描述 MVP 之后已落地的窗口生命周期层；与 §1「非目标」中「不精确聚焦」的早期表述不同——现行点击路径按 **`CGWindowID`** 聚焦并恢复几何。
+
+### 10.1 模块
+
+| 模块 | 职责 |
+|------|------|
+| `MLMinimizeInterceptor` | 拦截黄钮；记 restoreFrame；立刻软隐藏 |
+| `MLMinimizeAnimator` | （保留源码，当前未接入；避免与 Dock 双动画） |
+| `MLWindowSoftState` | 以 `CGWindowID` 为主键的 soft-hidden 状态与恢复帧 |
+| `MLScreenGeometry` | Quartz ↔ Cocoa ↔ AX 坐标统一换算 |
+| `MLWorkAreaEnforcer` | 最大化窗口底部抬到任务栏上沿 |
+| `MLTaskbarController` | 全屏时藏栏；点击恢复状态机 |
+
+### 10.2 黄钮最小化（定案）
+
+1. 记录 Cocoa `restoreFrame` + 屏 affinity。  
+2. **先** `markSoftHidden`（芯片立即以 minimized 样式保留）。  
+3. **立刻**隐藏真实窗口（不再播放本屏黑块代理动画，避免与 Dock genie 双动画）：  
+   - **访达（`com.apple.finder`）** 一律 `AXMinimized=true`（不做 CGS alpha）  
+   - 其他应用：优先 `CGSSetWindowAlpha(0)`（须读回 alpha≤0.15 才算成功）  
+   - 否则 `AXMinimized=true`（系统记住原 frame）  
+4. **禁止** 1×1 tuck / 屏外乱改 size（访达会钳制小尺寸导致无法还原）。  
+5. soft 记录保留最小化时的 `AXUIElement`，供恢复精确回指。
+
+### 10.3 点击恢复
+
+1. 优先用 soft 里保留的 `AXUIElement`；其次 `_AXUIElementGetWindow` 按 `windowID`；标题仅弱兜底；**禁止**用 App 显示名（如 `"Finder"`）当窗口标题。  
+2. 按 `hideMethod`：alpha→1 或 `AXMinimized=false`，再反复套 `restoreFrame`（先 size 后 position，最长约 1.2s 重试）。  
+3. Raise + 激活（soft 恢复时 **不用** `ActivateAllWindows`）。  
+4. **仅当 AX 读回的 frame 与 `restoreFrame` 误差 ≤20pt** 才 `clearVerified`；禁止把「已 deminiaturize / 尺寸>80」当成成功（否则会过早丢掉恢复帧）。
+
+### 10.4 芯片存活硬规则
+
+- soft 集合内的 ID：poll / ghost / prune **不得清除**。  
+- Census token 含 `soft:%u`，避免「看不见」被当成关闭。  
+- SoftState 变更通知 → Controller 强制 `rebuildItems`。
+
+### 10.5 工作区抬底
+
+对填满 `visibleFrame`（或副屏 `visible≈frame` 时填满 `screen.frame`）的窗口，AX 缩至 `visibleFrame` 减去底栏高度。跳过 soft-hidden、`AXFullScreen`、已贴 work rect 的窗。比较一律走 `MLScreenGeometry`（先把 CG Quartz bounds 转 Cocoa）。
+
+### 10.6 全屏藏栏
+
+按「整屏覆盖窗 + `AXFullScreen`」判断；**不用**单独的 `visibleFrame≈frame`（自动隐藏菜单栏会误伤普通桌面）。

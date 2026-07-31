@@ -1,9 +1,12 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <ApplicationServices/ApplicationServices.h>
 
 @class MLTaskbarPinStore;
 @class MLRunningAppsMonitor;
 @class MLTaskbarIconCache;
+
+typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 
 @interface MLTaskbarController : NSObject
 
@@ -31,7 +34,17 @@
 /** Record window frame before soft-minimize; returns matched CGWindowID (0 if unknown). */
 - (CGWindowID)rememberWindowForCustomMinimizePID:(pid_t)pid
                                            title:(NSString *)title
-                                          bounds:(CGRect)bounds;
+                                          bounds:(CGRect)bounds
+                                        windowID:(CGWindowID)windowID;
+
+- (void)markSoftHiddenWindowID:(CGWindowID)windowID
+                           pid:(pid_t)pid
+                         title:(NSString *)title
+                 restoreFrame:(NSRect)restoreFrame
+                     screenID:(NSNumber *)screenID
+                     axWindow:(AXUIElementRef)axWindow;
+
+- (void)updateSoftHideMethod:(MLWindowHideMethod)method forWindowID:(CGWindowID)windowID;
 
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID;
 

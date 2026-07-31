@@ -87,9 +87,13 @@ bool MLCGSSetWindowAlpha(CGWindowID windowID, float alpha) {
         }
     }
     if (alpha <= 0.05f) {
+        /* Require a real read proving alpha dropped. Missing list entry is NOT success —
+         * Finder often stays fully opaque while CGSSetWindowAlpha returns 0. */
         if (got < 0.0f) {
-            /* Window vanished from list — treat as hidden. */
-            return true;
+            fprintf(stderr,
+                    "[MeoLaunch] CGSSetWindowAlpha(%u) unverified (window alpha unread)\n",
+                    (unsigned)windowID);
+            return false;
         }
         if (got > 0.15f) {
             fprintf(stderr,

@@ -3,12 +3,15 @@
 #import "MLCGSAlpha.h"
 #import "MLMinimizeInterceptor.h"
 #import "MLRunningAppsMonitor.h"
+#import "MLScreenGeometry.h"
 #import "MLTaskbarIconCache.h"
 #import "MLTaskbarPinStore.h"
 #import "MLTaskbarView.h"
+#import "MLWindowSoftState.h"
 #import "MLWorkAreaEnforcer.h"
 
 #import <ApplicationServices/ApplicationServices.h>
+#import <dlfcn.h>
 
 enum { MLTaskbarBarHeight = 40 };
 
@@ -214,25 +217,29 @@ enum { MLTaskbarBarHeight = 40 };
     return best;
 }
 
-/** Prefer the screen with the largest intersection; ties break to containing center. */
+/** Prefer the screen with the largest intersection; ties break to containing center.
+ * Soft-state reinject stores Cocoa bounds; CG polls store Quartz — try Cocoa first, then Quartz→Cocoa. */
 - (NSScreen *)screenForWindowBounds:(CGRect)bounds {
-    NSScreen *best = nil;
-    CGFloat bestArea = -1.0;
-    CGPoint center = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
-    for (NSScreen *screen in NSScreen.screens) {
-        CGRect inter = CGRectIntersection(bounds, screen.frame);
-        if (CGRectIsNull(inter) || CGRectIsEmpty(inter)) {
-            continue;
-        }
-        CGFloat area = inter.size.width * inter.size.height;
-        if (area > bestArea ||
-            (fabs(area - bestArea) < 1.0 &&
-             NSPointInRect(NSMakePoint(center.x, center.y), screen.frame))) {
-            bestArea = area;
-            best = screen;
-        }
+    if (CGRectIsEmpty(bounds)) {
+        return nil;
     }
-    return best;
+    NSScreen *viaCocoa = [MLScreenGeometry screenForCocoaRect:NSRectFromCGRect(bounds)];
+    NSRect asCocoaFromQuartz = [MLScreenGeometry cocoaRectFromQuartzBounds:bounds];
+    NSScreen *viaQuartz = [MLScreenGeometry screenForCocoaRect:asCocoaFromQuartz];
+    /* Prefer the interpretation that intersects a screen with larger area. */
+    CGFloat a1 = 0, a2 = 0;
+    if (viaCocoa) {
+        CGRect inter = CGRectIntersection(bounds, NSRectToCGRect(viaCocoa.frame));
+        a1 = CGRectIsNull(inter) ? 0 : inter.size.width * inter.size.height;
+    }
+    if (viaQuartz) {
+        CGRect inter = CGRectIntersection(NSRectToCGRect(asCocoaFromQuartz), NSRectToCGRect(viaQuartz.frame));
+        a2 = CGRectIsNull(inter) ? 0 : inter.size.width * inter.size.height;
+    }
+    if (a2 > a1) {
+        return viaQuartz;
+    }
+    return viaCocoa ?: viaQuartz;
 }
 
 - (NSArray<MLTaskbarWindowInfo *> *)windowsOnScreen:(NSScreen *)screen
@@ -591,6 +598,10 @@ enum { MLTaskbarBarHeight = 40 };
     }
     self.started = YES;
 
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(softStateDidChange:)
+                                                 name:MLWindowSoftStateDidChangeNotification
+                                               object:self.monitor.softState];
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(pinsDidChange:)
                                                  name:MLTaskbarPinsDidChangeNotification
@@ -1010,19 +1021,62 @@ enum { MLTaskbarBarHeight = 40 };
     [self rebuildItems];
 }
 
+- (void)softStateDidChange:(NSNotification *)note {
+    (void)note;
+    [self.monitor pollNow];
+    [self rebuildItems];
+}
+
 - (CGWindowID)rememberWindowForCustomMinimizePID:(pid_t)pid
                                            title:(NSString *)title
-                                          bounds:(CGRect)bounds {
-    return [self.monitor rememberBounds:bounds forPID:pid title:title];
+                                          bounds:(CGRect)bounds
+                                        windowID:(CGWindowID)windowID {
+    return [self.monitor rememberBounds:bounds forPID:pid title:title windowID:windowID];
+}
+
+- (void)markSoftHiddenWindowID:(CGWindowID)windowID
+                           pid:(pid_t)pid
+                         title:(NSString *)title
+                 restoreFrame:(NSRect)restoreFrame
+                     screenID:(NSNumber *)screenID
+                     axWindow:(AXUIElementRef)axWindow {
+    NSString *path = nil;
+    if (pid > 0) {
+        NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+        path = app.bundleURL.path;
+    }
+    [self.monitor markSoftHiddenWindowID:windowID
+                                     pid:pid
+                                    path:path
+                                   title:title
+                           restoreFrame:restoreFrame
+                               screenID:screenID
+                               axWindow:axWindow];
+    [self rebuildItems];
+}
+
+- (void)updateSoftHideMethod:(MLWindowHideMethod)method forWindowID:(CGWindowID)windowID {
+    [self.monitor.softState updateHideMethod:method forWindowID:windowID];
 }
 
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID {
     [self.monitor markSoftMinimizedWindowID:windowID];
+    [self rebuildItems];
 }
 
 #pragma mark - MLTaskbarViewDelegate
 
-/** Title hint may be truncated with an ellipsis from the monitor. */
+typedef AXError (*MLAXGetWindowFn)(AXUIElementRef, CGWindowID *);
+
+static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
+    static MLAXGetWindowFn sFn;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        sFn = (MLAXGetWindowFn)dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow");
+    });
+    return sFn;
+}
+
 - (BOOL)title:(NSString *)full matchesHint:(NSString *)hint {
     if (hint.length == 0) {
         return YES;
@@ -1043,6 +1097,55 @@ enum { MLTaskbarBarHeight = 40 };
     return prefix.length > 0 && [full hasPrefix:prefix];
 }
 
+- (BOOL)frame:(NSRect)frame matchesRestore:(NSRect)restore tolerance:(CGFloat)tol {
+    if (restore.size.width < 2.0 || restore.size.height < 2.0) {
+        return frame.size.width > 50.0 && frame.size.height > 50.0;
+    }
+    return [MLScreenGeometry nearlyEqual:NSMinX(frame) b:NSMinX(restore) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMinY(frame) b:NSMinY(restore) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSWidth(frame) b:NSWidth(restore) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSHeight(frame) b:NSHeight(restore) tolerance:tol];
+}
+
+/** Apply restore geometry and clear soft only when AX frame matches (strict). */
+- (BOOL)applyRestoreFrame:(NSRect)restoreFrame
+                toAXWindow:(AXUIElementRef)target
+                  windowID:(CGWindowID)wid
+             clearIfMatched:(BOOL)clearIfMatched {
+    if (!target || restoreFrame.size.width < 2.0 || restoreFrame.size.height < 2.0) {
+        return NO;
+    }
+    [MLScreenGeometry applyCocoaFrame:restoreFrame toAXWindow:target];
+    AXUIElementPerformAction(target, kAXRaiseAction);
+    NSRect got = NSZeroRect;
+    if (![MLScreenGeometry readCocoaFrame:&got fromAXWindow:target]) {
+        return NO;
+    }
+    Boolean stillMin = false;
+    CFTypeRef minRef = NULL;
+    if (AXUIElementCopyAttributeValue(target, kAXMinimizedAttribute, &minRef) == kAXErrorSuccess && minRef) {
+        if (CFGetTypeID(minRef) == CFBooleanGetTypeID()) {
+            stillMin = CFBooleanGetValue((CFBooleanRef)minRef);
+        }
+        CFRelease(minRef);
+    }
+    if (stillMin) {
+        return NO;
+    }
+    BOOL matched = [self frame:got matchesRestore:restoreFrame tolerance:20.0];
+    if (matched && clearIfMatched && wid != 0) {
+        [self.monitor.softState clearVerifiedWindowID:wid];
+        NSLog(@"[Taskbar] soft restore verified wid=%u frame=(%.0f,%.0f %.0fx%.0f)",
+              (unsigned)wid, got.origin.x, got.origin.y, got.size.width, got.size.height);
+    } else if (!matched) {
+        NSLog(@"[Taskbar] soft restore mismatch wid=%u got=(%.0f,%.0f %.0fx%.0f) want=(%.0f,%.0f %.0fx%.0f)",
+              (unsigned)wid,
+              got.origin.x, got.origin.y, got.size.width, got.size.height,
+              restoreFrame.origin.x, restoreFrame.origin.y, restoreFrame.size.width, restoreFrame.size.height);
+    }
+    return matched;
+}
+
 - (void)raiseAndFocusWindowForItem:(MLTaskbarItem *)item {
     if (item.pid <= 0) {
         return;
@@ -1051,28 +1154,13 @@ enum { MLTaskbarBarHeight = 40 };
         return;
     }
 
-    /*
-     * Only rewrite geometry when restoring from OUR custom minimize (frozen frame).
-     * Re-applying AX coords on every click flips Y on multi-monitor setups.
-     */
     CGWindowID wid = item.windowID;
-    BOOL needsGeometryRestore = (wid != 0 && [self.monitor hasFrozenRestoreBoundsForWindowID:wid]);
-    CGRect restoreBounds = CGRectZero;
-    if (needsGeometryRestore) {
-        restoreBounds = [self.monitor cachedBoundsForWindowID:wid];
-        if (CGRectIsEmpty(restoreBounds) || restoreBounds.size.width <= 2.0 ||
-            restoreBounds.size.height <= 2.0) {
-            needsGeometryRestore = NO;
-        } else {
-            /* Consume freeze now so a duplicate raise (0.05s retry) won't move the window again. */
-            [self.monitor clearFrozenRestoreBoundsForWindowID:wid];
-        }
-    }
-
-    if (wid != 0 && [self.monitor isSoftMinimizedWindowID:wid]) {
-        [self.monitor clearSoftMinimizedWindowID:wid];
-        MLCGSSetWindowAlpha(wid, 1.0f);
-    }
+    MLWindowSoftRecord *soft = wid != 0 ? [self.monitor.softState recordForWindowID:wid] : nil;
+    BOOL wasSoft = soft != nil;
+    NSRect restoreFrame = soft ? soft.restoreFrameCocoa : NSZeroRect;
+    MLWindowHideMethod hideMethod = soft ? soft.hideMethod : MLWindowHideMethodNone;
+    BOOL needsGeometry = wasSoft && restoreFrame.size.width > 2.0 && restoreFrame.size.height > 2.0;
+    AXUIElementRef softAX = soft ? soft.axWindow : NULL;
 
     AXUIElementRef appRef = AXUIElementCreateApplication(item.pid);
     if (!appRef) {
@@ -1085,21 +1173,50 @@ enum { MLTaskbarBarHeight = 40 };
         if (windowsRef) {
             CFRelease(windowsRef);
         }
-        AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+        /* Soft restore: still try retained AX element. */
+        if (softAX && wasSoft) {
+            if (hideMethod == MLWindowHideMethodAlpha && wid != 0) {
+                MLCGSSetWindowAlpha(wid, 1.0f);
+            }
+            AXUIElementSetAttributeValue(softAX, kAXMinimizedAttribute, kCFBooleanFalse);
+            AXUIElementPerformAction(softAX, kAXRaiseAction);
+            AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+            if (needsGeometry) {
+                [self applyRestoreFrame:restoreFrame toAXWindow:softAX windowID:wid clearIfMatched:YES];
+            }
+        } else {
+            AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+        }
         CFRelease(appRef);
         return;
     }
 
     CFArrayRef windows = (CFArrayRef)windowsRef;
     CFIndex count = CFArrayGetCount(windows);
-    AXUIElementRef matched = NULL;
+    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
+
+    AXUIElementRef matchedByID = NULL;
+    AXUIElementRef matchedByTitle = NULL;
     AXUIElementRef firstMinimized = NULL;
     AXUIElementRef firstAny = NULL;
+    BOOL softAXStillListed = NO;
+
+    NSString *appDisplay = [self displayNameForPath:item.path];
+    BOOL titleIsAppNameOnly =
+        (appDisplay.length > 0 && item.title.length > 0 && [item.title isEqualToString:appDisplay]);
 
     for (CFIndex i = 0; i < count; i++) {
         AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(windows, i);
         if (!firstAny) {
             firstAny = win;
+        }
+        if (softAX && win == softAX) {
+            softAXStillListed = YES;
+        }
+
+        CGWindowID axWid = 0;
+        if (getWid && getWid(win, &axWid) == kAXErrorSuccess && wid != 0 && axWid == wid) {
+            matchedByID = win;
         }
 
         CFTypeRef minRef = NULL;
@@ -1114,81 +1231,118 @@ enum { MLTaskbarBarHeight = 40 };
             firstMinimized = win;
         }
 
-        CFTypeRef titleRef = NULL;
-        NSString *title = nil;
-        if (AXUIElementCopyAttributeValue(win, kAXTitleAttribute, &titleRef) == kAXErrorSuccess && titleRef) {
-            if (CFGetTypeID(titleRef) == CFStringGetTypeID()) {
-                title = (__bridge NSString *)titleRef;
+        if (!matchedByTitle && !titleIsAppNameOnly && soft) {
+            CFTypeRef titleRef = NULL;
+            NSString *title = nil;
+            if (AXUIElementCopyAttributeValue(win, kAXTitleAttribute, &titleRef) == kAXErrorSuccess &&
+                titleRef) {
+                if (CFGetTypeID(titleRef) == CFStringGetTypeID()) {
+                    title = (__bridge NSString *)titleRef;
+                }
+                CFRelease(titleRef);
             }
-            CFRelease(titleRef);
-        }
-        if ([self title:title ?: @"" matchesHint:item.title]) {
-            matched = win;
-            if (item.minimized || isMin) {
-                break;
-            }
-            if (!isMin) {
-                break;
+            NSString *hint = soft.title.length > 0 ? soft.title : item.title;
+            if (![hint isEqualToString:appDisplay] && [self title:title ?: @"" matchesHint:hint]) {
+                matchedByTitle = win;
             }
         }
     }
 
-    AXUIElementRef target = matched;
+    /* Prefer retained AX from minimize; then windowID; then title; then minimized. */
+    AXUIElementRef target = nil;
+    if (softAX && (softAXStillListed || wasSoft)) {
+        target = softAX;
+    }
     if (!target) {
-        target = item.minimized ? (firstMinimized ?: firstAny) : (firstAny ?: firstMinimized);
+        target = matchedByID ?: matchedByTitle;
+    }
+    if (!target) {
+        if (wasSoft || item.minimized) {
+            target = firstMinimized ?: firstAny;
+        } else {
+            target = firstAny ?: firstMinimized;
+        }
     }
 
+    BOOL verified = NO;
     if (target) {
-        AXUIElementSetAttributeValue(target, kAXMinimizedAttribute, kCFBooleanFalse);
-
-        if (needsGeometryRestore) {
-            [self applyCocoaFrame:restoreBounds toWindow:target];
-            AXUIElementRef winRetry = (AXUIElementRef)CFRetain(target);
-            CGRect frameRetry = restoreBounds;
-            __weak typeof(self) weakSelf = self;
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.04 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{
-                               [weakSelf applyCocoaFrame:frameRetry toWindow:winRetry];
-                               AXUIElementPerformAction(winRetry, kAXRaiseAction);
-                               CFRelease(winRetry);
-                           });
+        if (wasSoft && hideMethod == MLWindowHideMethodAlpha && wid != 0) {
+            MLCGSSetWindowAlpha(wid, 1.0f);
         }
 
+        AXUIElementSetAttributeValue(target, kAXMinimizedAttribute, kCFBooleanFalse);
         AXUIElementPerformAction(target, kAXRaiseAction);
         AXUIElementSetAttributeValue(target, kAXMainAttribute, kCFBooleanTrue);
         AXUIElementSetAttributeValue(target, kAXFocusedAttribute, kCFBooleanTrue);
-    }
+        AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
 
-    AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+        if (needsGeometry) {
+            verified = [self applyRestoreFrame:restoreFrame
+                                     toAXWindow:target
+                                       windowID:wid
+                                  clearIfMatched:YES];
+
+            if (!verified) {
+                AXUIElementRef winKeep = (AXUIElementRef)CFRetain(target);
+                NSRect frameKeep = restoreFrame;
+                CGWindowID widKeep = wid;
+                __weak typeof(self) weakSelf = self;
+                /* Finder often needs several ticks after deminiaturize before AX size sticks. */
+                static const double kDelays[] = { 0.05, 0.12, 0.25, 0.45, 0.75, 1.20 };
+                __block NSInteger pending = (NSInteger)(sizeof(kDelays) / sizeof(kDelays[0]));
+                for (size_t i = 0; i < sizeof(kDelays) / sizeof(kDelays[0]); i++) {
+                    double delay = kDelays[i];
+                    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                                   dispatch_get_main_queue(), ^{
+                                       __strong typeof(weakSelf) self = weakSelf;
+                                       if (self &&
+                                           [self.monitor.softState isSoftHiddenWindowID:widKeep]) {
+                                           AXUIElementSetAttributeValue(winKeep, kAXMinimizedAttribute,
+                                                                        kCFBooleanFalse);
+                                           [self applyRestoreFrame:frameKeep
+                                                         toAXWindow:winKeep
+                                                           windowID:widKeep
+                                                      clearIfMatched:YES];
+                                       }
+                                       if (--pending == 0) {
+                                           CFRelease(winKeep);
+                                       }
+                                   });
+                }
+            }
+        } else if (wasSoft) {
+            /* Soft without frame — clear once deminiaturized / raised. */
+            Boolean stillMin = false;
+            CFTypeRef minRef = NULL;
+            if (AXUIElementCopyAttributeValue(target, kAXMinimizedAttribute, &minRef) ==
+                    kAXErrorSuccess &&
+                minRef) {
+                if (CFGetTypeID(minRef) == CFBooleanGetTypeID()) {
+                    stillMin = CFBooleanGetValue((CFBooleanRef)minRef);
+                }
+                CFRelease(minRef);
+            }
+            if (!stillMin && wid != 0) {
+                [self.monitor.softState clearVerifiedWindowID:wid];
+                verified = YES;
+            }
+        }
+
+        if (wasSoft) {
+            if (verified) {
+                NSLog(@"[Taskbar] soft restore ok wid=%u", (unsigned)wid);
+            } else if (needsGeometry) {
+                NSLog(@"[Taskbar] soft restore pending wid=%u (chip kept, retries scheduled)",
+                      (unsigned)wid);
+            }
+        }
+    } else {
+        AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+        NSLog(@"[Taskbar] soft restore fail — no AX target wid=%u", (unsigned)wid);
+    }
 
     CFRelease(windowsRef);
     CFRelease(appRef);
-}
-
-/** Cocoa bottom-left → AX top-left (relative to main display). Size then position. */
-- (void)applyCocoaFrame:(CGRect)cocoa toWindow:(AXUIElementRef)win {
-    if (!win || CGRectIsEmpty(cocoa) || cocoa.size.width < 2.0 || cocoa.size.height < 2.0) {
-        return;
-    }
-    NSRect main = NSScreen.mainScreen.frame;
-    CGSize axSize = CGSizeMake(cocoa.size.width, cocoa.size.height);
-    CGPoint axPos = CGPointMake(cocoa.origin.x, NSMaxY(main) - cocoa.origin.y - cocoa.size.height);
-    AXValueRef sizeVal = AXValueCreate((AXValueType)kAXValueCGSizeType, &axSize);
-    AXValueRef posVal = AXValueCreate((AXValueType)kAXValueCGPointType, &axPos);
-    if (sizeVal) {
-        AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal);
-        CFRelease(sizeVal);
-    }
-    if (posVal) {
-        AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal);
-        CFRelease(posVal);
-    }
-    /* Re-apply size after position — deminimize often clamps size first. */
-    sizeVal = AXValueCreate((AXValueType)kAXValueCGSizeType, &axSize);
-    if (sizeVal) {
-        AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal);
-        CFRelease(sizeVal);
-    }
 }
 
 - (void)activateApplicationForItem:(MLTaskbarItem *)item {
@@ -1214,11 +1368,17 @@ enum { MLTaskbarBarHeight = 40 };
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    [app activateWithOptions:NSApplicationActivateIgnoringOtherApps | NSApplicationActivateAllWindows];
+    BOOL softRestore =
+        item.minimized ||
+        (item.windowID != 0 && [self.monitor isSoftMinimizedWindowID:item.windowID]);
+    NSApplicationActivationOptions opts = NSApplicationActivateIgnoringOtherApps;
+    if (!softRestore) {
+        opts |= NSApplicationActivateAllWindows;
+    }
+    [app activateWithOptions:opts];
 #pragma clang diagnostic pop
 
     if (@available(macOS 14.0, *)) {
-        /* Best-effort additional activation on newer systems */
         [app unhide];
     }
 }
@@ -1258,11 +1418,6 @@ enum { MLTaskbarBarHeight = 40 };
 }
 
 - (void)activateOrLaunchItem:(MLTaskbarItem *)item {
-    /*
-     * Pinned-only (no window chip): always open via Workspace so apps that are
-     * still alive without a window (Cursor / Electron) get a new window, and
-     * fully-quit apps relaunch.
-     */
     if (item.kind == MLTaskbarItemPinnedOnly) {
         [self activateApplicationForItem:item];
         [self openApplicationAtPath:item.path];
@@ -1270,15 +1425,28 @@ enum { MLTaskbarBarHeight = 40 };
     }
 
     if (item.pid > 0 || item.path.length > 0) {
-        [self raiseAndFocusWindowForItem:item];
-        [self activateApplicationForItem:item];
-        /* Raise again after activation settles — some apps ignore the first raise. */
+        BOOL softRestore =
+            item.minimized ||
+            (item.windowID != 0 && [self.monitor isSoftMinimizedWindowID:item.windowID]);
+        if (softRestore) {
+            [self activateApplicationForItem:item];
+            [self raiseAndFocusWindowForItem:item];
+        } else {
+            [self raiseAndFocusWindowForItem:item];
+            [self activateApplicationForItem:item];
+        }
         __weak typeof(self) weakSelf = self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
                            [weakSelf raiseAndFocusWindowForItem:item];
                            [weakSelf activateApplicationForItem:item];
                        });
+        if (softRestore) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.22 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                               [weakSelf raiseAndFocusWindowForItem:item];
+                           });
+        }
         if (item.pid > 0) {
             NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:item.pid];
             if (app && !app.isTerminated) {

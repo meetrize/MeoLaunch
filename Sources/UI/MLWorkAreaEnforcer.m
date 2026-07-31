@@ -1,6 +1,8 @@
 #import "MLWorkAreaEnforcer.h"
 
 #import "MLRunningAppsMonitor.h"
+#import "MLScreenGeometry.h"
+#import "MLWindowSoftState.h"
 
 #import <ApplicationServices/ApplicationServices.h>
 #import <dlfcn.h>
@@ -30,61 +32,6 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     return sFn;
 }
 
-static NSRect MLAXRectToCocoa(CGPoint axPos, CGSize axSize) {
-    NSRect main = NSScreen.mainScreen.frame;
-    CGFloat cocoaY = NSMaxY(main) - axPos.y - axSize.height;
-    return NSMakeRect(axPos.x, cocoaY, axSize.width, axSize.height);
-}
-
-static void MLApplyCocoaFrameAX(AXUIElementRef win, NSRect cocoa) {
-    if (!win || cocoa.size.width < 2.0 || cocoa.size.height < 2.0) {
-        return;
-    }
-    NSRect main = NSScreen.mainScreen.frame;
-    CGSize axSize = CGSizeMake(cocoa.size.width, cocoa.size.height);
-    CGPoint axPos = CGPointMake(cocoa.origin.x, NSMaxY(main) - cocoa.origin.y - cocoa.size.height);
-    AXValueRef sizeVal = AXValueCreate((AXValueType)kAXValueCGSizeType, &axSize);
-    AXValueRef posVal = AXValueCreate((AXValueType)kAXValueCGPointType, &axPos);
-    if (sizeVal) {
-        AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal);
-        CFRelease(sizeVal);
-    }
-    if (posVal) {
-        AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal);
-        CFRelease(posVal);
-    }
-    sizeVal = AXValueCreate((AXValueType)kAXValueCGSizeType, &axSize);
-    if (sizeVal) {
-        AXUIElementSetAttributeValue(win, kAXSizeAttribute, sizeVal);
-        CFRelease(sizeVal);
-    }
-}
-
-static BOOL MLAXReadCocoaFrame(AXUIElementRef win, NSRect *outCocoa) {
-    if (!win || !outCocoa) {
-        return NO;
-    }
-    CFTypeRef posRef = NULL;
-    CFTypeRef sizeRef = NULL;
-    CGPoint pos = CGPointZero;
-    CGSize size = CGSizeZero;
-    BOOL havePos = NO;
-    BOOL haveSize = NO;
-    if (AXUIElementCopyAttributeValue(win, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) {
-        havePos = AXValueGetValue((AXValueRef)posRef, (AXValueType)kAXValueCGPointType, &pos);
-        CFRelease(posRef);
-    }
-    if (AXUIElementCopyAttributeValue(win, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) {
-        haveSize = AXValueGetValue((AXValueRef)sizeRef, (AXValueType)kAXValueCGSizeType, &size);
-        CFRelease(sizeRef);
-    }
-    if (!havePos || !haveSize || size.width < 2.0 || size.height < 2.0) {
-        return NO;
-    }
-    *outCocoa = MLAXRectToCocoa(pos, size);
-    return YES;
-}
-
 static BOOL MLAXIsFullscreen(AXUIElementRef win) {
     if (!win) {
         return NO;
@@ -101,27 +48,6 @@ static BOOL MLAXIsFullscreen(AXUIElementRef win) {
     return fs;
 }
 
-static BOOL MLNearlyEqual(CGFloat a, CGFloat b, CGFloat tol) {
-    return fabs(a - b) <= tol;
-}
-
-static NSScreen *MLScreenForBounds(NSRect bounds) {
-    NSScreen *best = nil;
-    CGFloat bestArea = -1.0;
-    for (NSScreen *s in NSScreen.screens) {
-        CGRect inter = CGRectIntersection(NSRectToCGRect(bounds), NSRectToCGRect(s.frame));
-        if (CGRectIsNull(inter) || CGRectIsEmpty(inter)) {
-            continue;
-        }
-        CGFloat area = inter.size.width * inter.size.height;
-        if (area > bestArea) {
-            bestArea = area;
-            best = s;
-        }
-    }
-    return best ?: NSScreen.mainScreen;
-}
-
 /** Work rect = visibleFrame minus taskbar strip at the bottom. */
 static NSRect MLWorkRectForScreen(NSScreen *screen, CGFloat barHeight) {
     NSRect visible = screen.visibleFrame;
@@ -135,37 +61,62 @@ static NSRect MLWorkRectForScreen(NSScreen *screen, CGFloat barHeight) {
     return work;
 }
 
-/**
- * Window fills the screen's visibleFrame (standard zoom / maximize),
- * which places its bottom under our floating taskbar.
- */
 static BOOL MLFrameFillsVisible(NSRect frame, NSRect visible) {
     const CGFloat tol = (CGFloat)MLWorkAreaEdgeTol;
     if (frame.size.width < MLWorkAreaMinSize || frame.size.height < MLWorkAreaMinSize) {
         return NO;
     }
-    return MLNearlyEqual(NSMinX(frame), NSMinX(visible), tol) &&
-           MLNearlyEqual(NSMaxX(frame), NSMaxX(visible), tol) &&
-           MLNearlyEqual(NSMaxY(frame), NSMaxY(visible), tol) &&
-           MLNearlyEqual(NSMinY(frame), NSMinY(visible), tol);
+    return [MLScreenGeometry nearlyEqual:NSMinX(frame) b:NSMinX(visible) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMaxX(frame) b:NSMaxX(visible) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMaxY(frame) b:NSMaxY(visible) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMinY(frame) b:NSMinY(visible) tolerance:tol];
 }
 
-/** Already covering the intended work area (after our inset). */
 static BOOL MLFrameMatchesWork(NSRect frame, NSRect work) {
     const CGFloat tol = (CGFloat)MLWorkAreaEdgeTol;
-    return MLNearlyEqual(NSMinX(frame), NSMinX(work), tol) &&
-           MLNearlyEqual(NSMaxX(frame), NSMaxX(work), tol) &&
-           MLNearlyEqual(NSMaxY(frame), NSMaxY(work), tol) &&
-           MLNearlyEqual(NSMinY(frame), NSMinY(work), tol);
+    return [MLScreenGeometry nearlyEqual:NSMinX(frame) b:NSMinX(work) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMaxX(frame) b:NSMaxX(work) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMaxY(frame) b:NSMaxY(work) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMinY(frame) b:NSMinY(work) tolerance:tol];
 }
 
-/** True fullscreen Space — leave alone. */
 static BOOL MLFrameFillsScreen(NSRect frame, NSRect screenFrame) {
     const CGFloat tol = (CGFloat)MLWorkAreaEdgeTol;
-    return MLNearlyEqual(NSMinX(frame), NSMinX(screenFrame), tol) &&
-           MLNearlyEqual(NSMaxX(frame), NSMaxX(screenFrame), tol) &&
-           MLNearlyEqual(NSMaxY(frame), NSMaxY(screenFrame), tol) &&
-           MLNearlyEqual(NSMinY(frame), NSMinY(screenFrame), tol);
+    return [MLScreenGeometry nearlyEqual:NSMinX(frame) b:NSMinX(screenFrame) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMaxX(frame) b:NSMaxX(screenFrame) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMaxY(frame) b:NSMaxY(screenFrame) tolerance:tol] &&
+           [MLScreenGeometry nearlyEqual:NSMinY(frame) b:NSMinY(screenFrame) tolerance:tol];
+}
+
+/** Immersive fullscreen covering the menu-bar band on a display that has one. */
+static BOOL MLFrameLooksLikeImmersiveFullscreen(NSRect frame, NSScreen *screen) {
+    if (!screen) {
+        return NO;
+    }
+    CGFloat topInset = NSMaxY(screen.frame) - NSMaxY(screen.visibleFrame);
+    return topInset >= 2.0 && MLFrameFillsScreen(frame, screen.frame);
+}
+
+/**
+ * Zoom that sits under the taskbar:
+ * - fills visibleFrame, or
+ * - on displays with no menu-bar inset, fills screen.frame
+ */
+static BOOL MLFrameLooksLikeZoomNeedingInset(NSRect frame, NSScreen *screen) {
+    if (!screen) {
+        return NO;
+    }
+    if (frame.size.width < MLWorkAreaMinSize || frame.size.height < MLWorkAreaMinSize) {
+        return NO;
+    }
+    if (MLFrameFillsVisible(frame, screen.visibleFrame)) {
+        return YES;
+    }
+    CGFloat topInset = NSMaxY(screen.frame) - NSMaxY(screen.visibleFrame);
+    if (topInset < 2.0 && MLFrameFillsScreen(frame, screen.frame)) {
+        return YES;
+    }
+    return NO;
 }
 
 - (instancetype)init {
@@ -194,7 +145,6 @@ static BOOL MLFrameFillsScreen(NSRect frame, NSRect screenFrame) {
                                                  name:NSApplicationDidChangeScreenParametersNotification
                                                object:nil];
     [self scheduleEnforce];
-    /* Catch zoom animations that finish after the first geometry event. */
     [self scheduleEnforceAfter:0.2];
     [self scheduleEnforceAfter:0.55];
 }
@@ -219,7 +169,6 @@ static BOOL MLFrameFillsScreen(NSRect frame, NSRect screenFrame) {
 - (void)runningDidChange:(NSNotification *)note {
     (void)note;
     [self scheduleEnforce];
-    /* Zoom/green-button animation often settles after the first notify. */
     [self scheduleEnforceAfter:0.18];
     [self scheduleEnforceAfter:0.45];
 }
@@ -277,7 +226,6 @@ static BOOL MLFrameFillsScreen(NSRect frame, NSRect screenFrame) {
         return;
     }
 
-    /* Pre-filter with CG/snapshot bounds — only touch AX for likely zoomed windows. */
     NSMutableDictionary<NSNumber *, NSMutableArray<MLTaskbarWindowInfo *> *> *byPid =
         [NSMutableDictionary dictionary];
     for (MLTaskbarWindowInfo *info in windows) {
@@ -290,19 +238,25 @@ static BOOL MLFrameFillsScreen(NSRect frame, NSRect screenFrame) {
         if (CGRectIsEmpty(info.bounds)) {
             continue;
         }
-        NSRect frame = NSRectFromCGRect(info.bounds);
-        NSScreen *screen = MLScreenForBounds(frame);
+        /* Snapshot CG bounds are Quartz — convert before comparing to NSScreen. */
+        NSRect frame = [MLScreenGeometry cocoaRectFromQuartzBounds:info.bounds];
+        /* Soft reinject may already be Cocoa; if Quartz conversion misses, try raw. */
+        NSScreen *screen = [MLScreenGeometry screenForCocoaRect:frame];
+        if (!screen) {
+            frame = NSRectFromCGRect(info.bounds);
+            screen = [MLScreenGeometry screenForCocoaRect:frame];
+        }
         if (!screen) {
             continue;
         }
-        if (MLFrameFillsScreen(frame, screen.frame)) {
+        if (MLFrameLooksLikeImmersiveFullscreen(frame, screen)) {
             continue;
         }
         NSRect work = MLWorkRectForScreen(screen, barH);
         if (MLFrameMatchesWork(frame, work)) {
             continue;
         }
-        if (!MLFrameFillsVisible(frame, screen.visibleFrame)) {
+        if (!MLFrameLooksLikeZoomNeedingInset(frame, screen)) {
             continue;
         }
         NSNumber *key = @(info.pid);
@@ -361,6 +315,9 @@ static BOOL MLFrameFillsScreen(NSRect frame, NSRect screenFrame) {
             if (wid != 0 && wantedIDs.count > 0 && ![wantedIDs containsObject:@(wid)]) {
                 continue;
             }
+            if (wid != 0 && [monitor isSoftMinimizedWindowID:wid]) {
+                continue;
+            }
 
             CFTypeRef minRef = NULL;
             Boolean isMin = false;
@@ -376,34 +333,32 @@ static BOOL MLFrameFillsScreen(NSRect frame, NSRect screenFrame) {
             }
 
             NSRect frame = NSZeroRect;
-            if (!MLAXReadCocoaFrame(win, &frame)) {
+            if (![MLScreenGeometry readCocoaFrame:&frame fromAXWindow:win]) {
                 continue;
             }
 
-            NSScreen *screen = MLScreenForBounds(frame);
+            NSScreen *screen = [MLScreenGeometry screenForCocoaRect:frame];
             if (!screen) {
                 continue;
             }
-            if (MLFrameFillsScreen(frame, screen.frame)) {
+            if (MLFrameLooksLikeImmersiveFullscreen(frame, screen)) {
                 continue;
             }
 
-            NSRect visible = screen.visibleFrame;
             NSRect work = MLWorkRectForScreen(screen, barH);
             if (MLFrameMatchesWork(frame, work)) {
                 continue;
             }
-            if (!MLFrameFillsVisible(frame, visible)) {
-                /* Snapshot said zoomed; AX may still be mid-animation — skip this pass. */
+            if (!MLFrameLooksLikeZoomNeedingInset(frame, screen)) {
                 continue;
             }
 
-            MLApplyCocoaFrameAX(win, work);
+            [MLScreenGeometry applyCocoaFrame:work toAXWindow:win];
             AXUIElementRef winRetry = (AXUIElementRef)CFRetain(win);
             NSRect workRetry = work;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
-                               MLApplyCocoaFrameAX(winRetry, workRetry);
+                               [MLScreenGeometry applyCocoaFrame:workRetry toAXWindow:winRetry];
                                CFRelease(winRetry);
                            });
         }

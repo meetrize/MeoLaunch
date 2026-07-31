@@ -1,5 +1,8 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <ApplicationServices/ApplicationServices.h>
+
+@class MLWindowSoftState;
 
 enum {
     MLTaskbarTitleMaxChars = 40,
@@ -14,7 +17,8 @@ FOUNDATION_EXPORT NSNotificationName const MLRunningAppsDidChangeNotification;
 @property (nonatomic, assign) pid_t pid;
 @property (nonatomic, assign) CGWindowID windowID;
 @property (nonatomic, copy) NSString *title; /* truncated; may be empty */
-@property (nonatomic, assign) CGRect bounds; /* global Cocoa/Quartz coords; for per-screen filter */
+/** Prefer Cocoa when from soft-state; CG polls store Quartz — convert via MLScreenGeometry before NSScreen compares. */
+@property (nonatomic, assign) CGRect bounds;
 @property (nonatomic, assign) BOOL minimized;
 /** Monotonic order when the window was first shown on a taskbar; stable across minimize. */
 @property (nonatomic, assign) NSUInteger seenOrder;
@@ -34,6 +38,8 @@ FOUNDATION_EXPORT NSNotificationName const MLRunningAppsDidChangeNotification;
 @property (nonatomic, assign) NSUInteger titleMaxChars;          /* default 40 */
 @property (nonatomic, strong, readonly) MLRunningAppsSnapshot *snapshot;
 @property (nonatomic, assign, readonly, getter=isRunning) BOOL running;
+/** Soft-hidden window lifecycle (chip survival + restore frames). */
+@property (nonatomic, strong, readonly) MLWindowSoftState *softState;
 
 - (void)start;
 - (void)stop;
@@ -41,12 +47,25 @@ FOUNDATION_EXPORT NSNotificationName const MLRunningAppsDidChangeNotification;
 - (void)pollNow;
 - (CGRect)cachedBoundsForWindowID:(CGWindowID)windowID;
 - (CGRect)cachedBoundsForPID:(pid_t)pid title:(NSString *)title;
-/** Upsert last-seen frame; returns matched CGWindowID (0 if unknown). */
-- (CGWindowID)rememberBounds:(CGRect)bounds forPID:(pid_t)pid title:(NSString *)title;
+/** Upsert last-seen frame; pass known AX windowID when available. */
+- (CGWindowID)rememberBounds:(CGRect)bounds
+                      forPID:(pid_t)pid
+                       title:(NSString *)title
+                    windowID:(CGWindowID)windowID;
+
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID;
 - (void)clearSoftMinimizedWindowID:(CGWindowID)windowID;
 - (BOOL)isSoftMinimizedWindowID:(CGWindowID)windowID;
 - (BOOL)hasFrozenRestoreBoundsForWindowID:(CGWindowID)windowID;
 - (void)clearFrozenRestoreBoundsForWindowID:(CGWindowID)windowID;
+
+/** Convenience: mark soft-hidden with full metadata (preferred). axWindow is retained. */
+- (void)markSoftHiddenWindowID:(CGWindowID)windowID
+                           pid:(pid_t)pid
+                          path:(NSString *)path
+                         title:(NSString *)title
+                 restoreFrame:(NSRect)restoreFrameCocoa
+                     screenID:(NSNumber *)screenID
+                     axWindow:(AXUIElementRef)axWindow;
 
 @end
