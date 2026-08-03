@@ -511,6 +511,7 @@ Prefs / schema（见 [06-config-schema.md](./06-config-schema.md)）：
 规则：
 - **不用**单独的 `visibleFrame≈frame`（自动隐藏菜单栏会误伤普通桌面）。
 - 盖屏判定仅认**前台**非系统、非访达窗口；避免启动瞬态 / 显示桌面误藏。
+- **全部最小化 / 软最小化 ≠ peek**：快照里窗口均为 `minimized` 且 CG 无额外停靠窗时，任务栏保持 `normal`（不下移）。
 - 进入 `hidden` 需连续 2 次确认；退出 `peek` **同步**复位 frame 并 `orderFront`，清 fullscreen streak，禁止同帧误藏。
 - **展示列表 ≠ 实时快照**：monitor 抖动只写入 `pendingItems`；安静约 0.32s 后才 `commit` 到 `barView`。显示桌面期间拒绝提交「芯片大跌」的候选，并冻结快照。
 - 退出 peek：保持旧芯片 → 窗列表安静约 0.45s → **一次**原子提交（粘性窗口约 1.25s 内不接受明显偏少的候选），避免进出时芯片逐个增减。

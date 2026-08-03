@@ -1,0 +1,6 @@
+## Git Commit Messages
+
+- Always write git commit messages in Simplified Chinese (简体中文).
+- Focus on why the change was made; keep the subject concise (约 50 字内).
+- Prefer one short subject line; add a brief body only when needed.
+- Do not write commit messages in English unless the user explicitly asks.

@@ -677,9 +677,11 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         pendingWindows += [self windowChipCountInItems:bar.pendingItems];
         shownWindows += [self windowChipCountOnBar:bar];
     }
-    /* Large chip drop while reveal-armed → freeze even if cover heuristic is still catching up. */
+    /* Large chip drop while reveal-armed → freeze even if cover heuristic is still catching up.
+     * Skip when every tracked window is minimized — that is not Show Desktop. */
     if (!force && shownWindows >= 2 && pendingWindows + 1 < shownWindows &&
         [self isDesktopRevealArmed] &&
+        ![self shouldIgnoreDesktopRevealBecauseAllMinimized] &&
         ([self looksLikeDesktopReveal] || [self shouldFreezeForDesktopReveal] ||
          pendingWindows * 2 < shownWindows)) {
         [self freezeDesktopReveal];
@@ -879,6 +881,10 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     if (![self isDesktopRevealArmed]) {
         return YES;
     }
+    /* All windows minimized/soft-hidden — not Show Desktop; leave peek. */
+    if ([self shouldIgnoreDesktopRevealBecauseAllMinimized]) {
+        return YES;
+    }
     CGFloat cover = 0;
     NSInteger onScreen = 0;
     NSInteger all = 0;
@@ -1009,6 +1015,44 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     return n;
 }
 
+- (NSInteger)minimizedTrackedWindowCount {
+    pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
+    NSInteger n = 0;
+    for (MLTaskbarWindowInfo *w in self.monitor.snapshot.windows ?: @[]) {
+        if (w.pid == selfPid || !w.minimized) {
+            continue;
+        }
+        n += 1;
+    }
+    return n;
+}
+
+/**
+ * All-minimized must not look like Show Desktop peek.
+ * Show Desktop drops non-minimized windows from the snapshot (off-screen ghosts),
+ * while minimize/soft-min keeps them as minimized=YES. If every tracked window is
+ * minimized and CG has no extra parked windows, stay in normal bar mode.
+ */
+- (BOOL)shouldIgnoreDesktopRevealBecauseAllMinimized {
+    if ([self liveNonMinimizedWindowCount] >= 1) {
+        return NO;
+    }
+    NSInteger minimized = [self minimizedTrackedWindowCount];
+    if (minimized < 1) {
+        /* Empty snapshot — may be Show Desktop (ghosts dropped) or truly empty. */
+        return NO;
+    }
+    CGFloat cover = 0;
+    NSInteger onScreen = 0;
+    NSInteger all = 0;
+    [self measureDesktopRevealWithCenterCover:&cover onScreen:&onScreen all:&all];
+    /* Extra CG windows beyond minimized chips ⇒ Show Desktop parked off-screen. */
+    if (all > minimized && cover < 0.14) {
+        return NO;
+    }
+    return YES;
+}
+
 - (NSInteger)totalWindowChipsOnBars {
     NSInteger n = 0;
     for (MLTaskbarScreenBar *bar in self.bars) {
@@ -1020,6 +1064,9 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 /** Desktop center clear while app windows still exist somewhere (Show Desktop / Exposé). */
 - (BOOL)looksLikeDesktopReveal {
     if (![self isDesktopRevealArmed]) {
+        return NO;
+    }
+    if ([self shouldIgnoreDesktopRevealBecauseAllMinimized]) {
         return NO;
     }
     CGFloat cover = 0;
@@ -1051,6 +1098,9 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         return NO;
     }
     if (self.lastStableLiveWindowCount < 1 && [self totalWindowChipsOnBars] < 1) {
+        return NO;
+    }
+    if ([self shouldIgnoreDesktopRevealBecauseAllMinimized]) {
         return NO;
     }
 
