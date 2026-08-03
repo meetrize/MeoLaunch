@@ -157,6 +157,14 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Show taskbar",
             @"zh" : @"显示任务栏",
         },
+        @"prefs.memory_free_enabled" : @{
+            @"en" : @"Show free memory % in menu bar",
+            @"zh" : @"菜单栏显示剩余内存 %",
+        },
+        @"menubar.memory_free.tooltip" : @{
+            @"en" : @"Memory free: %d%% · %@",
+            @"zh" : @"剩余内存：%d%% · %@",
+        },
         @"prefs.window_poll" : @{
             @"en" : @"Window poll",
             @"zh" : @"窗口轮询",

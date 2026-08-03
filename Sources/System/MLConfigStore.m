@@ -27,6 +27,8 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @property (nonatomic, assign, readwrite) BOOL taskbarEnabled;
 @property (nonatomic, assign, readwrite) NSTimeInterval taskbarWindowPollSeconds;
 @property (nonatomic, assign, readwrite) NSUInteger overlayIconCacheMax;
+@property (nonatomic, assign, readwrite) BOOL memoryFreeEnabled;
+@property (nonatomic, assign, readwrite) NSTimeInterval memoryFreeIntervalSeconds;
 @property (nonatomic, strong) NSTimer *saveTimer;
 @end
 
@@ -154,6 +156,8 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.taskbarEnabled = YES;
     self.taskbarWindowPollSeconds = 1.0;
     self.overlayIconCacheMax = 128;
+    self.memoryFreeEnabled = NO;
+    self.memoryFreeIntervalSeconds = 2.0;
 }
 
 - (void)applyScanDictionary:(NSDictionary *)scan {
@@ -301,6 +305,22 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         }
     }
 
+    NSDictionary *mb = root[@"menubar"];
+    if ([mb isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *mf = mb[@"memory_free"];
+        if ([mf isKindOfClass:[NSDictionary class]]) {
+            if (mf[@"enabled"]) {
+                self.memoryFreeEnabled = [mf[@"enabled"] boolValue];
+            }
+            if (mf[@"interval_seconds"]) {
+                NSTimeInterval s = [mf[@"interval_seconds"] doubleValue];
+                if (s < 1.0) s = 1.0;
+                if (s > 5.0) s = 5.0;
+                self.memoryFreeIntervalSeconds = s;
+            }
+        }
+    }
+
     [self applyScanDictionary:root[@"scan"]];
 }
 
@@ -360,6 +380,13 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         @"taskbar" : @{
             @"enabled" : @(self.taskbarEnabled),
             @"window_poll_seconds" : @(self.taskbarWindowPollSeconds > 0 ? self.taskbarWindowPollSeconds : 1.0),
+        },
+        @"menubar" : @{
+            @"memory_free" : @{
+                @"enabled" : @(self.memoryFreeEnabled),
+                @"interval_seconds" :
+                    @(self.memoryFreeIntervalSeconds > 0 ? self.memoryFreeIntervalSeconds : 2.0),
+            },
         },
         @"launch_at_login" : @NO,
     };
@@ -619,6 +646,26 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         return;
     }
     self.overlayIconCacheMax = maxEntries;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateMemoryFreeEnabled:(BOOL)enabled {
+    if (self.memoryFreeEnabled == enabled) {
+        return;
+    }
+    self.memoryFreeEnabled = enabled;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateMemoryFreeIntervalSeconds:(NSTimeInterval)seconds {
+    if (seconds < 1.0) seconds = 1.0;
+    if (seconds > 5.0) seconds = 5.0;
+    if (fabs(self.memoryFreeIntervalSeconds - seconds) < 0.01) {
+        return;
+    }
+    self.memoryFreeIntervalSeconds = seconds;
     [self notifyChanged];
     [self scheduleSave];
 }

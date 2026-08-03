@@ -48,6 +48,10 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 @property (nonatomic, assign, readonly) NSTimeInterval taskbarWindowPollSeconds; /* default 1.0 */
 @property (nonatomic, assign, readonly) NSUInteger overlayIconCacheMax; /* default 128 */
 
+/** Menu bar free-memory % (doc/13). */
+@property (nonatomic, assign, readonly) BOOL memoryFreeEnabled; /* default NO */
+@property (nonatomic, assign, readonly) NSTimeInterval memoryFreeIntervalSeconds; /* default 2.0 */
+
 + (NSURL *)configFileURL;
 + (NSArray<NSString *> *)builtInScanRoots;
 
@@ -67,6 +71,8 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 - (void)updateTaskbarEnabled:(BOOL)enabled;
 - (void)updateTaskbarWindowPollSeconds:(NSTimeInterval)seconds;
 - (void)updateOverlayIconCacheMax:(NSUInteger)maxEntries;
+- (void)updateMemoryFreeEnabled:(BOOL)enabled;
+- (void)updateMemoryFreeIntervalSeconds:(NSTimeInterval)seconds;
 
 /// Extra roots only (after built-ins). Normalized absolute-or-~ paths.
 - (NSArray<NSString *> *)scanExtraRoots;

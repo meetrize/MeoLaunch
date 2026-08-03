@@ -18,6 +18,8 @@
 | [06-config-schema.md](./06-config-schema.md) | 配置文件格式与默认值 |
 | [07-agent-playbook.md](./07-agent-playbook.md) | 自动化开发任务卡与 Status |
 | [08-layout-folders.md](./08-layout-folders.md) | 拖动排序与目录分组设计 + 开发计划 |
+| [12-memory-perf.md](./12-memory-perf.md) | 内存与响应优化扫描 / P0–P2 |
+| [13-menubar-memory.md](./13-menubar-memory.md) | 菜单栏系统剩余内存显示方案 |
 
 ## 产品定位
 

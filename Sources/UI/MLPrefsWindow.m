@@ -37,6 +37,7 @@
 @property (nonatomic, strong) NSTextField *sizeLabel;
 @property (nonatomic, strong) NSTextField *sizeField;
 @property (nonatomic, strong) NSButton *taskbarEnabled;
+@property (nonatomic, strong) NSButton *memoryFreeEnabled;
 @property (nonatomic, strong) NSTextField *pollLabel;
 @property (nonatomic, strong) NSSlider *pollSlider;
 @property (nonatomic, strong) NSTextField *pollValueLabel;
@@ -108,7 +109,7 @@
         return;
     }
 
-    NSRect rect = NSMakeRect(0, 0, 520, 780);
+    NSRect rect = NSMakeRect(0, 0, 520, 820);
     NSWindow *w = [[NSWindow alloc] initWithContentRect:rect
                                               styleMask:NSWindowStyleMaskTitled |
                                                         NSWindowStyleMaskClosable |
@@ -116,7 +117,7 @@
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
     w.releasedWhenClosed = NO;
-    w.minSize = NSMakeSize(480, 640);
+    w.minSize = NSMakeSize(480, 680);
     w.level = NSStatusWindowLevel + 1;
     w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
                            NSWindowCollectionBehaviorFullScreenAuxiliary;
@@ -235,6 +236,13 @@
                                                action:@selector(prefsChanged:)];
     self.taskbarEnabled.frame = NSMakeRect(pad, y, 320, 24);
     [c addSubview:self.taskbarEnabled];
+    y += 32;
+
+    self.memoryFreeEnabled = [NSButton checkboxWithTitle:@""
+                                                  target:self
+                                                  action:@selector(prefsChanged:)];
+    self.memoryFreeEnabled.frame = NSMakeRect(pad, y, 360, 24);
+    [c addSubview:self.memoryFreeEnabled];
     y += 32;
 
     self.pollLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
@@ -388,6 +396,7 @@
 
     self.sizeLabel.stringValue = [MLStrings t:@"prefs.hot_size"];
     self.taskbarEnabled.title = [MLStrings t:@"prefs.taskbar_enabled"];
+    self.memoryFreeEnabled.title = [MLStrings t:@"prefs.memory_free_enabled"];
     self.pollLabel.stringValue = [MLStrings t:@"prefs.window_poll"];
     self.iconCacheLabel.stringValue = [MLStrings t:@"prefs.overlay_icon_cache"];
     self.scanTitle.stringValue = [MLStrings t:@"prefs.scan_title"];
@@ -665,6 +674,7 @@
     [self selectPopupForPosition:self.config.hotCornerPosition];
     self.sizeField.stringValue = [NSString stringWithFormat:@"%.0f", self.config.hotCornerSizePt];
     self.taskbarEnabled.state = self.config.taskbarEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    self.memoryFreeEnabled.state = self.config.memoryFreeEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     NSTimeInterval poll = self.config.taskbarWindowPollSeconds;
     if (poll < 0.5) poll = 0.5;
     if (poll > 5.0) poll = 5.0;
@@ -699,6 +709,7 @@
                                 delayMs:self.config.hotCornerDelayMs];
 
     [self.config updateTaskbarEnabled:(self.taskbarEnabled.state == NSControlStateValueOn)];
+    [self.config updateMemoryFreeEnabled:(self.memoryFreeEnabled.state == NSControlStateValueOn)];
     [self.config updateTaskbarWindowPollSeconds:[self pollSecondsFromSlider]];
     [self.config updateOverlayIconCacheMax:(NSUInteger)lround(self.iconCacheSlider.doubleValue)];
 }

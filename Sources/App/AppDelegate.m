@@ -4,6 +4,7 @@
 #import "MLHotCornerMonitor.h"
 #import "MLHotKeyManager.h"
 #import "MLLayoutStore.h"
+#import "MLMemoryStatusController.h"
 #import "MLOverlayController.h"
 #import "MLPrefsWindow.h"
 #import "MLRunningAppsMonitor.h"
@@ -37,6 +38,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLRunningAppsMonitor *runningApps;
 @property (nonatomic, strong) MLTaskbarIconCache *taskbarIcons;
 @property (nonatomic, strong) MLTaskbarController *taskbar;
+@property (nonatomic, strong) MLMemoryStatusController *memoryStatus;
 @property (nonatomic, assign) MLAppIndex appIndex;
 @property (nonatomic, strong) NSTimer *rescanDebounceTimer;
 /** Drop stale background scans when a newer rescan started. */
@@ -79,6 +81,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.taskbar.enabled = self.config.taskbarEnabled;
     [self.overlay setIconCacheMaxEntries:self.config.overlayIconCacheMax];
     [self.runningApps applyWindowPollInterval:self.config.taskbarWindowPollSeconds];
+    self.memoryStatus = [[MLMemoryStatusController alloc] init];
 
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(configDidChange:)
@@ -105,6 +108,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     if (self.config.taskbarEnabled) {
         [self.taskbar start];
     }
+    [self applyMemoryStatusFromConfig];
 
     NSLog(@"[MeoLaunch] ready — layout + configurable scan roots + taskbar");
 }
@@ -137,13 +141,26 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         [self.taskbar stop];
         self.taskbar.enabled = NO;
     }
+    [self applyMemoryStatusFromConfig];
 
     [self.overlay reloadWithAppIndex:&_appIndex];
-    NSLog(@"[MeoLaunch] config applied live (%dx%d) taskbar=%d poll=%.2f icons=%lu",
+    NSLog(@"[MeoLaunch] config applied live (%dx%d) taskbar=%d poll=%.2f icons=%lu mem%%=%d",
           self.config.gridConfig.cols, self.config.gridConfig.rows,
           (int)self.config.taskbarEnabled,
           self.config.taskbarWindowPollSeconds,
-          (unsigned long)self.config.overlayIconCacheMax);
+          (unsigned long)self.config.overlayIconCacheMax,
+          (int)self.config.memoryFreeEnabled);
+}
+
+- (void)applyMemoryStatusFromConfig {
+    if (!self.memoryStatus) {
+        self.memoryStatus = [[MLMemoryStatusController alloc] init];
+    }
+    if (self.config.memoryFreeEnabled) {
+        [self.memoryStatus startWithInterval:self.config.memoryFreeIntervalSeconds];
+    } else {
+        [self.memoryStatus stop];
+    }
 }
 
 - (void)setupHotCornerWithAccessibility {
@@ -262,6 +279,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     [self.rescanDebounceTimer invalidate];
     self.rescanDebounceTimer = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.memoryStatus stop];
     [self.taskbar stop];
     [self.hotKey unregisterAll];
     [self.hotCorner stop];
@@ -324,6 +342,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 - (void)languageDidChange:(NSNotification *)note {
     (void)note;
     [self refreshStatusMenuTitles];
+    /* Refresh free-memory tooltip language if visible. */
+    if (self.config.memoryFreeEnabled) {
+        [self.memoryStatus startWithInterval:self.config.memoryFreeIntervalSeconds];
+    }
 }
 
 - (void)showOverlay:(id)sender {

@@ -69,6 +69,12 @@
     "enabled": true,
     "window_poll_seconds": 1.0
   },
+  "menubar": {
+    "memory_free": {
+      "enabled": false,
+      "interval_seconds": 2.0
+    }
+  },
   "launch_at_login": false
 }
 ```
@@ -92,6 +98,8 @@
 | `ui.overlay_icon_cache_max` | int | Overlay 图标 LRU 上限（32–256，默认 128） |
 | `taskbar.enabled` | bool | 是否显示任务栏（默认 true） |
 | `taskbar.window_poll_seconds` | number | 窗口轮询间隔秒（0.5–5.0，默认 1.0） |
+| `menubar.memory_free.enabled` | bool | 菜单栏显示整机**剩余**内存 %（默认 false） |
+| `menubar.memory_free.interval_seconds` | number | 采样间隔秒（1.0–5.0，默认 2.0） |
 
 ## 4. 读写策略
 
