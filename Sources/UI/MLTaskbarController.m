@@ -134,17 +134,24 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         return cached;
     }
     NSString *name = nil;
-    NSBundle *bundle = [NSBundle bundleWithPath:path];
-    if (bundle) {
-        name = bundle.localizedInfoDictionary[@"CFBundleDisplayName"];
-        if (name.length == 0) {
-            name = bundle.infoDictionary[@"CFBundleDisplayName"];
-        }
-        if (name.length == 0) {
-            name = bundle.localizedInfoDictionary[@"CFBundleName"];
-        }
-        if (name.length == 0) {
-            name = bundle.infoDictionary[@"CFBundleName"];
+    NSURL *url = [NSURL fileURLWithPath:path isDirectory:YES];
+    [url getResourceValue:&name forKey:NSURLLocalizedNameKey error:NULL];
+    if (name.length == 0) {
+        name = [[NSFileManager defaultManager] displayNameAtPath:path];
+    }
+    if (name.length == 0) {
+        NSBundle *bundle = [NSBundle bundleWithPath:path];
+        if (bundle) {
+            name = bundle.localizedInfoDictionary[@"CFBundleDisplayName"];
+            if (name.length == 0) {
+                name = bundle.infoDictionary[@"CFBundleDisplayName"];
+            }
+            if (name.length == 0) {
+                name = bundle.localizedInfoDictionary[@"CFBundleName"];
+            }
+            if (name.length == 0) {
+                name = bundle.infoDictionary[@"CFBundleName"];
+            }
         }
     }
     if (name.length == 0) {

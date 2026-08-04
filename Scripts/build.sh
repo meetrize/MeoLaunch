@@ -49,6 +49,11 @@ clang -o "$MACOS/MeoLaunch" "${OBJS[@]}" "${LIBS[@]}"
 echo "[build] assembling bundle ..."
 cp "$ROOT/Sources/App/Info.plist" "$APP/Contents/Info.plist"
 mkdir -p "$RES"
+# Advertise en + zh-Hans so Launch Services / NSURLLocalizedNameKey follow the
+# system language when resolving other apps' display names (otherwise the
+# process stays English-only and Launchpad labels stay English).
+mkdir -p "$RES/en.lproj" "$RES/zh-Hans.lproj"
+touch "$RES/en.lproj/.keep" "$RES/zh-Hans.lproj/.keep"
 if [[ -f "$ROOT/Sources/Resources/AppIcon.icns" ]]; then
   cp "$ROOT/Sources/Resources/AppIcon.icns" "$RES/AppIcon.icns"
 fi

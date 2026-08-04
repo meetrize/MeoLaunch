@@ -116,6 +116,7 @@ static char *bundle_display_name(const char *app_path) {
     CFURLRef url;
     CFBundleRef bundle;
     CFStringRef name_cf = NULL;
+    CFTypeRef ls_name = NULL;
     char *name = NULL;
     char *stem;
 
@@ -126,6 +127,22 @@ static char *bundle_display_name(const char *app_path) {
     if (!url) {
         goto fallback;
     }
+
+    /* Same localized name Finder/Launchpad use (follows system language). */
+    if (CFURLCopyResourcePropertyForKey(url, kCFURLLocalizedNameKey, &ls_name, NULL) &&
+        ls_name && CFGetTypeID(ls_name) == CFStringGetTypeID()) {
+        name = cfstring_to_utf8((CFStringRef)ls_name);
+        CFRelease(ls_name);
+        if (name && name[0] != '\0') {
+            CFRelease(url);
+            return name;
+        }
+        free(name);
+        name = NULL;
+    } else if (ls_name) {
+        CFRelease(ls_name);
+    }
+
     bundle = CFBundleCreate(kCFAllocatorDefault, url);
     CFRelease(url);
     if (!bundle) {
