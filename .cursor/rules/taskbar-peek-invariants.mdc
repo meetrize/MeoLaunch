@@ -1,0 +1,67 @@
+---
+description: Taskbar peek / minimize-all / multi-screen chip invariants — do not regress
+globs:
+  - Sources/UI/MLTaskbarController.*
+  - Sources/UI/MLMinimizeInterceptor.*
+  - Sources/System/MLRunningAppsMonitor.*
+  - Sources/System/MLWindowSoftState.*
+  - doc/10-taskbar.md
+alwaysApply: false
+---
+
+# Taskbar Peek & Multi-Screen Invariants
+
+These were fixed repeatedly. **Any peek / minimize / multi-screen change must preserve all of them.** Prefer adding guards over clever CG heuristics.
+
+## 1. Minimize-all ≠ peek
+
+- Passive all-minimized / soft-min → bar stays `normal` (no Y offset). **No exceptions for “extra CG helper windows”.**
+- Detect via `isPassiveMinimizeAllState` (chips hidden ∪ soft/min IDs), not `all > minimized`.
+- Soft-hidden window IDs must not count as `live` (exclude from `liveNonMinimizedWindowCount`).
+
+## 2. User-armed desktop peek (click wallpaper)
+
+- Enter only via `handleDesktopPeekClickAtCocoaPoint` → set `desktopPeekUserArmed` **first**, then freeze, then **`applyUserArmedPeekPresentation`** (force `Y -= MLTaskbarPeekOffset`).
+- **Every** successful `freezeDesktopReveal` (user-armed **or** Show Desktop auto) must call `applyUserArmedPeekPresentation` — never rely on `applyBarVisibility` alone.
+- While frozen, visibility refresh must **re-assert** peek frame for all peek kinds, never hard-stop unfreeze as “minimize-all” when `desktopPeekUserArmed`.
+- Second desktop click **toggles exit** (`unfreezeDesktopRevealAndRefresh`). Never no-op `return` while armed+frozen.
+- Cancel in-flight window frame animations on enter/exit so peek slide cannot finish after unfreeze and stick half-down.
+
+## 2b. Show Desktop peek with windows still “live” in snapshot
+
+- Parked Show Desktop windows often remain `minimized=NO` with off-screen bounds. Use `liveOnScreenNonMinimizedWindowCount` (requires `boundsClearlyOnAScreen`) for freeze/looksLike/unfreeze — **not** raw `liveNonMinimizedWindowCount`, or peek freeze is randomly skipped.
+- Do not unfreeze solely because CG `all==0 && onScreen==0` if frozen chips remain and cover is still clear (filters may hide parked windows).
+
+## 3. Desktop click hit-testing
+
+- Clicks on **our taskbar** (`cocoaPointHitsOwnTaskbar`) never arm/toggle peek (restoring a chip must not flash peek).
+- Do **not** “look through” `selfPid` windows to Finder wallpaper behind the bar.
+
+## 4. Restore-from-minimize must not flash peek
+
+- If `liveNonMinimizedWindowCount >= 1`, **never** auto `shouldFreeze` / `looksLikeDesktopReveal`.
+- Soft-min / restore paths must not briefly freeze then unfreeze.
+
+## 5. Multi-screen chip affinity (critical)
+
+- Each window chip belongs to **one** screen’s taskbar. Peek / Show Desktop parks windows off-screen; **never** reassign chips from transient off-screen bounds (that dumps screen-2 chips onto screen-1/3).
+- Maintain `chipScreenAffinityByWid` (windowID → screenID):
+  - Update on successful **commit** and on **freeze** snapshots.
+  - In `windowsOnScreen`, prefer affinity when frozen, user-armed peek, sticky settle, soft/min, or bounds not clearly on a display (`boundsClearlyOnAScreen`).
+- On unfreeze: keep frozen per-screen chips as pending; **do not** `computePendingItems` from live bounds immediately. After settle delay, rebuild **with affinity**, then commit.
+- During `stickyDisplayUntil`, refuse commits that `pendingMovesChipsAcrossScreens`.
+- Prefer missing a chip over assigning to the wrong screen (no `mainScreen` dump).
+
+## 6. Freeze presentation contract
+
+- Freeze = deep-copy **each bar’s current** `barView.items` keyed by `screenID`. Never merge all chips into one bar.
+- While frozen: restore frozen items only; do not paint live pending.
+- If frozen and rebuild is requested, try `shouldUnfreeze` first; otherwise restore frozen — do not leave a stuck peek with a dead rebuild path.
+
+## 7. Regression checklist (before claiming peek work done)
+
+1. All minimized → bar does not move.
+2. All minimized → click desktop → bar slides down ~half; click desktop again → full restore.
+3. All minimized → click chip restore → **no** peek flash.
+4. Multi-screen with windows on screen 2 → enter peek / Show Desktop → chips **stay** on screen 2’s bar.
+5. Exit peek → chips return to the same screens; no hop during settle.

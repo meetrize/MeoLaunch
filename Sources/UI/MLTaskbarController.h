@@ -64,4 +64,12 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
                            title:(NSString *)title
                     restoreFrame:(NSRect)restoreFrame;
 
+/**
+ * Left-click on exposed desktop while every app window is minimized/soft-hidden.
+ * Arms peek so the taskbar can slide down (minimize-all alone must not).
+ * A second desktop click while peeking exits and restores the bar.
+ * Clicks on the taskbar itself are ignored (restore chips must not flash peek).
+ */
+- (void)handleDesktopPeekClickAtCocoaPoint:(NSPoint)cocoaPoint;
+
 @end

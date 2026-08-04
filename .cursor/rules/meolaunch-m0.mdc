@@ -16,3 +16,4 @@ alwaysApply: false
 - Do not edit product docs `doc/00`–`doc/06` unless the user asks. Sync API changes into `doc/04` and `doc/07` when C headers change.
 - Default grid is 7×5; config path and schema live in `doc/06-config-schema.md`.
 - Keep overlays lean: no WebView, no SwiftUI, custom `NSView` grid.
+- Taskbar peek / minimize-all / multi-screen: follow `.cursor/rules/taskbar-peek-invariants.mdc` — do not regress those invariants.

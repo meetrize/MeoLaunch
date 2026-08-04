@@ -97,21 +97,26 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
     if (type != kCGEventLeftMouseDown) {
         return event;
     }
-    if (!AXIsProcessTrusted()) {
-        return event;
-    }
 
     NSPoint cocoaMouse = [NSEvent mouseLocation];
-    CGPoint axPt = MLCocoaPointToAX(cocoaMouse);
+
+    if (!AXIsProcessTrusted()) {
+        /* Still allow desktop-peek arming via CG hit-test when AX is off. */
+        [self.taskbar handleDesktopPeekClickAtCocoaPoint:cocoaMouse];
+        return event;
+    }
 
     AXUIElementRef systemWide = AXUIElementCreateSystemWide();
     if (!systemWide) {
+        [self.taskbar handleDesktopPeekClickAtCocoaPoint:cocoaMouse];
         return event;
     }
+    CGPoint axPt = MLCocoaPointToAX(cocoaMouse);
     AXUIElementRef under = NULL;
     AXError err = AXUIElementCopyElementAtPosition(systemWide, (float)axPt.x, (float)axPt.y, &under);
     CFRelease(systemWide);
     if (err != kAXErrorSuccess || !under) {
+        [self.taskbar handleDesktopPeekClickAtCocoaPoint:cocoaMouse];
         return event;
     }
 
@@ -123,12 +128,14 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
                       [subrole isEqualToString:(__bridge NSString *)kAXMinimizeButtonSubrole];
     if (!isMinimize) {
         CFRelease(under);
+        [self.taskbar handleDesktopPeekClickAtCocoaPoint:cocoaMouse];
         return event;
     }
 
     AXUIElementRef win = MLAXCopyWindowElement(under);
     CFRelease(under);
     if (!win) {
+        [self.taskbar handleDesktopPeekClickAtCocoaPoint:cocoaMouse];
         return event;
     }
 
