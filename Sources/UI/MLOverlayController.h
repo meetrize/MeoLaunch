@@ -21,6 +21,8 @@
                         layoutStore:(MLLayoutStore *)layoutStore;
 - (void)reloadWithAppIndex:(const MLAppIndex *)index;
 - (void)show;
+/** Same as show but skips fade-in (for hot corner — instant appearance). */
+- (void)showImmediate;
 - (void)hide;
 - (BOOL)isVisible;
 /** P2: apply overlay icon LRU cap from prefs. */

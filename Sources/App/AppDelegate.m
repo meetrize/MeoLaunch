@@ -442,7 +442,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     if ([self.overlay isVisible]) {
         return;
     }
-    [self showOverlay:nil];
+    [self.overlay reloadWithAppIndex:&_appIndex];
+    [self.overlay showImmediate];
 }
 
 #pragma mark - MLHotKeyManagerDelegate

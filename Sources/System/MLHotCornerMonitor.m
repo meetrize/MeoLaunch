@@ -3,7 +3,8 @@
 #import <ApplicationServices/ApplicationServices.h>
 
 @interface MLHotCornerMonitor ()
-@property (nonatomic, strong) NSTimer *timer;
+@property (nonatomic, strong) id globalMouseMonitor;
+@property (nonatomic, strong) id localMouseMonitor;
 @property (nonatomic, assign) BOOL wasInside;
 @property (nonatomic, strong) NSDate *enteredAt;
 @property (nonatomic, assign) BOOL armed; /* after fire, wait until leave */
@@ -78,27 +79,43 @@
     self.enteredAt = nil;
     self.armed = YES;
 
-    /* ~25 Hz — enough for edge detection without 60Hz idle cost */
-    self.timer = [NSTimer timerWithTimeInterval:1.0 / 25.0
-                                         target:self
-                                       selector:@selector(tick)
-                                       userInfo:nil
-                                        repeats:YES];
-    [[NSRunLoop mainRunLoop] addTimer:self.timer forMode:NSRunLoopCommonModes];
-    NSLog(@"[MeoLaunch] HotCornerMonitor started (corner=%ld size=%.1f delay=%ldms)",
+    __weak typeof(self) weakSelf = self;
+    self.globalMouseMonitor =
+        [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
+                                               handler:^(NSEvent *event) {
+                                                   [weakSelf handleMouseMoved:event];
+                                               }];
+    self.localMouseMonitor =
+        [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved
+                                              handler:^NSEvent *(NSEvent *event) {
+                                                  [weakSelf handleMouseMoved:event];
+                                                  return event;
+                                              }];
+    NSLog(@"[MeoLaunch] HotCornerMonitor started (corner=%ld size=%.1f delay=%ldms, event-driven)",
           (long)self.position, self.sizePt, (long)self.delayMs);
 }
 
+- (void)handleMouseMoved:(NSEvent *)event {
+    (void)event;
+    [self tick];
+}
+
 - (void)stop {
-    [self.timer invalidate];
-    self.timer = nil;
+    if (self.globalMouseMonitor) {
+        [NSEvent removeMonitor:self.globalMouseMonitor];
+        self.globalMouseMonitor = nil;
+    }
+    if (self.localMouseMonitor) {
+        [NSEvent removeMonitor:self.localMouseMonitor];
+        self.localMouseMonitor = nil;
+    }
     self.wasInside = NO;
     self.enteredAt = nil;
     self.armed = YES;
 }
 
 - (BOOL)isRunning {
-    return self.timer != nil;
+    return self.globalMouseMonitor != nil || self.localMouseMonitor != nil;
 }
 
 /* NSPointInRect excludes top/right edges — bad for screen corners. */

@@ -833,6 +833,14 @@ static void MLLogMemory(NSString *tag) {
 }
 
 - (void)show {
+    [self showWithFade:YES];
+}
+
+- (void)showImmediate {
+    [self showWithFade:NO];
+}
+
+- (void)showWithFade:(BOOL)fade {
     /* Cancel stuck fade state from a previous interrupted hide/show */
     self.animating = NO;
     self.showGeneration += 1;
@@ -871,7 +879,7 @@ static void MLLogMemory(NSString *tag) {
     [self applyBackdropAppearance];
     [self layoutChrome];
 
-    NSTimeInterval dur = [self fadeDuration];
+    NSTimeInterval dur = fade ? [self fadeDuration] : 0;
     self.window.alphaValue = 1.0;
     [NSApp activateIgnoringOtherApps:YES];
     [self.window orderFrontRegardless];
