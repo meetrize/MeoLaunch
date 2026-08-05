@@ -1,6 +1,7 @@
 #import "AppDelegate.h"
 
 #import "MLConfigStore.h"
+#import "MLAppScanWatcher.h"
 #import "MLHotCornerMonitor.h"
 #import "MLHotKeyManager.h"
 #import "MLLayoutStore.h"
@@ -39,8 +40,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLTaskbarIconCache *taskbarIcons;
 @property (nonatomic, strong) MLTaskbarController *taskbar;
 @property (nonatomic, strong) MLMemoryStatusController *memoryStatus;
+@property (nonatomic, strong) MLAppScanWatcher *appScanWatcher;
 @property (nonatomic, assign) MLAppIndex appIndex;
 @property (nonatomic, strong) NSTimer *rescanDebounceTimer;
+@property (nonatomic, strong) NSTimer *scanRefreshTimer;
 /** Drop stale background scans when a newer rescan started. */
 @property (nonatomic, assign) NSUInteger appScanGeneration;
 @end
@@ -102,6 +105,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
     memset(&_appIndex, 0, sizeof(_appIndex));
     [self rescanApps];
+    [self setupAppScanWatcher];
+    [self applyScanRefreshTimer];
 
     [self setupStatusItem];
     [self setupHotCornerWithAccessibility];
@@ -142,6 +147,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         self.taskbar.enabled = NO;
     }
     [self applyMemoryStatusFromConfig];
+    [self syncAppScanWatcherPaths];
+    [self applyScanRefreshTimer];
 
     [self.overlay reloadWithAppIndex:&_appIndex];
     NSLog(@"[MeoLaunch] config applied live (%dx%d) taskbar=%d poll=%.2f icons=%lu mem%%=%d",
@@ -215,6 +222,39 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 - (void)scanRootsDidChange:(NSNotification *)note {
     (void)note;
+    [self syncAppScanWatcherPaths];
+    [self scheduleRescan];
+}
+
+- (void)setupAppScanWatcher {
+    self.appScanWatcher = [[MLAppScanWatcher alloc] init];
+    __weak typeof(self) weakSelf = self;
+    self.appScanWatcher.onChange = ^{
+        [weakSelf scheduleRescan];
+    };
+    [self syncAppScanWatcherPaths];
+}
+
+- (void)syncAppScanWatcherPaths {
+    [self.appScanWatcher watchPaths:[self.config expandedScanRoots]];
+}
+
+- (void)applyScanRefreshTimer {
+    [self.scanRefreshTimer invalidate];
+    self.scanRefreshTimer = nil;
+    NSInteger sec = self.config.scanRefreshSeconds;
+    if (sec <= 0) {
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    self.scanRefreshTimer = [NSTimer scheduledTimerWithTimeInterval:(NSTimeInterval)sec
+                                                            repeats:YES
+                                                              block:^(__unused NSTimer *timer) {
+                                                                  [weakSelf scheduleRescan];
+                                                              }];
+}
+
+- (void)scheduleRescan {
     [self.rescanDebounceTimer invalidate];
     __weak typeof(self) weakSelf = self;
     self.rescanDebounceTimer = [NSTimer scheduledTimerWithTimeInterval:0.4
@@ -278,6 +318,9 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     (void)notification;
     [self.rescanDebounceTimer invalidate];
     self.rescanDebounceTimer = nil;
+    [self.scanRefreshTimer invalidate];
+    self.scanRefreshTimer = nil;
+    [self.appScanWatcher stop];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self.memoryStatus stop];
     [self.taskbar stop];
@@ -350,6 +393,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 - (void)showOverlay:(id)sender {
     (void)sender;
+    /* Pick up apps installed since last scan without blocking show. */
+    [self scheduleRescan];
     /* Defer until status-item menu finishes dismissing — otherwise the
        borderless overlay can fail to become key/visible. */
     const MLAppIndex *index = &_appIndex;
@@ -443,6 +488,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         [self.overlay hide];
         return;
     }
+    [self scheduleRescan];
     [self.overlay reloadWithAppIndex:&_appIndex];
     [self.overlay showImmediate];
 }
