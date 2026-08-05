@@ -89,7 +89,6 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 @property (nonatomic, assign) NSTimeInterval cachedTopmostUserAt;
 @property (nonatomic, strong) NSTimer *visibilitySafetyTimer;
 @property (nonatomic, assign) BOOL started;
-@property (nonatomic, assign) BOOL hiddenForOverlay;
 @property (nonatomic, assign) BOOL fullscreenCheckPending;
 @property (nonatomic, assign) NSUInteger startupVisibilityGeneration;
 @end
@@ -1846,9 +1845,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         MLTaskbarScreenBar *bar = [self makeBarForScreen:screen];
         [self.bars addObject:bar];
         /* Fail-open: show immediately, then hide only if detection confirms fullscreen. */
-        if (!self.hiddenForOverlay) {
-            [bar.window orderFrontRegardless];
-        }
+        [bar.window orderFrontRegardless];
     }
 
     [self refreshFullscreenVisibility];
@@ -2030,21 +2027,11 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 }
 
 - (void)overlayWillShow {
-    self.hiddenForOverlay = YES;
-    [self.visibilitySafetyTimer invalidate];
-    self.visibilitySafetyTimer = nil;
-    for (MLTaskbarScreenBar *bar in self.bars) {
-        bar.mode = MLTaskbarBarModeHidden;
-        [bar.window orderOut:nil];
-    }
+    /* Overlay uses NSStatusWindowLevel; taskbars stay at NSFloatingWindowLevel and
+       remain visible underneath — the scrim covers them on the overlay screen. */
 }
 
 - (void)overlayDidHide {
-    self.hiddenForOverlay = NO;
-    if (self.started && self.enabled) {
-        [self syncBarsToScreens];
-        [self refreshFullscreenVisibility];
-    }
 }
 
 + (BOOL)isSystemWindowOwner:(NSString *)owner {
@@ -2409,7 +2396,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 }
 
 - (void)updateVisibilitySafetyTimer {
-    if (!self.started || self.hiddenForOverlay || !self.enabled) {
+    if (!self.started || !self.enabled) {
         [self.visibilitySafetyTimer invalidate];
         self.visibilitySafetyTimer = nil;
         return;
@@ -2530,14 +2517,6 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 }
 
 - (void)applyBarVisibility {
-    if (self.hiddenForOverlay) {
-        for (MLTaskbarScreenBar *bar in self.bars) {
-            bar.mode = MLTaskbarBarModeHidden;
-            [bar.window orderOut:nil];
-        }
-        [self updateVisibilitySafetyTimer];
-        return;
-    }
     if (!self.started || !self.enabled) {
         return;
     }
