@@ -12,6 +12,13 @@ typedef NS_ENUM(NSInteger, MLHotCornerPosition) {
     MLHotCornerPositionBottomRight,
 };
 
+/** Where the overlay appears when multiple displays are connected. */
+typedef NS_ENUM(NSInteger, MLOverlayScreenMode) {
+    MLOverlayScreenModeMouse = 0, /* screen under mouse (default) */
+    MLOverlayScreenModeMain,      /* NSScreen.mainScreen */
+    MLOverlayScreenModeFixed,     /* ui.overlay_screen_id */
+};
+
 FOUNDATION_EXPORT NSNotificationName const MLConfigStoreDidChangeNotification;
 /** Posted when scan.roots extras change, or when an explicit rescan is requested. */
 FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotification;
@@ -37,6 +44,8 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 @property (nonatomic, assign, readonly) NSInteger fadeMs;
 @property (nonatomic, assign, readonly) CGFloat overlayOpacity; /* 0…1 scrim alpha, default 0.55 */
 @property (nonatomic, assign, readonly) BOOL overlayBlur; /* blur desktop behind overlay */
+@property (nonatomic, assign, readonly) MLOverlayScreenMode overlayScreenMode; /* default mouse */
+@property (nonatomic, assign, readonly) uint32_t overlayScreenID; /* NSScreenNumber when mode=fixed */
 @property (nonatomic, assign, readonly) MLLanguage language; /* ui.language: en | zh */
 
 /// Full scan root list as stored (may contain ~). Built-ins first, then extras.
@@ -62,11 +71,15 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 - (void)updateGridCols:(int)cols rows:(int)rows;
 - (void)updateGridIconSize:(float)iconSize; /* 0 = auto */
 - (void)updateOverlayOpacity:(CGFloat)opacity;
+- (void)updateOverlayScreenMode:(MLOverlayScreenMode)mode screenID:(uint32_t)screenID;
 - (void)updateHotCornerEnabled:(BOOL)enabled
                       position:(MLHotCornerPosition)position
                         sizePt:(CGFloat)sizePt
                        delayMs:(NSInteger)delayMs;
 - (void)updateLanguage:(MLLanguage)language;
+
+/** Resolve preferred overlay screen; falls back to main / first if fixed ID missing. */
+- (NSScreen *)resolvedOverlayScreen;
 
 - (void)updateTaskbarEnabled:(BOOL)enabled;
 - (void)updateTaskbarWindowPollSeconds:(NSTimeInterval)seconds;

@@ -109,6 +109,22 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Overlay opacity",
             @"zh" : @"遮罩透明度",
         },
+        @"prefs.overlay_screen" : @{
+            @"en" : @"Overlay display",
+            @"zh" : @"Overlay 显示器",
+        },
+        @"prefs.overlay_screen.mouse" : @{
+            @"en" : @"Follow mouse",
+            @"zh" : @"跟随鼠标",
+        },
+        @"prefs.overlay_screen.main" : @{
+            @"en" : @"Main display",
+            @"zh" : @"主显示器",
+        },
+        @"prefs.overlay_screen.main_suffix" : @{
+            @"en" : @" (Main)",
+            @"zh" : @"（主屏）",
+        },
         @"prefs.launch_at_login" : @{
             @"en" : @"Launch at login",
             @"zh" : @"开机启动",

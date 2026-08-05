@@ -21,6 +21,8 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @property (nonatomic, assign, readwrite) NSInteger fadeMs;
 @property (nonatomic, assign, readwrite) CGFloat overlayOpacity;
 @property (nonatomic, assign, readwrite) BOOL overlayBlur;
+@property (nonatomic, assign, readwrite) MLOverlayScreenMode overlayScreenMode;
+@property (nonatomic, assign, readwrite) uint32_t overlayScreenID;
 @property (nonatomic, assign, readwrite) MLLanguage language;
 @property (nonatomic, copy, readwrite) NSArray<NSString *> *scanRoots;
 @property (nonatomic, assign, readwrite) NSInteger scanRefreshSeconds;
@@ -123,6 +125,53 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     return MLHotCornerPositionOff;
 }
 
++ (NSString *)stringForOverlayScreenMode:(MLOverlayScreenMode)mode {
+    switch (mode) {
+        case MLOverlayScreenModeMain: return @"main";
+        case MLOverlayScreenModeFixed: return @"fixed";
+        default: return @"mouse";
+    }
+}
+
++ (MLOverlayScreenMode)overlayScreenModeFromString:(NSString *)s {
+    if ([s isEqualToString:@"main"]) return MLOverlayScreenModeMain;
+    if ([s isEqualToString:@"fixed"]) return MLOverlayScreenModeFixed;
+    return MLOverlayScreenModeMouse;
+}
+
++ (NSScreen *)screenUnderMouse {
+    NSPoint p = [NSEvent mouseLocation];
+    for (NSScreen *s in [NSScreen screens]) {
+        if (NSPointInRect(p, s.frame)) {
+            return s;
+        }
+    }
+    return [NSScreen mainScreen] ?: [NSScreen screens].firstObject;
+}
+
++ (uint32_t)screenIDForScreen:(NSScreen *)screen {
+    if (!screen) {
+        return 0;
+    }
+    id num = screen.deviceDescription[@"NSScreenNumber"];
+    if ([num isKindOfClass:[NSNumber class]]) {
+        return [(NSNumber *)num unsignedIntValue];
+    }
+    return (uint32_t)screen.hash;
+}
+
++ (NSScreen *)screenWithID:(uint32_t)screenID {
+    if (screenID == 0) {
+        return nil;
+    }
+    for (NSScreen *s in [NSScreen screens]) {
+        if ([[self class] screenIDForScreen:s] == screenID) {
+            return s;
+        }
+    }
+    return nil;
+}
+
 - (void)loadDefaults {
     MLGridConfig g;
     g.cols = 7;
@@ -149,6 +198,8 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.fadeMs = 100;
     self.overlayOpacity = 0.55;
     self.overlayBlur = YES;
+    self.overlayScreenMode = MLOverlayScreenModeMouse;
+    self.overlayScreenID = 0;
     self.language = [MLStrings systemPreferredLanguage];
     [MLStrings setLanguage:self.language];
     self.scanRoots = [[self class] builtInScanRoots];
@@ -290,6 +341,16 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
             if (n > 256) n = 256;
             self.overlayIconCacheMax = (NSUInteger)n;
         }
+        if (ui[@"overlay_screen_mode"]) {
+            self.overlayScreenMode =
+                [[self class] overlayScreenModeFromString:[ui[@"overlay_screen_mode"] description]];
+        }
+        if (ui[@"overlay_screen_id"]) {
+            self.overlayScreenID = (uint32_t)[ui[@"overlay_screen_id"] unsignedIntValue];
+        }
+        if (self.overlayScreenMode == MLOverlayScreenModeFixed && self.overlayScreenID == 0) {
+            self.overlayScreenMode = MLOverlayScreenModeMouse;
+        }
     }
 
     NSDictionary *tb = root[@"taskbar"];
@@ -374,6 +435,8 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
             @"overlay_opacity" : @(self.overlayOpacity),
             @"language" : [MLStrings codeForLanguage:self.language],
             @"overlay_icon_cache_max" : @(self.overlayIconCacheMax > 0 ? self.overlayIconCacheMax : 128),
+            @"overlay_screen_mode" : [[self class] stringForOverlayScreenMode:self.overlayScreenMode],
+            @"overlay_screen_id" : @(self.overlayScreenID),
             @"menubar_icon" : @YES,
             @"lsuielement" : @YES,
         },
@@ -587,6 +650,38 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.overlayOpacity = opacity;
     [self notifyChanged];
     [self scheduleSave];
+}
+
+- (void)updateOverlayScreenMode:(MLOverlayScreenMode)mode screenID:(uint32_t)screenID {
+    if (mode != MLOverlayScreenModeFixed) {
+        screenID = 0;
+    } else if (screenID == 0) {
+        mode = MLOverlayScreenModeMouse;
+    }
+    if (self.overlayScreenMode == mode && self.overlayScreenID == screenID) {
+        return;
+    }
+    self.overlayScreenMode = mode;
+    self.overlayScreenID = screenID;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (NSScreen *)resolvedOverlayScreen {
+    switch (self.overlayScreenMode) {
+        case MLOverlayScreenModeMain:
+            return [NSScreen mainScreen] ?: [NSScreen screens].firstObject;
+        case MLOverlayScreenModeFixed: {
+            NSScreen *fixed = [[self class] screenWithID:self.overlayScreenID];
+            if (fixed) {
+                return fixed;
+            }
+            return [NSScreen mainScreen] ?: [NSScreen screens].firstObject;
+        }
+        case MLOverlayScreenModeMouse:
+        default:
+            return [[self class] screenUnderMouse];
+    }
 }
 
 - (void)updateHotCornerEnabled:(BOOL)enabled

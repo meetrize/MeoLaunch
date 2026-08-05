@@ -91,25 +91,65 @@ static void MLLogMemory(NSString *tag) {
         _filterIndices = NULL;
         _filterCapacity = 0;
         _filterCount = 0;
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(configDidChange:)
+                                                     name:MLConfigStoreDidChangeNotification
+                                                   object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(screenParamsChanged:)
+                                                     name:NSApplicationDidChangeScreenParametersNotification
+                                                   object:nil];
     }
     return self;
 }
 
 - (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
     [self removeEscapeMonitor];
     [self removeOutsideClickMonitors];
     free(_filterIndices);
     _filterIndices = NULL;
 }
 
-- (NSScreen *)screenUnderMouse {
-    NSPoint p = [NSEvent mouseLocation];
-    for (NSScreen *s in [NSScreen screens]) {
-        if (NSPointInRect(p, s.frame)) {
-            return s;
-        }
+- (NSScreen *)preferredScreen {
+    NSScreen *screen = [self.config resolvedOverlayScreen];
+    if (screen) {
+        return screen;
     }
     return [NSScreen mainScreen] ?: [NSScreen screens].firstObject;
+}
+
+- (void)applyPreferredScreenFrame {
+    if (!self.window) {
+        return;
+    }
+    NSScreen *screen = [self preferredScreen];
+    if (!screen) {
+        return;
+    }
+    NSRect frame = screen.frame;
+    if (NSEqualRects(self.window.frame, frame)) {
+        return;
+    }
+    [self.window setFrame:frame display:YES];
+    [self layoutChrome];
+}
+
+- (void)configDidChange:(NSNotification *)note {
+    (void)note;
+    if (!self.visible) {
+        return;
+    }
+    [self applyPreferredScreenFrame];
+    [self applyBackdropAppearance];
+}
+
+- (void)screenParamsChanged:(NSNotification *)note {
+    (void)note;
+    if (!self.visible) {
+        return;
+    }
+    [self applyPreferredScreenFrame];
 }
 
 - (void)ensureFilterCapacity:(size_t)need {
@@ -476,7 +516,7 @@ static void MLLogMemory(NSString *tag) {
         return;
     }
 
-    NSScreen *screen = [self screenUnderMouse];
+    NSScreen *screen = [self preferredScreen];
     /* Full frame covers the menu bar; window level is raised above it in ensureWindow. */
     NSRect frame = screen ? screen.frame : NSMakeRect(0, 0, 800, 600);
 
@@ -801,7 +841,7 @@ static void MLLogMemory(NSString *tag) {
 
     [self ensureWindow];
 
-    NSScreen *screen = [self screenUnderMouse];
+    NSScreen *screen = [self preferredScreen];
     if (screen) {
         [self.window setFrame:screen.frame display:YES];
     }

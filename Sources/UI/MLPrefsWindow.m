@@ -2,6 +2,7 @@
 
 #import "MLConfigStore.h"
 #import "MLLaunchAtLogin.h"
+#import "MLScreenGeometry.h"
 #import "MLStrings.h"
 
 /** Top-down layout coordinates for the prefs form. */
@@ -30,6 +31,8 @@
 @property (nonatomic, strong) NSTextField *opacityLabel;
 @property (nonatomic, strong) NSSlider *opacitySlider;
 @property (nonatomic, strong) NSTextField *opacityValueLabel;
+@property (nonatomic, strong) NSTextField *overlayScreenLabel;
+@property (nonatomic, strong) NSPopUpButton *overlayScreenPopup;
 @property (nonatomic, strong) NSButton *launchAtLoginCheckbox;
 @property (nonatomic, strong) NSButton *hotCornerEnabled;
 @property (nonatomic, strong) NSTextField *hotCornerLabel;
@@ -197,6 +200,15 @@
     self.opacityValueLabel = [self makeLabel:@"55%" frame:NSMakeRect(420, y, 50, 22)];
     self.opacityValueLabel.alignment = NSTextAlignmentRight;
     [c addSubview:self.opacityValueLabel];
+    y += 40;
+
+    self.overlayScreenLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.overlayScreenLabel];
+    self.overlayScreenPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(140, y - 1, 320, 26)
+                                                         pullsDown:NO];
+    self.overlayScreenPopup.target = self;
+    self.overlayScreenPopup.action = @selector(overlayScreenChanged:);
+    [c addSubview:self.overlayScreenPopup];
     y += 40;
 
     self.launchAtLoginCheckbox = [NSButton checkboxWithTitle:@""
@@ -377,6 +389,8 @@
     self.rowsLabel.stringValue = [MLStrings t:@"prefs.grid_rows"];
     self.iconSizeLabel.stringValue = [MLStrings t:@"prefs.icon_size"];
     self.opacityLabel.stringValue = [MLStrings t:@"prefs.overlay_opacity"];
+    self.overlayScreenLabel.stringValue = [MLStrings t:@"prefs.overlay_screen"];
+    [self rebuildOverlayScreenPopupPreservingSelection:YES];
     self.launchAtLoginCheckbox.title = [MLStrings t:@"prefs.launch_at_login"];
     self.hotCornerEnabled.title = [MLStrings t:@"prefs.hot_corner_enabled"];
     self.hotCornerLabel.stringValue = [MLStrings t:@"prefs.hot_corner"];
@@ -476,6 +490,93 @@
     self.opacityValueLabel.stringValue =
         [NSString stringWithFormat:@"%.0f%%", self.opacitySlider.doubleValue];
     [self applyLive];
+}
+
+- (NSString *)titleForScreen:(NSScreen *)screen {
+    NSString *name = screen.localizedName;
+    if (name.length == 0) {
+        name = @"Display";
+    }
+    NSSize px = screen.frame.size;
+    NSString *res = [NSString stringWithFormat:@"%ld×%ld", (long)px.width, (long)px.height];
+    NSString *title = [NSString stringWithFormat:@"%@ (%@)", name, res];
+    if (screen == [NSScreen mainScreen]) {
+        title = [title stringByAppendingString:[MLStrings t:@"prefs.overlay_screen.main_suffix"]];
+    }
+    return title;
+}
+
+- (void)rebuildOverlayScreenPopupPreservingSelection:(BOOL)preserve {
+    if (!self.overlayScreenPopup) {
+        return;
+    }
+    MLOverlayScreenMode mode = self.config.overlayScreenMode;
+    uint32_t sid = self.config.overlayScreenID;
+    if (preserve && self.overlayScreenPopup.numberOfItems > 0) {
+        NSDictionary *sel = self.overlayScreenPopup.selectedItem.representedObject;
+        if ([sel isKindOfClass:[NSDictionary class]]) {
+            mode = (MLOverlayScreenMode)[sel[@"mode"] integerValue];
+            sid = (uint32_t)[sel[@"id"] unsignedIntValue];
+        }
+    }
+
+    [self.overlayScreenPopup removeAllItems];
+
+    NSMenuItem *mouseItem = [[NSMenuItem alloc] initWithTitle:[MLStrings t:@"prefs.overlay_screen.mouse"]
+                                                       action:NULL
+                                                keyEquivalent:@""];
+    mouseItem.representedObject = @{ @"mode" : @(MLOverlayScreenModeMouse) };
+    [self.overlayScreenPopup.menu addItem:mouseItem];
+
+    NSMenuItem *mainItem = [[NSMenuItem alloc] initWithTitle:[MLStrings t:@"prefs.overlay_screen.main"]
+                                                      action:NULL
+                                               keyEquivalent:@""];
+    mainItem.representedObject = @{ @"mode" : @(MLOverlayScreenModeMain) };
+    [self.overlayScreenPopup.menu addItem:mainItem];
+
+    [self.overlayScreenPopup.menu addItem:[NSMenuItem separatorItem]];
+
+    NSInteger selectIdx = 0;
+    if (mode == MLOverlayScreenModeMain) {
+        selectIdx = 1;
+    }
+    NSArray<NSScreen *> *screens = [NSScreen screens];
+    for (NSScreen *screen in screens) {
+        NSNumber *num = [MLScreenGeometry screenIDForScreen:screen];
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:[self titleForScreen:screen]
+                                                      action:NULL
+                                               keyEquivalent:@""];
+        item.representedObject = @{
+            @"mode" : @(MLOverlayScreenModeFixed),
+            @"id" : num ?: @0,
+        };
+        [self.overlayScreenPopup.menu addItem:item];
+        if (mode == MLOverlayScreenModeFixed && num.unsignedIntValue == sid) {
+            selectIdx = self.overlayScreenPopup.numberOfItems - 1;
+        }
+    }
+
+    if (mode == MLOverlayScreenModeFixed && selectIdx == 0) {
+        /* Saved display missing: keep fixed intent visible via main fallback label. */
+        selectIdx = 1;
+    }
+    if (selectIdx >= 0 && selectIdx < self.overlayScreenPopup.numberOfItems) {
+        [self.overlayScreenPopup selectItemAtIndex:selectIdx];
+    }
+}
+
+- (void)overlayScreenChanged:(id)sender {
+    (void)sender;
+    if (self.suppressApply) {
+        return;
+    }
+    NSDictionary *info = self.overlayScreenPopup.selectedItem.representedObject;
+    if (![info isKindOfClass:[NSDictionary class]]) {
+        return;
+    }
+    MLOverlayScreenMode mode = (MLOverlayScreenMode)[info[@"mode"] integerValue];
+    uint32_t sid = (uint32_t)[info[@"id"] unsignedIntValue];
+    [self.config updateOverlayScreenMode:mode screenID:sid];
 }
 
 - (NSTimeInterval)pollSecondsFromSlider {
@@ -668,6 +769,7 @@
     self.opacitySlider.doubleValue = self.config.overlayOpacity * 100.0;
     self.opacityValueLabel.stringValue =
         [NSString stringWithFormat:@"%.0f%%", self.opacitySlider.doubleValue];
+    [self rebuildOverlayScreenPopupPreservingSelection:NO];
     self.launchAtLoginCheckbox.state =
         [MLLaunchAtLogin isEnabled] ? NSControlStateValueOn : NSControlStateValueOff;
     self.hotCornerEnabled.state = self.config.hotCornerEnabled ? NSControlStateValueOn : NSControlStateValueOff;
