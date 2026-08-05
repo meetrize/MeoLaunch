@@ -440,6 +440,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 - (void)hotCornerMonitorDidTrigger:(MLHotCornerMonitor *)monitor {
     (void)monitor;
     if ([self.overlay isVisible]) {
+        [self.overlay hide];
         return;
     }
     [self.overlay reloadWithAppIndex:&_appIndex];
