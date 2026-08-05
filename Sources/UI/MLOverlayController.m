@@ -8,6 +8,8 @@
 #import "MLOverlayWindow.h"
 #import "MLPageIndicator.h"
 #import "MLSearchField.h"
+#import "MLStandardEditMenu.h"
+#import "NSTextField+MLEditing.h"
 
 #include "ml_filter.h"
 #include "ml_layout.h"
@@ -619,6 +621,18 @@ static void MLLogMemory(NSString *tag) {
     [self layoutChrome];
 }
 
+- (BOOL)isOverlayTextInputFirstResponder {
+    NSResponder *fr = self.window.firstResponder;
+    if (fr == self.searchField || fr == self.folderTitleField) {
+        return YES;
+    }
+    if ([fr isKindOfClass:[NSTextView class]]) {
+        id delegate = ((NSTextView *)fr).delegate;
+        return delegate == self.searchField || delegate == self.folderTitleField;
+    }
+    return NO;
+}
+
 - (void)installEscapeMonitor {
     if (self.escapeMonitor) {
         return;
@@ -626,16 +640,27 @@ static void MLLogMemory(NSString *tag) {
     __weak typeof(self) weakSelf = self;
     self.escapeMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown
                                                                handler:^NSEvent *(NSEvent *event) {
+                                                                   __strong typeof(weakSelf) self = weakSelf;
+                                                                   if (!self) {
+                                                                       return event;
+                                                                   }
                                                                    if (event.keyCode == 53) {
-                                                                       [weakSelf handleEscape];
+                                                                       if ([self isOverlayTextInputFirstResponder]) {
+                                                                           [self handleEscape];
+                                                                           return nil;
+                                                                       }
+                                                                       [self handleEscape];
                                                                        return nil;
                                                                    }
+                                                                   if ([self isOverlayTextInputFirstResponder]) {
+                                                                       return event;
+                                                                   }
                                                                    if (event.keyCode == 116) {
-                                                                       [weakSelf.gridView nudgePage:-1];
+                                                                       [self.gridView nudgePage:-1];
                                                                        return nil;
                                                                    }
                                                                    if (event.keyCode == 121) {
-                                                                       [weakSelf.gridView nudgePage:1];
+                                                                       [self.gridView nudgePage:1];
                                                                        return nil;
                                                                    }
                                                                    return event;
@@ -1073,7 +1098,15 @@ doCommandBySelector:(SEL)commandSelector {
             [self exitFolderSavingTitle:YES];
             return YES;
         }
+        if (MLIsStandardTextEditingCommand(commandSelector)) {
+            [textView doCommandBySelector:commandSelector];
+            return YES;
+        }
         return NO;
+    }
+    if (MLIsStandardTextEditingCommand(commandSelector)) {
+        [textView doCommandBySelector:commandSelector];
+        return YES;
     }
     if (commandSelector == @selector(insertNewline:) ||
         commandSelector == @selector(insertNewlineIgnoringFieldEditor:)) {

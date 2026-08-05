@@ -2,6 +2,7 @@
 
 #import "MLConfigStore.h"
 #import "MLAppScanWatcher.h"
+#import "MLStandardEditMenu.h"
 #import "MLHotCornerMonitor.h"
 #import "MLHotKeyManager.h"
 #import "MLLayoutStore.h"
@@ -55,6 +56,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
     self.config = [[MLConfigStore alloc] init];
     [self.config loadFromDisk];
+    MLInstallStandardEditMenu();
 
     self.layoutStore = [[MLLayoutStore alloc] init];
     [self.layoutStore loadFromDisk];
