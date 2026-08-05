@@ -512,7 +512,8 @@ Prefs / schema（见 [06-config-schema.md](./06-config-schema.md)）：
 - **不用**单独的 `visibleFrame≈frame`（自动隐藏菜单栏会误伤普通桌面）。
 - 盖屏判定仅认**前台**非系统、非访达窗口；避免启动瞬态 / 显示桌面误藏。
 - **全部最小化 / 软最小化 ≠ 自动 peek**：被动全部最小化时任务栏必须保持 `normal`（一动不动）。以 soft/min + 芯片隐藏为准；**禁止**用「CG 额外 off-screen 窗」覆盖该规则（辅助窗口会误判并卡死在 peek）。
-- **点击桌面进 peek**：全部最小化后点击露出桌面 → 置 `desktopPeekUserArmed`，**强制**整窗 `Y -= PeekOffset`（约半栏高度）。该路径不走 minimize-all ignore 门闩；`applyUserArmedPeekPresentation` 直接改 frame。再点桌面退出并复位。
+- **全部关闭窗口 ≠ 自动 peek**：桌面空了（`live`/`liveOnScreen` 均为 0、无 Show Desktop 停靠幽灵）时栏也不下移；芯片骤降提交不得仅因 pending≪shown 就 freeze。只有点桌面武装 peek，或真正的「显示桌面」停靠证据，才半栏下移。
+- **点击桌面进 peek**：全部最小化**或全部关闭**后点击露出桌面 → 置 `desktopPeekUserArmed`，**强制**整窗 `Y -= PeekOffset`（约半栏高度）。不要求栏上仍有窗口芯片。该路径不走 minimize-all / all-closed ignore 门闩；`applyUserArmedPeekPresentation` 直接改 frame。再点桌面退出并复位。
 - **多屏芯片亲和**：`chipScreenAffinityByWid` 记录 windowID→屏。Peek / 显示桌面把窗停到屏外时，**禁止**用瞬时 bounds 重算归属（否则二屏芯片会跑到一/三屏）。冻结按屏深拷贝；解冻先保持冻结芯片，settle 后再按亲和重建。
 - 进入 `hidden` 需连续 2 次确认；退出 `peek` **同步**复位 frame 并 `orderFront`，清 fullscreen streak，禁止同帧误藏。
 - **展示列表 ≠ 实时快照**：monitor 抖动只写入 `pendingItems`；安静约 0.32s 后才 `commit` 到 `barView`。显示桌面期间拒绝提交「芯片大跌」的候选，并冻结快照。

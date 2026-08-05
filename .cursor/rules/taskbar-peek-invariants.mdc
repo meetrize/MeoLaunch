@@ -16,12 +16,15 @@ These were fixed repeatedly. **Any peek / minimize / multi-screen change must pr
 ## 1. Minimize-all ≠ peek
 
 - Passive all-minimized / soft-min → bar stays `normal` (no Y offset). **No exceptions for “extra CG helper windows”.**
-- Detect via `isPassiveMinimizeAllState` (chips hidden ∪ soft/min IDs), not `all > minimized`.
+- All windows **closed** (live→0, no parked Show Desktop ghosts) → same: bar stays `normal` until user arms peek via desktop click.
+- Detect via `isPassiveMinimizeAllState` (chips hidden ∪ soft/min IDs) **or** `liveOnScreen==0 && live==0`, not `all > minimized`.
 - Soft-hidden window IDs must not count as `live` (exclude from `liveNonMinimizedWindowCount`).
+- Chip-drop commit must not freeze solely because `pending ≪ shown` — require Show Desktop evidence (`looksLike` / `shouldFreeze`).
 
 ## 2. User-armed desktop peek (click wallpaper)
 
 - Enter only via `handleDesktopPeekClickAtCocoaPoint` → set `desktopPeekUserArmed` **first**, then freeze, then **`applyUserArmedPeekPresentation`** (force `Y -= MLTaskbarPeekOffset`).
+- Works with **zero window chips** (all closed) and with minimize-all chips — do **not** require `totalWindowChipsOnBars >= 1`.
 - **Every** successful `freezeDesktopReveal` (user-armed **or** Show Desktop auto) must call `applyUserArmedPeekPresentation` — never rely on `applyBarVisibility` alone.
 - While frozen, visibility refresh must **re-assert** peek frame for all peek kinds, never hard-stop unfreeze as “minimize-all” when `desktopPeekUserArmed`.
 - Second desktop click **toggles exit** (`unfreezeDesktopRevealAndRefresh`). Never no-op `return` while armed+frozen.
@@ -61,7 +64,9 @@ These were fixed repeatedly. **Any peek / minimize / multi-screen change must pr
 ## 7. Regression checklist (before claiming peek work done)
 
 1. All minimized → bar does not move.
-2. All minimized → click desktop → bar slides down ~half; click desktop again → full restore.
-3. All minimized → click chip restore → **no** peek flash.
-4. Multi-screen with windows on screen 2 → enter peek / Show Desktop → chips **stay** on screen 2’s bar.
-5. Exit peek → chips return to the same screens; no hop during settle.
+2. All windows closed → bar does not move (no auto peek).
+3. All windows closed → click desktop → bar slides down ~half; click again → restore.
+4. All minimized → click desktop → bar slides down ~half; click desktop again → full restore.
+5. All minimized → click chip restore → **no** peek flash.
+6. Multi-screen with windows on screen 2 → enter peek / Show Desktop → chips **stay** on screen 2’s bar.
+7. Exit peek → chips return to the same screens; no hop during settle.

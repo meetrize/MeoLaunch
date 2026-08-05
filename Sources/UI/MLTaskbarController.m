@@ -817,13 +817,13 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         pendingWindows += [self windowChipCountInItems:bar.pendingItems];
         shownWindows += [self windowChipCountOnBar:bar];
     }
-    /* Large chip drop while reveal-armed → freeze even if cover heuristic is still catching up.
-     * Skip when every tracked window is minimized — that is not Show Desktop. */
+    /* Large chip drop while reveal-armed → freeze only with Show Desktop evidence.
+     * Closing windows (pending empties without parked windows) must paint normally —
+     * never treat "chips went to zero" as peek. */
     if (!force && shownWindows >= 2 && pendingWindows + 1 < shownWindows &&
         [self isDesktopRevealArmed] &&
         ![self shouldIgnoreDesktopRevealBecauseAllMinimized] &&
-        ([self looksLikeDesktopReveal] || [self shouldFreezeForDesktopReveal] ||
-         pendingWindows * 2 < shownWindows)) {
+        ([self looksLikeDesktopReveal] || [self shouldFreezeForDesktopReveal])) {
         [self freezeDesktopReveal];
         return;
     }
@@ -1444,8 +1444,9 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 /**
  * When YES, refuse peek / leave peek.
  *
- * User rule: minimize-all → bar stays put. Only desktop click (desktopPeekUserArmed)
- * may peek over an empty/minimized desktop.
+ * User rule: minimize-all OR all windows closed → bar stays put.
+ * Only desktop click (desktopPeekUserArmed) may peek over an empty/minimized desktop.
+ * Show Desktop still auto-peeks: parked windows remain non-minimized in the snapshot.
  *
  * NEVER let "foreign off-screen helper windows" override minimize-all — that was
  * why the bar slid down and stuck.
@@ -1455,6 +1456,15 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
         return NO;
     }
     if ([self isPassiveMinimizeAllState]) {
+        return YES;
+    }
+    /*
+     * All windows closed: nothing live on-screen and no parked non-minimized
+     * ghosts (Show Desktop keeps those). Chips may still paint until commit —
+     * still refuse auto-peek so closing the last window cannot half-drop the bar.
+     */
+    if ([self liveOnScreenNonMinimizedWindowCount] < 1 &&
+        [self liveNonMinimizedWindowCount] < 1) {
         return YES;
     }
     return NO;
@@ -1550,16 +1560,17 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     NSInteger all = 0;
     [self measureDesktopRevealWithCenterCover:&cover onScreen:&onScreen all:&all];
 
-    /* Windows still exist but desktop center is clear → Show Desktop / Exposé. */
-    if (cover < 0.14 && all >= 1 && [self totalWindowChipsOnBars] >= 1) {
+    /* Windows still exist but desktop center is clear → Show Desktop / Exposé.
+     * Require live-looking chips — all-closed (chips gone) is never auto-peek. */
+    if ([self totalWindowChipsOnBars] < 1) {
+        return NO;
+    }
+    if (cover < 0.14 && all >= 1) {
         if (onScreen < MAX(1, self.lastStableLiveWindowCount) || onScreen == 0 || cover < 0.08) {
             return YES;
         }
     }
-    if (cover < 0.14 && all >= 1 && onScreen < MAX(1, self.lastStableLiveWindowCount)) {
-        return YES;
-    }
-    if (cover < 0.14 && all >= 1 && [self totalWindowChipsOnBars] >= 1 && onScreen == 0) {
+    if (cover < 0.14 && all >= 1 && onScreen == 0) {
         return YES;
     }
     return NO;
@@ -2532,7 +2543,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     }
 
     /*
-     * Hard stop: passive minimize-all must never keep peek presentation.
+     * Hard stop: passive minimize-all / all-closed must never keep peek presentation.
      * Never cancel user-armed desktop peek here — that path owns the Y offset.
      */
     BOOL anyPeek = self.itemsFrozenForDesktopReveal || self.desktopRevealScreenIDs.count > 0;
@@ -2742,19 +2753,18 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     }
 
     /*
-     * Only arm from desktop click when nothing live remains. Visible-window
-     * Show Desktop still uses parked-window / chip-freeze detection.
+     * Only arm from desktop click when nothing live remains on-screen.
+     * Zero window chips (all closed) is fine — user click still half-drops the bar.
+     * Show Desktop with visible windows uses parked-window / chip-freeze detection.
      */
-    if ([self liveNonMinimizedWindowCount] >= 1) {
-        return;
-    }
-    if ([self totalWindowChipsOnBars] < 1 && !self.itemsFrozenForDesktopReveal) {
+    if ([self liveOnScreenNonMinimizedWindowCount] >= 1) {
         return;
     }
 
     /* Arm FIRST so freeze/ignore gates cannot treat this as passive minimize-all. */
     self.desktopPeekUserArmed = YES;
-    MLDebugLog(@"[Taskbar] desktop click armed peek (all minimized) — force half-down");
+    MLDebugLog(@"[Taskbar] desktop click armed peek — force half-down (chips=%ld)",
+          (long)[self totalWindowChipsOnBars]);
     if (!self.itemsFrozenForDesktopReveal) {
         [self freezeDesktopReveal];
     }
