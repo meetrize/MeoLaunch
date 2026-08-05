@@ -42,6 +42,9 @@
 @property (nonatomic, assign) size_t filterCapacity;
 @property (nonatomic, assign) size_t filterCount;
 @property (nonatomic, strong) id escapeMonitor;
+/** Dismiss when clicking another screen (other apps → global; our taskbar etc. → local). */
+@property (nonatomic, strong) id outsideClickLocalMonitor;
+@property (nonatomic, strong) id outsideClickGlobalMonitor;
 @property (nonatomic, assign, readwrite) BOOL visible;
 @property (nonatomic, assign) BOOL animating;
 @property (nonatomic, assign) NSUInteger showGeneration;
@@ -94,6 +97,7 @@ static void MLLogMemory(NSString *tag) {
 
 - (void)dealloc {
     [self removeEscapeMonitor];
+    [self removeOutsideClickMonitors];
     free(_filterIndices);
     _filterIndices = NULL;
 }
@@ -605,6 +609,54 @@ static void MLLogMemory(NSString *tag) {
     }
 }
 
+- (BOOL)shouldDismissForOutsideScreenClick {
+    if (!self.visible || !self.window) {
+        return NO;
+    }
+    NSPoint p = [NSEvent mouseLocation];
+    /* Overlay fills one screen; any click outside that frame is on another display. */
+    return !NSPointInRect(p, self.window.frame);
+}
+
+- (void)handleOutsideScreenClick {
+    if (![self shouldDismissForOutsideScreenClick]) {
+        return;
+    }
+    [self hide];
+}
+
+- (void)installOutsideClickMonitors {
+    if (self.outsideClickLocalMonitor || self.outsideClickGlobalMonitor) {
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    NSEventMask mask = NSEventMaskLeftMouseDown;
+    self.outsideClickLocalMonitor =
+        [NSEvent addLocalMonitorForEventsMatchingMask:mask
+                                              handler:^NSEvent *(NSEvent *event) {
+                                                  (void)event;
+                                                  [weakSelf handleOutsideScreenClick];
+                                                  return event;
+                                              }];
+    self.outsideClickGlobalMonitor =
+        [NSEvent addGlobalMonitorForEventsMatchingMask:mask
+                                               handler:^(NSEvent *event) {
+                                                   (void)event;
+                                                   [weakSelf handleOutsideScreenClick];
+                                               }];
+}
+
+- (void)removeOutsideClickMonitors {
+    if (self.outsideClickLocalMonitor) {
+        [NSEvent removeMonitor:self.outsideClickLocalMonitor];
+        self.outsideClickLocalMonitor = nil;
+    }
+    if (self.outsideClickGlobalMonitor) {
+        [NSEvent removeMonitor:self.outsideClickGlobalMonitor];
+        self.outsideClickGlobalMonitor = nil;
+    }
+}
+
 - (void)handleEscape {
     if (self.openFolderId.length > 0) {
         [self exitFolderSavingTitle:YES];
@@ -785,6 +837,7 @@ static void MLLogMemory(NSString *tag) {
     [self.window orderFrontRegardless];
     [self.window makeKeyAndOrderFront:nil];
     [self installEscapeMonitor];
+    [self installOutsideClickMonitors];
     [self focusSearchField];
 
     /* Focus again after menu/activation settles */
@@ -877,6 +930,7 @@ static void MLLogMemory(NSString *tag) {
         return;
     }
     [self removeEscapeMonitor];
+    [self removeOutsideClickMonitors];
     self.showGeneration += 1;
     NSUInteger gen = self.showGeneration;
 
