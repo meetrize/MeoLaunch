@@ -83,6 +83,8 @@
 - (void)setBar:(MLTaskbarScreenBar *)bar frame:(NSRect)frame animated:(BOOL)animated;
 - (MLTaskbarScreenBar *)makeBarForScreen:(NSScreen *)screen;
 - (void)syncBarsToScreens;
+- (void)scheduleStartupVisibilityRechecks;
+- (void)scheduleFullscreenVisibilityCheck;
 - (void)updateVisibilitySafetyTimer;
 - (BOOL)isDesktopRevealArmed;
 - (void)measureDesktopRevealWithCenterCover:(CGFloat *)outCover onScreen:(NSInteger *)outOnScreen all:(NSInteger *)outAll;
