@@ -1,10 +1,10 @@
 #import "MLMinimizeInterceptor.h"
 
+#import "MLAXWindowHelper.h"
 #import "MLScreenGeometry.h"
 #import "MLTaskbarController.h"
 
 #import <ApplicationServices/ApplicationServices.h>
-#import <dlfcn.h>
 
 @interface MLMinimizeInterceptor ()
 @property (nonatomic, assign) CFMachPortRef tap;
@@ -16,70 +16,6 @@
 
 static CGPoint MLCocoaPointToAX(NSPoint cocoa) {
     return [MLScreenGeometry axPositionFromCocoaRect:NSMakeRect(cocoa.x, cocoa.y, 1, 1)];
-}
-
-static BOOL MLAXGetRole(AXUIElementRef el, CFStringRef attr, NSString **out) {
-    if (!el || !out) {
-        return NO;
-    }
-    CFTypeRef ref = NULL;
-    if (AXUIElementCopyAttributeValue(el, attr, &ref) != kAXErrorSuccess || !ref) {
-        return NO;
-    }
-    BOOL ok = NO;
-    if (CFGetTypeID(ref) == CFStringGetTypeID()) {
-        *out = [(__bridge NSString *)ref copy];
-        ok = YES;
-    }
-    CFRelease(ref);
-    return ok;
-}
-
-static AXUIElementRef MLAXCopyWindowElement(AXUIElementRef el) {
-    if (!el) {
-        return NULL;
-    }
-    CFTypeRef winRef = NULL;
-    if (AXUIElementCopyAttributeValue(el, kAXWindowAttribute, &winRef) == kAXErrorSuccess && winRef) {
-        return (AXUIElementRef)winRef;
-    }
-    AXUIElementRef cur = (AXUIElementRef)CFRetain(el);
-    for (int i = 0; i < 8; i++) {
-        NSString *role = nil;
-        MLAXGetRole(cur, kAXRoleAttribute, &role);
-        if ([role isEqualToString:(__bridge NSString *)kAXWindowRole]) {
-            return cur;
-        }
-        CFTypeRef parent = NULL;
-        if (AXUIElementCopyAttributeValue(cur, kAXParentAttribute, &parent) != kAXErrorSuccess || !parent) {
-            CFRelease(cur);
-            return NULL;
-        }
-        CFRelease(cur);
-        cur = (AXUIElementRef)parent;
-    }
-    CFRelease(cur);
-    return NULL;
-}
-
-static CGWindowID MLAXCopyCGWindowID(AXUIElementRef win) {
-    if (!win) {
-        return kCGNullWindowID;
-    }
-    typedef AXError (*MLAXGetWindowFn)(AXUIElementRef, CGWindowID *);
-    static MLAXGetWindowFn sFn;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        sFn = (MLAXGetWindowFn)dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow");
-    });
-    if (!sFn) {
-        return kCGNullWindowID;
-    }
-    CGWindowID wid = kCGNullWindowID;
-    if (sFn(win, &wid) != kAXErrorSuccess) {
-        return kCGNullWindowID;
-    }
-    return wid;
 }
 
 static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void *refcon) {
@@ -122,8 +58,8 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
 
     NSString *role = nil;
     NSString *subrole = nil;
-    MLAXGetRole(under, kAXRoleAttribute, &role);
-    MLAXGetRole(under, kAXSubroleAttribute, &subrole);
+    [MLAXWindowHelper copyStringAttribute:kAXRoleAttribute fromElement:under into:&role];
+    [MLAXWindowHelper copyStringAttribute:kAXSubroleAttribute fromElement:under into:&subrole];
     BOOL isMinimize = [role isEqualToString:(__bridge NSString *)kAXButtonRole] &&
                       [subrole isEqualToString:(__bridge NSString *)kAXMinimizeButtonSubrole];
     if (!isMinimize) {
@@ -132,7 +68,7 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         return event;
     }
 
-    AXUIElementRef win = MLAXCopyWindowElement(under);
+    AXUIElementRef win = [MLAXWindowHelper copyWindowElementFromElement:under];
     CFRelease(under);
     if (!win) {
         [self.taskbar handleDesktopPeekClickAtCocoaPoint:cocoaMouse];
@@ -143,7 +79,7 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
     AXUIElementGetPid(win, &pid);
 
     NSString *title = nil;
-    MLAXGetRole(win, kAXTitleAttribute, &title);
+    [MLAXWindowHelper copyStringAttribute:kAXTitleAttribute fromElement:win into:&title];
 
     NSRect cocoaFrame = NSZeroRect;
     if (![MLScreenGeometry readCocoaFrame:&cocoaFrame fromAXWindow:win]) {
@@ -151,7 +87,7 @@ static CGEventRef MLTapCallback(CGEventTapProxy proxy, CGEventType type, CGEvent
         return event;
     }
 
-    CGWindowID wid = MLAXCopyCGWindowID(win);
+    CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
     if (wid == kCGNullWindowID) {
         wid = 0;
     }

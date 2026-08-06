@@ -3,6 +3,7 @@
 @interface MLIconCache : NSObject
 
 @property (nonatomic, assign) NSUInteger maxEntries; /* default 128 */
+@property (nonatomic, assign) CGFloat iconPointSize; /* default 128 */
 
 /// Returns cached image or nil if not yet loaded.
 - (NSImage *)cachedIconForPath:(NSString *)path;

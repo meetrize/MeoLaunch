@@ -1,7 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <CoreGraphics/CoreGraphics.h>
 
-@class MLTaskbarIconCache;
+@class MLIconCache;
 @class MLTaskbarView;
 
 typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
@@ -64,7 +64,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 
 @property (nonatomic, weak) id<MLTaskbarViewDelegate> delegate;
 @property (nonatomic, copy) NSArray<MLTaskbarItem *> *items;
-@property (nonatomic, weak) MLTaskbarIconCache *iconCache;
+@property (nonatomic, weak) MLIconCache *iconCache;
 
 @property (nonatomic, assign) CGFloat iconSize;
 @property (nonatomic, assign) CGFloat spacing;

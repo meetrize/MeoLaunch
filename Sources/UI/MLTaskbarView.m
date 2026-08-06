@@ -1,7 +1,7 @@
 #import "MLTaskbarView.h"
 
 #import "MLStrings.h"
-#import "MLTaskbarIconCache.h"
+#import "MLIconCache.h"
 
 #import <ApplicationServices/ApplicationServices.h>
 

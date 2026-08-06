@@ -13,7 +13,7 @@
 #import "MLRunningAppsMonitor.h"
 #import "MLStrings.h"
 #import "MLTaskbarController.h"
-#import "MLTaskbarIconCache.h"
+#import "MLIconCache.h"
 #import "MLTaskbarPinStore.h"
 #import "MLTaskbarView.h"
 
@@ -39,7 +39,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLPrefsWindow *prefs;
 @property (nonatomic, strong) MLTaskbarPinStore *taskbarPins;
 @property (nonatomic, strong) MLRunningAppsMonitor *runningApps;
-@property (nonatomic, strong) MLTaskbarIconCache *taskbarIcons;
+@property (nonatomic, strong) MLIconCache *taskbarIcons;
 @property (nonatomic, strong) MLTaskbarController *taskbar;
 @property (nonatomic, strong) MLMemoryStatusController *memoryStatus;
 @property (nonatomic, strong) MLAppScanWatcher *appScanWatcher;
@@ -79,7 +79,9 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.taskbarPins = [[MLTaskbarPinStore alloc] init];
     [self.taskbarPins loadFromDisk];
     self.runningApps = [[MLRunningAppsMonitor alloc] init];
-    self.taskbarIcons = [[MLTaskbarIconCache alloc] init];
+    self.taskbarIcons = [[MLIconCache alloc] init];
+    self.taskbarIcons.maxEntries = 48;
+    self.taskbarIcons.iconPointSize = 32.0;
     self.taskbar = [[MLTaskbarController alloc] initWithPinStore:self.taskbarPins
                                                          monitor:self.runningApps
                                                        iconCache:self.taskbarIcons];
@@ -271,11 +273,14 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 - (void)rescanApps {
     NSArray<NSString *> *roots = [self.config expandedScanRoots];
     if (roots.count == 0) {
-        roots = @[
-            [@"~/Applications" stringByExpandingTildeInPath],
-            @"/Applications",
-            @"/System/Applications",
-        ];
+        NSMutableArray<NSString *> *fallback = [NSMutableArray array];
+        for (NSString *root in [MLConfigStore builtInScanRoots]) {
+            NSString *exp = [[root stringByExpandingTildeInPath] stringByStandardizingPath];
+            if (exp.length > 0) {
+                [fallback addObject:exp];
+            }
+        }
+        roots = fallback;
     }
 
     NSArray<NSString *> *rootsCopy = [roots copy];

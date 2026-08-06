@@ -4,7 +4,7 @@
 
 @class MLTaskbarPinStore;
 @class MLRunningAppsMonitor;
-@class MLTaskbarIconCache;
+@class MLIconCache;
 
 @protocol MLTaskbarAppActions;
 
@@ -18,7 +18,7 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 
 - (instancetype)initWithPinStore:(MLTaskbarPinStore *)pins
                          monitor:(MLRunningAppsMonitor *)monitor
-                       iconCache:(MLTaskbarIconCache *)icons;
+                       iconCache:(MLIconCache *)icons;
 
 - (void)start;
 - (void)stop;
@@ -26,11 +26,6 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 
 - (void)overlayWillShow;
 - (void)overlayDidHide;
-
-/** Screen-coordinate rect of the matching task item (for minimize animation). */
-- (NSRect)animationTargetRectForPID:(pid_t)pid
-                              title:(NSString *)title
-                       windowBounds:(CGRect)windowBounds;
 
 /** Called after a custom / soft minimize. */
 - (void)refreshAfterCustomMinimize;

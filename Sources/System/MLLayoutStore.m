@@ -1,10 +1,12 @@
 #import "MLLayoutStore.h"
 
+#import "MLDebouncedSave.h"
+
 NSNotificationName const MLLayoutStoreDidChangeNotification = @"MLLayoutStoreDidChangeNotification";
 
 @interface MLLayoutStore ()
 @property (nonatomic, assign, readwrite) MLLayout *layout;
-@property (nonatomic, strong) NSTimer *saveTimer;
+@property (nonatomic, strong) MLDebouncedSave *saveDebouncer;
 @end
 
 @implementation MLLayoutStore
@@ -32,7 +34,7 @@ NSNotificationName const MLLayoutStoreDidChangeNotification = @"MLLayoutStoreDid
 }
 
 - (void)dealloc {
-    [self.saveTimer invalidate];
+    [self.saveDebouncer cancel];
     if (_layout) {
         ml_layout_clear(_layout);
         free(_layout);
@@ -194,14 +196,18 @@ NSNotificationName const MLLayoutStoreDidChangeNotification = @"MLLayoutStoreDid
     return YES;
 }
 
+- (MLDebouncedSave *)saveDebouncer {
+    if (!_saveDebouncer) {
+        __weak typeof(self) weakSelf = self;
+        _saveDebouncer = [[MLDebouncedSave alloc] initWithAction:^{
+            [weakSelf saveToDisk];
+        }];
+    }
+    return _saveDebouncer;
+}
+
 - (void)scheduleSave {
-    [self.saveTimer invalidate];
-    __weak typeof(self) weakSelf = self;
-    self.saveTimer = [NSTimer scheduledTimerWithTimeInterval:0.3
-                                                     repeats:NO
-                                                       block:^(__unused NSTimer *timer) {
-                                                           [weakSelf saveToDisk];
-                                                       }];
+    [self.saveDebouncer schedule];
 }
 
 - (int)syncWithAppIndex:(const MLAppIndex *)index {

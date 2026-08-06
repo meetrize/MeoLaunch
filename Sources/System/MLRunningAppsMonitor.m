@@ -1,10 +1,10 @@
 #import "MLRunningAppsMonitor.h"
 
+#import "MLAXWindowHelper.h"
 #import "MLScreenGeometry.h"
 #import "MLWindowSoftState.h"
 
 #import <ApplicationServices/ApplicationServices.h>
-#import <dlfcn.h>
 
 NSNotificationName const MLRunningAppsDidChangeNotification = @"MLRunningAppsDidChangeNotification";
 NSNotificationName const MLRunningAppsFrontWindowDidChangeNotification =
@@ -394,17 +394,6 @@ static const MLPollOptions MLPollOptionsFast =
     return w;
 }
 
-typedef AXError (*MLAXGetWindowFn)(AXUIElementRef, CGWindowID *);
-
-static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
-    static MLAXGetWindowFn sFn;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        sFn = (MLAXGetWindowFn)dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow");
-    });
-    return sFn;
-}
-
 - (NSString *)appDisplayNameForPid:(pid_t)pid path:(NSString *)path {
     if (pid > 0) {
         NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
@@ -513,10 +502,6 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     if (!windows.count || !AXIsProcessTrusted()) {
         return;
     }
-    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
-    if (!getWid) {
-        return;
-    }
 
     NSMutableDictionary<NSNumber *, NSMutableArray<MLTaskbarWindowInfo *> *> *needByPid =
         [NSMutableDictionary dictionary];
@@ -551,8 +536,8 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         CFIndex count = CFArrayGetCount(axWindows);
         for (CFIndex i = 0; i < count; i++) {
             AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
-            CGWindowID wid = 0;
-            if (getWid(win, &wid) != kAXErrorSuccess || wid == 0) {
+            CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
+            if (wid == 0) {
                 continue;
             }
             CFTypeRef titleRef = NULL;
@@ -884,11 +869,7 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
                 continue;
             }
 
-            CGWindowID wid = 0;
-            MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
-            if (getWid) {
-                getWid(win, &wid);
-            }
+            CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
             /* Prefer cache by real window id — never glue a closed chat's stale id onto another window. */
             MLTaskbarWindowInfo *cached = (wid != 0) ? self.lastSeenWindows[@(wid)] : nil;
             if (!cached) {
@@ -948,10 +929,6 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     if (pid <= 0 || !AXIsProcessTrusted()) {
         return [NSSet set];
     }
-    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
-    if (!getWid) {
-        return [NSSet set];
-    }
     CFArrayRef axWindows = [self axWindowsArrayForPID:pid];
     if (!axWindows) {
         return [NSSet set];
@@ -960,8 +937,8 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     CFIndex count = CFArrayGetCount(axWindows);
     for (CFIndex i = 0; i < count; i++) {
         AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
-        CGWindowID wid = 0;
-        if (getWid(win, &wid) == kAXErrorSuccess && wid != 0) {
+        CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
+        if (wid != 0) {
             [out addObject:@(wid)];
         }
     }
@@ -1029,7 +1006,6 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
     if (pid <= 0 || !AXIsProcessTrusted()) {
         return [NSSet set];
     }
-    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
     CFArrayRef axWindows = [self axWindowsArrayForPID:pid];
     if (!axWindows) {
         return [NSSet set];
@@ -1050,8 +1026,8 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         if (!isMin) {
             continue;
         }
-        CGWindowID wid = 0;
-        if (getWid && getWid(win, &wid) == kAXErrorSuccess && wid != 0) {
+        CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
+        if (wid != 0) {
             [out addObject:@(wid)];
         }
     }
@@ -1385,18 +1361,7 @@ static void MLAXObserverCallback(AXObserverRef observer,
 }
 
 - (CGWindowID)cgWindowIDFromAXElement:(AXUIElementRef)el {
-    if (!el) {
-        return 0;
-    }
-    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
-    if (!getWid) {
-        return 0;
-    }
-    CGWindowID wid = 0;
-    if (getWid(el, &wid) != kAXErrorSuccess) {
-        return 0;
-    }
-    return wid;
+    return [MLAXWindowHelper windowIDForAXWindow:el];
 }
 
 - (CGWindowID)focusedWindowIDForPID:(pid_t)pid {
@@ -2048,49 +2013,6 @@ static void MLAXObserverCallback(AXObserverRef observer,
     [self pollWindows];
 }
 
-- (CGRect)cachedBoundsForWindowID:(CGWindowID)windowID {
-    if (windowID == 0) {
-        return CGRectZero;
-    }
-    if ([self.softState hasRestoreFrameForWindowID:windowID]) {
-        return NSRectToCGRect([self.softState restoreFrameForWindowID:windowID]);
-    }
-    MLTaskbarWindowInfo *seen = self.lastSeenWindows[@(windowID)];
-    return seen ? seen.bounds : CGRectZero;
-}
-
-- (CGRect)cachedBoundsForPID:(pid_t)pid title:(NSString *)title {
-    MLTaskbarWindowInfo *best = nil;
-    for (MLTaskbarWindowInfo *seen in self.lastSeenWindows.allValues) {
-        if (seen.pid != pid) {
-            continue;
-        }
-        CGRect bounds = seen.bounds;
-        if (seen.windowID != 0 && [self.softState hasRestoreFrameForWindowID:seen.windowID]) {
-            bounds = NSRectToCGRect([self.softState restoreFrameForWindowID:seen.windowID]);
-        }
-        if (title.length == 0) {
-            best = seen;
-            continue;
-        }
-        if ([seen.title isEqualToString:title] ||
-            (seen.title.length > 0 && [title hasPrefix:seen.title]) ||
-            (title.length > 0 && [seen.title hasPrefix:title])) {
-            return bounds;
-        }
-        if (!best) {
-            best = seen;
-        }
-    }
-    if (!best) {
-        return CGRectZero;
-    }
-    if (best.windowID != 0 && [self.softState hasRestoreFrameForWindowID:best.windowID]) {
-        return NSRectToCGRect([self.softState restoreFrameForWindowID:best.windowID]);
-    }
-    return best.bounds;
-}
-
 - (void)appendSoftMinimizedWindows:(NSMutableArray<MLTaskbarWindowInfo *> *)windows
                      seenWindowIDs:(NSMutableSet<NSNumber *> *)seen
                        withWindows:(NSMutableSet<NSString *> *)withWindows
@@ -2297,23 +2219,8 @@ static void MLAXObserverCallback(AXObserverRef observer,
                        axWindow:rec.axWindow];
 }
 
-- (void)clearSoftMinimizedWindowID:(CGWindowID)windowID {
-    [self.softState clearVerifiedWindowID:windowID];
-}
-
 - (BOOL)isSoftMinimizedWindowID:(CGWindowID)windowID {
     return [self.softState isSoftHiddenWindowID:windowID];
 }
-
-- (BOOL)hasFrozenRestoreBoundsForWindowID:(CGWindowID)windowID {
-    return [self.softState hasRestoreFrameForWindowID:windowID];
-}
-
-- (void)clearFrozenRestoreBoundsForWindowID:(CGWindowID)windowID {
-    /* Restore frame lives on soft record; clearing soft clears both. */
-    (void)windowID;
-}
-
-
 
 @end

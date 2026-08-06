@@ -1,5 +1,6 @@
 #import "MLOverlayController.h"
 
+#import "MLAppLauncher.h"
 #import "MLConfigStore.h"
 #import "MLDismissBackgroundView.h"
 #import "MLGridView.h"
@@ -1322,17 +1323,7 @@ doCommandBySelector:(SEL)commandSelector {
 }
 
 - (void)openApplicationAtPath:(NSString *)path {
-    NSURL *url = [NSURL fileURLWithPath:path isDirectory:YES];
-    NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
-    [[NSWorkspace sharedWorkspace] openApplicationAtURL:url
-                                          configuration:cfg
-                                      completionHandler:^(NSRunningApplication *app, NSError *error) {
-                                          if (error) {
-                                              NSLog(@"[MeoLaunch] launch error: %@", error);
-                                          } else {
-                                              NSLog(@"[MeoLaunch] launched %@", app.bundleIdentifier ?: path);
-                                          }
-                                      }];
+    [MLAppLauncher openApplicationAtPath:path];
 }
 
 - (void)gridViewDidClickBackground:(MLGridView *)gridView {

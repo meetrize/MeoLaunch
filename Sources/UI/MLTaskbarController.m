@@ -1,11 +1,13 @@
 #import "MLTaskbarController.h"
 
+#import "MLAppLauncher.h"
+#import "MLAXWindowHelper.h"
 #import "MLCGSAlpha.h"
 #import "MLDebugLog.h"
 #import "MLMinimizeInterceptor.h"
 #import "MLRunningAppsMonitor.h"
 #import "MLScreenGeometry.h"
-#import "MLTaskbarIconCache.h"
+#import "MLIconCache.h"
 #import "MLTaskbarPinStore.h"
 #import "MLTaskbarView.h"
 #import "MLWindowSoftState.h"
@@ -13,7 +15,6 @@
 
 #import <ApplicationServices/ApplicationServices.h>
 #import <QuartzCore/QuartzCore.h>
-#import <dlfcn.h>
 
 enum {
     MLTaskbarBarHeight = 40,
@@ -47,7 +48,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 @interface MLTaskbarController () <MLTaskbarViewDelegate>
 @property (nonatomic, strong) MLTaskbarPinStore *pinStore;
 @property (nonatomic, strong) MLRunningAppsMonitor *monitor;
-@property (nonatomic, strong) MLTaskbarIconCache *iconCache;
+@property (nonatomic, strong) MLIconCache *iconCache;
 @property (nonatomic, strong) NSMutableArray<MLTaskbarScreenBar *> *bars;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *displayNameCache;
 @property (nonatomic, strong) MLMinimizeInterceptor *minimizeInterceptor;
@@ -97,7 +98,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 
 - (instancetype)initWithPinStore:(MLTaskbarPinStore *)pins
                          monitor:(MLRunningAppsMonitor *)monitor
-                       iconCache:(MLTaskbarIconCache *)icons {
+                       iconCache:(MLIconCache *)icons {
     self = [super init];
     if (self) {
         _pinStore = pins;
@@ -2884,59 +2885,6 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     [self applyUserArmedPeekPresentationAnimated:YES];
 }
 
-- (NSRect)animationTargetRectForPID:(pid_t)pid
-                              title:(NSString *)title
-                       windowBounds:(CGRect)windowBounds {
-    NSScreen *screen = [self screenForWindowBounds:windowBounds];
-    if (!screen) {
-        screen = NSScreen.mainScreen;
-    }
-    if (!screen) {
-        return NSZeroRect;
-    }
-
-    NSNumber *sid = [[self class] screenIDForScreen:screen];
-    MLTaskbarScreenBar *bar = nil;
-    for (MLTaskbarScreenBar *b in self.bars) {
-        if ([b.screenID isEqualToNumber:sid]) {
-            bar = b;
-            break;
-        }
-    }
-    if (!bar.barView || !bar.window) {
-        NSRect vis = screen.visibleFrame;
-        return NSMakeRect(NSMidX(vis) - 40.0, NSMinY(vis) + 4.0, 80.0, 32.0);
-    }
-
-    NSInteger match = -1;
-    NSInteger pidFallback = -1;
-    for (NSInteger i = 0; i < (NSInteger)bar.barView.items.count; i++) {
-        MLTaskbarItem *item = bar.barView.items[(NSUInteger)i];
-        if (pid > 0 && item.pid == pid) {
-            if (pidFallback < 0) {
-                pidFallback = i;
-            }
-            if (title.length == 0 || item.title.length == 0 ||
-                [item.title isEqualToString:title] ||
-                [item.title hasPrefix:title] || [title hasPrefix:item.title]) {
-                match = i;
-                break;
-            }
-        }
-    }
-    if (match < 0) {
-        match = pidFallback;
-    }
-    if (match < 0) {
-        NSRect vis = bar.window.frame;
-        return NSMakeRect(NSMidX(vis) - 40.0, NSMinY(vis) + 4.0, 80.0, 32.0);
-    }
-
-    NSRect local = [bar.barView rectForItemAtIndex:match];
-    NSRect inWindow = [bar.barView convertRect:local toView:nil];
-    return [bar.window convertRectToScreen:inWindow];
-}
-
 - (void)refreshAfterCustomMinimize {
     [self.monitor pollNow];
     if (!self.itemsFrozenForDesktopReveal) {
@@ -2993,17 +2941,6 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID {
     [self.monitor markSoftMinimizedWindowID:windowID];
     [self rebuildItemsImmediate:YES];
-}
-
-typedef AXError (*MLAXGetWindowFn)(AXUIElementRef, CGWindowID *);
-
-static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
-    static MLAXGetWindowFn sFn;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        sFn = (MLAXGetWindowFn)dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow");
-    });
-    return sFn;
 }
 
 /**
@@ -3116,14 +3053,13 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         }
         return NULL;
     }
-    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
     AXUIElementRef found = NULL;
     CFArrayRef windows = (CFArrayRef)windowsRef;
     CFIndex count = CFArrayGetCount(windows);
     for (CFIndex i = 0; i < count; i++) {
         AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(windows, i);
-        CGWindowID axWid = 0;
-        if (getWid && getWid(win, &axWid) == kAXErrorSuccess && axWid == item.windowID) {
+        CGWindowID axWid = [MLAXWindowHelper windowIDForAXWindow:win];
+        if (axWid == item.windowID) {
             found = (AXUIElementRef)CFRetain(win);
             break;
         }
@@ -3328,7 +3264,6 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
 
     CFArrayRef windows = (CFArrayRef)windowsRef;
     CFIndex count = CFArrayGetCount(windows);
-    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
 
     AXUIElementRef matchedByID = NULL;
     AXUIElementRef matchedByTitle = NULL;
@@ -3349,8 +3284,8 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
             softAXStillListed = YES;
         }
 
-        CGWindowID axWid = 0;
-        if (getWid && getWid(win, &axWid) == kAXErrorSuccess && wid != 0 && axWid == wid) {
+        CGWindowID axWid = [MLAXWindowHelper windowIDForAXWindow:win];
+        if (wid != 0 && axWid == wid) {
             matchedByID = win;
         }
 
@@ -3519,19 +3454,7 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
 }
 
 - (void)openApplicationAtPath:(NSString *)path {
-    if (path.length == 0) {
-        return;
-    }
-    NSURL *url = [NSURL fileURLWithPath:path];
-    NSWorkspaceOpenConfiguration *cfg = [NSWorkspaceOpenConfiguration configuration];
-    cfg.activates = YES;
-    [[NSWorkspace sharedWorkspace] openApplicationAtURL:url
-                                          configuration:cfg
-                                      completionHandler:^(__unused NSRunningApplication *app, NSError *error) {
-                                          if (error) {
-                                              NSLog(@"[MeoLaunch] taskbar launch failed: %@", error);
-                                          }
-                                      }];
+    [MLAppLauncher openApplicationAtPath:path];
 }
 
 - (BOOL)isApplicationRunningAtPath:(NSString *)path {

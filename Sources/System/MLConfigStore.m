@@ -1,5 +1,7 @@
 #import "MLConfigStore.h"
 
+#import "MLDebouncedSave.h"
+
 #import <Carbon/Carbon.h>
 
 NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDidChangeNotification";
@@ -33,7 +35,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @property (nonatomic, assign, readwrite) NSUInteger overlayIconCacheMax;
 @property (nonatomic, assign, readwrite) BOOL memoryFreeEnabled;
 @property (nonatomic, assign, readwrite) NSTimeInterval memoryFreeIntervalSeconds;
-@property (nonatomic, strong) NSTimer *saveTimer;
+@property (nonatomic, strong) MLDebouncedSave *saveDebouncer;
 @end
 
 @implementation MLConfigStore
@@ -797,14 +799,18 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     [self scheduleSave];
 }
 
+- (MLDebouncedSave *)saveDebouncer {
+    if (!_saveDebouncer) {
+        __weak typeof(self) weakSelf = self;
+        _saveDebouncer = [[MLDebouncedSave alloc] initWithAction:^{
+            [weakSelf saveToDisk];
+        }];
+    }
+    return _saveDebouncer;
+}
+
 - (void)scheduleSave {
-    [self.saveTimer invalidate];
-    __weak typeof(self) weakSelf = self;
-    self.saveTimer = [NSTimer scheduledTimerWithTimeInterval:0.3
-                                                     repeats:NO
-                                                       block:^(__unused NSTimer *timer) {
-                                                           [weakSelf saveToDisk];
-                                                       }];
+    [self.saveDebouncer schedule];
 }
 
 @end

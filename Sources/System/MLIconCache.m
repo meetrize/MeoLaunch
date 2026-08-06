@@ -18,9 +18,14 @@
         _lru = [NSMutableArray array];
         _inflight = [NSMutableSet set];
         _maxEntries = 128;
+        _iconPointSize = 128.0;
         _queue = dispatch_queue_create("com.meetrice.meolaunch.iconcache", DISPATCH_QUEUE_SERIAL);
     }
     return self;
+}
+
+- (CGFloat)effectiveIconPointSize {
+    return self.iconPointSize > 0 ? self.iconPointSize : 128.0;
 }
 
 - (void)touchKey:(NSString *)path {
@@ -74,15 +79,14 @@
         gen = self.loadGeneration;
     }
 
+    CGFloat pointSize = [self effectiveIconPointSize];
     dispatch_async(self.queue, ^{
         NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-        [icon setSize:NSMakeSize(128, 128)];
+        [icon setSize:NSMakeSize(pointSize, pointSize)];
         NSImage *copy = [icon copy];
 
         @synchronized (self.cache) {
-            if (gen != self.loadGeneration) {
-                /* Purged while loading — drop result. */
-            } else if (copy) {
+            if (gen == self.loadGeneration && copy) {
                 self.cache[path] = copy;
                 [self touchKey:path];
                 [self evictIfNeeded];

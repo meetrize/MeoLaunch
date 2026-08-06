@@ -1,10 +1,12 @@
 #import "MLTaskbarPinStore.h"
 
+#import "MLDebouncedSave.h"
+
 NSNotificationName const MLTaskbarPinsDidChangeNotification = @"MLTaskbarPinsDidChangeNotification";
 
 @interface MLTaskbarPinStore ()
 @property (nonatomic, strong) NSMutableArray<NSString *> *pins;
-@property (nonatomic, strong) NSTimer *saveTimer;
+@property (nonatomic, strong) MLDebouncedSave *saveDebouncer;
 @end
 
 @implementation MLTaskbarPinStore
@@ -29,7 +31,7 @@ NSNotificationName const MLTaskbarPinsDidChangeNotification = @"MLTaskbarPinsDid
 }
 
 - (void)dealloc {
-    [self.saveTimer invalidate];
+    [self.saveDebouncer cancel];
 }
 
 - (NSArray<NSString *> *)pinnedPaths {
@@ -108,14 +110,18 @@ NSNotificationName const MLTaskbarPinsDidChangeNotification = @"MLTaskbarPinsDid
     return YES;
 }
 
+- (MLDebouncedSave *)saveDebouncer {
+    if (!_saveDebouncer) {
+        __weak typeof(self) weakSelf = self;
+        _saveDebouncer = [[MLDebouncedSave alloc] initWithAction:^{
+            [weakSelf saveToDisk];
+        }];
+    }
+    return _saveDebouncer;
+}
+
 - (void)scheduleSave {
-    [self.saveTimer invalidate];
-    __weak typeof(self) weakSelf = self;
-    self.saveTimer = [NSTimer scheduledTimerWithTimeInterval:0.3
-                                                     repeats:NO
-                                                       block:^(__unused NSTimer *timer) {
-                                                           [weakSelf saveToDisk];
-                                                       }];
+    [self.saveDebouncer schedule];
 }
 
 - (BOOL)pinPath:(NSString *)path {

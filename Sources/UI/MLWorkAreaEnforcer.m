@@ -1,11 +1,11 @@
 #import "MLWorkAreaEnforcer.h"
 
+#import "MLAXWindowHelper.h"
 #import "MLRunningAppsMonitor.h"
 #import "MLScreenGeometry.h"
 #import "MLWindowSoftState.h"
 
 #import <ApplicationServices/ApplicationServices.h>
-#import <dlfcn.h>
 
 enum {
     MLWorkAreaEdgeTol = 12,
@@ -20,33 +20,6 @@ enum {
 @end
 
 @implementation MLWorkAreaEnforcer
-
-typedef AXError (*MLAXGetWindowFn)(AXUIElementRef, CGWindowID *);
-
-static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
-    static MLAXGetWindowFn sFn;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        sFn = (MLAXGetWindowFn)dlsym(RTLD_DEFAULT, "_AXUIElementGetWindow");
-    });
-    return sFn;
-}
-
-static BOOL MLAXIsFullscreen(AXUIElementRef win) {
-    if (!win) {
-        return NO;
-    }
-    CFTypeRef ref = NULL;
-    if (AXUIElementCopyAttributeValue(win, CFSTR("AXFullScreen"), &ref) != kAXErrorSuccess || !ref) {
-        return NO;
-    }
-    BOOL fs = NO;
-    if (CFGetTypeID(ref) == CFBooleanGetTypeID()) {
-        fs = CFBooleanGetValue((CFBooleanRef)ref);
-    }
-    CFRelease(ref);
-    return fs;
-}
 
 /** Work rect = visibleFrame minus taskbar strip at the bottom. */
 static NSRect MLWorkRectForScreen(NSScreen *screen, CGFloat barHeight) {
@@ -272,7 +245,6 @@ static BOOL MLFrameLooksLikeZoomNeedingInset(NSRect frame, NSScreen *screen) {
         return;
     }
 
-    MLAXGetWindowFn getWid = MLResolvedAXGetWindow();
     self.applying = YES;
 
     for (NSNumber *pidKey in byPid) {
@@ -304,14 +276,11 @@ static BOOL MLFrameLooksLikeZoomNeedingInset(NSRect frame, NSScreen *screen) {
 
         for (CFIndex i = 0; i < count; i++) {
             AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
-            if (MLAXIsFullscreen(win)) {
+            if ([MLAXWindowHelper isFullscreen:win]) {
                 continue;
             }
 
-            CGWindowID wid = 0;
-            if (getWid) {
-                getWid(win, &wid);
-            }
+            CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
             if (wid != 0 && wantedIDs.count > 0 && ![wantedIDs containsObject:@(wid)]) {
                 continue;
             }

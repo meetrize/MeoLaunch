@@ -55,8 +55,6 @@ FOUNDATION_EXPORT NSString *const MLRunningAppsFrontWindowIDKey;
 - (CGWindowID)focusedWindowIDForPID:(pid_t)pid;
 /** AX title of the focused window (nil if unknown). */
 - (NSString *)focusedWindowTitleForPID:(pid_t)pid;
-- (CGRect)cachedBoundsForWindowID:(CGWindowID)windowID;
-- (CGRect)cachedBoundsForPID:(pid_t)pid title:(NSString *)title;
 /** Upsert last-seen frame; pass known AX windowID when available. */
 - (CGWindowID)rememberBounds:(CGRect)bounds
                       forPID:(pid_t)pid
@@ -64,10 +62,7 @@ FOUNDATION_EXPORT NSString *const MLRunningAppsFrontWindowIDKey;
                     windowID:(CGWindowID)windowID;
 
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID;
-- (void)clearSoftMinimizedWindowID:(CGWindowID)windowID;
 - (BOOL)isSoftMinimizedWindowID:(CGWindowID)windowID;
-- (BOOL)hasFrozenRestoreBoundsForWindowID:(CGWindowID)windowID;
-- (void)clearFrozenRestoreBoundsForWindowID:(CGWindowID)windowID;
 
 /** Convenience: mark soft-hidden with full metadata (preferred). axWindow is retained. */
 - (void)markSoftHiddenWindowID:(CGWindowID)windowID
