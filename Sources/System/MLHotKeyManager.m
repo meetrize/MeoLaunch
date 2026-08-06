@@ -1,6 +1,7 @@
 #import "MLHotKeyManager.h"
 
 #import "MLConfigStore.h"
+#import "MLHotKeyDisplay.h"
 
 #import <Carbon/Carbon.h>
 
@@ -104,7 +105,13 @@ static OSStatus MLHotKeyEventHandler(EventHandlerCallRef nextHandler,
     }
 
     self.registered = YES;
-    NSLog(@"[MeoLaunch] HotKey registered: ⌥Space (key=%u)", (unsigned)self.keyCode);
+    NSLog(@"[MeoLaunch] HotKey registered: %@ (key=%u)",
+          [MLHotKeyDisplay displayStringForKeyCode:self.keyCode
+                                           command:(self.modifiers & cmdKey) != 0
+                                            option:(self.modifiers & optionKey) != 0
+                                           control:(self.modifiers & controlKey) != 0
+                                             shift:(self.modifiers & shiftKey) != 0],
+          (unsigned)self.keyCode);
     return YES;
 }
 

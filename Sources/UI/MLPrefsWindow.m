@@ -3,6 +3,8 @@
 #import "MLConfigStore.h"
 #import "MLLaunchAtLogin.h"
 #import "MLScreenGeometry.h"
+#import "MLHotKeyRecorder.h"
+#import "MLHotKeyDisplay.h"
 #import "MLStrings.h"
 
 /** Top-down layout coordinates for the prefs form. */
@@ -39,6 +41,9 @@
 @property (nonatomic, strong) NSPopUpButton *cornerPopup;
 @property (nonatomic, strong) NSTextField *sizeLabel;
 @property (nonatomic, strong) NSTextField *sizeField;
+@property (nonatomic, strong) NSButton *hotkeyEnabled;
+@property (nonatomic, strong) NSTextField *hotkeyLabel;
+@property (nonatomic, strong) MLHotKeyRecorder *hotkeyRecorder;
 @property (nonatomic, strong) NSButton *taskbarEnabled;
 @property (nonatomic, strong) NSButton *memoryFreeEnabled;
 @property (nonatomic, strong) NSTextField *pollLabel;
@@ -243,6 +248,23 @@
     [c addSubview:self.sizeField];
     y += 36;
 
+    self.hotkeyEnabled = [NSButton checkboxWithTitle:@""
+                                              target:self
+                                              action:@selector(prefsChanged:)];
+    self.hotkeyEnabled.frame = NSMakeRect(pad, y, 320, 24);
+    [c addSubview:self.hotkeyEnabled];
+    y += 32;
+
+    self.hotkeyLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    [c addSubview:self.hotkeyLabel];
+    self.hotkeyRecorder = [[MLHotKeyRecorder alloc] initWithFrame:NSMakeRect(140, y - 2, 220, 28)];
+    __weak typeof(self) weakSelf = self;
+    self.hotkeyRecorder.onChange = ^{
+        [weakSelf hotkeyRecorderChanged];
+    };
+    [c addSubview:self.hotkeyRecorder];
+    y += 36;
+
     self.taskbarEnabled = [NSButton checkboxWithTitle:@""
                                                target:self
                                                action:@selector(prefsChanged:)];
@@ -409,6 +431,8 @@
     }
 
     self.sizeLabel.stringValue = [MLStrings t:@"prefs.hot_size"];
+    self.hotkeyEnabled.title = [MLStrings t:@"prefs.hotkey_enabled"];
+    self.hotkeyLabel.stringValue = [MLStrings t:@"prefs.hotkey_shortcut"];
     self.taskbarEnabled.title = [MLStrings t:@"prefs.taskbar_enabled"];
     self.memoryFreeEnabled.title = [MLStrings t:@"prefs.memory_free_enabled"];
     self.pollLabel.stringValue = [MLStrings t:@"prefs.window_poll"];
@@ -603,7 +627,9 @@
 }
 
 - (void)prefsChanged:(id)sender {
-    (void)sender;
+    if (sender == self.hotkeyEnabled) {
+        self.hotkeyRecorder.enabled = (self.hotkeyEnabled.state == NSControlStateValueOn);
+    }
     [self applyLive];
 }
 
@@ -775,6 +801,13 @@
     self.hotCornerEnabled.state = self.config.hotCornerEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     [self selectPopupForPosition:self.config.hotCornerPosition];
     self.sizeField.stringValue = [NSString stringWithFormat:@"%.0f", self.config.hotCornerSizePt];
+    self.hotkeyEnabled.state = self.config.hotkeyEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    [self.hotkeyRecorder setKeyCode:self.config.hotkeyKeyCode
+                            command:self.config.hotkeyCommand
+                             option:self.config.hotkeyOption
+                            control:self.config.hotkeyControl
+                              shift:self.config.hotkeyShift];
+    self.hotkeyRecorder.enabled = self.config.hotkeyEnabled;
     self.taskbarEnabled.state = self.config.taskbarEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     self.memoryFreeEnabled.state = self.config.memoryFreeEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     NSTimeInterval poll = self.config.taskbarWindowPollSeconds;
@@ -810,10 +843,21 @@
                                  sizePt:size
                                 delayMs:self.config.hotCornerDelayMs];
 
+    [self.config updateHotkeyEnabled:(self.hotkeyEnabled.state == NSControlStateValueOn)
+                             keyCode:self.hotkeyRecorder.capturedKeyCode
+                              option:self.hotkeyRecorder.capturedOption
+                             command:self.hotkeyRecorder.capturedCommand
+                             control:self.hotkeyRecorder.capturedControl
+                               shift:self.hotkeyRecorder.capturedShift];
+
     [self.config updateTaskbarEnabled:(self.taskbarEnabled.state == NSControlStateValueOn)];
     [self.config updateMemoryFreeEnabled:(self.memoryFreeEnabled.state == NSControlStateValueOn)];
     [self.config updateTaskbarWindowPollSeconds:[self pollSecondsFromSlider]];
     [self.config updateOverlayIconCacheMax:(NSUInteger)lround(self.iconCacheSlider.doubleValue)];
+}
+
+- (void)hotkeyRecorderChanged {
+    [self applyLive];
 }
 
 - (void)show {

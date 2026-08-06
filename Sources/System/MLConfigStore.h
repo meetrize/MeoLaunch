@@ -76,6 +76,12 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
                       position:(MLHotCornerPosition)position
                         sizePt:(CGFloat)sizePt
                        delayMs:(NSInteger)delayMs;
+- (void)updateHotkeyEnabled:(BOOL)enabled
+                    keyCode:(NSInteger)keyCode
+                     option:(BOOL)option
+                    command:(BOOL)command
+                    control:(BOOL)control
+                      shift:(BOOL)shift;
 - (void)updateLanguage:(MLLanguage)language;
 
 /** Resolve preferred overlay screen; falls back to main / first if fixed ID missing. */

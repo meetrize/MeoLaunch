@@ -37,6 +37,7 @@
 @property (nonatomic, strong) NSView *extractDropZone;
 @property (nonatomic, strong) NSTextField *extractDropLabel;
 @property (nonatomic, assign) BOOL extractDropHighlighted;
+@property (nonatomic, assign) BOOL extractDropZoneActive;
 @property (nonatomic, copy) NSString *openFolderId;
 @property (nonatomic, assign) BOOL focusFolderTitleOnEnter;
 @property (nonatomic, assign) const MLAppIndex *appIndex;
@@ -278,6 +279,10 @@ static void MLLogMemory(NSString *tag) {
         self.gridView.visibleCount = self.filterCount;
     }
 
+    if (!self.gridView.allowsExtractOnDragOutside) {
+        [self teardownExtractDropZonePresentation];
+    }
+
     if (!preservePage) {
         [self.gridView clearSelection];
     }
@@ -402,6 +407,8 @@ static void MLLogMemory(NSString *tag) {
     [self.extractDropZone removeFromSuperview];
     self.extractDropZone = nil;
     self.extractDropLabel = nil;
+    self.extractDropZoneActive = NO;
+    self.extractDropHighlighted = NO;
     [self.pageIndicator removeFromSuperview];
     self.pageIndicator = nil;
 
@@ -463,7 +470,7 @@ static void MLLogMemory(NSString *tag) {
         gridTop = topPad + searchH + 12.0 + titleH + searchGap;
     }
 
-    if (self.extractDropZone) {
+    if (self.extractDropZone && self.extractDropZoneActive) {
         CGFloat zoneW = 260.0;
         CGFloat zoneH = 44.0;
         /* Sit in the search-bar band so the extract affordance reads as “top chrome”. */
@@ -475,6 +482,9 @@ static void MLLogMemory(NSString *tag) {
         if (self.extractDropLabel) {
             self.extractDropLabel.frame = NSInsetRect(self.extractDropZone.bounds, 8.0, 6.0);
         }
+        [content addSubview:self.extractDropZone
+                positioned:NSWindowAbove
+                relativeTo:self.folderTitleField ?: self.searchField];
     }
 
     self.gridView.frame = NSMakeRect(0,
@@ -506,9 +516,6 @@ static void MLLogMemory(NSString *tag) {
     [content addSubview:self.searchField positioned:NSWindowAbove relativeTo:self.pageIndicator];
     if (self.folderTitleField) {
         [content addSubview:self.folderTitleField positioned:NSWindowAbove relativeTo:self.searchField];
-    }
-    if (self.extractDropZone) {
-        [content addSubview:self.extractDropZone positioned:NSWindowAbove relativeTo:self.folderTitleField ?: self.searchField];
     }
     [self syncPageIndicator];
 }
@@ -610,7 +617,7 @@ static void MLLogMemory(NSString *tag) {
     self.extractDropLabel.stringValue = @"拖到此处移出";
     self.extractDropLabel.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     [self.extractDropZone addSubview:self.extractDropLabel];
-    [content addSubview:self.extractDropZone];
+    /* Added to hierarchy only while folder drag-extract is active. */
 
     self.pageIndicator = [[MLPageIndicator alloc] initWithFrame:NSMakeRect(0, 0, 200, 16)];
     self.pageIndicator.delegate = self;
@@ -873,6 +880,8 @@ static void MLLogMemory(NSString *tag) {
     NSUInteger gen = self.showGeneration;
 
     [self ensureWindow];
+    [self.gridView cancelActiveDrag];
+    [self resetExtractDropChrome];
 
     NSScreen *screen = [self preferredScreen];
     if (screen) {
@@ -957,6 +966,8 @@ static void MLLogMemory(NSString *tag) {
 - (void)finishHide {
     [self.searchDebounceTimer invalidate];
     self.searchDebounceTimer = nil;
+    [self.gridView cancelActiveDrag];
+    [self resetExtractDropChrome];
     if (self.openFolderId.length > 0) {
         [self commitFolderTitleIfNeeded];
         self.openFolderId = nil;
@@ -1153,14 +1164,37 @@ doCommandBySelector:(SEL)commandSelector {
     return -1;
 }
 
+- (void)teardownExtractDropZonePresentation {
+    self.extractDropZoneActive = NO;
+    self.extractDropHighlighted = NO;
+    if (!self.extractDropZone) {
+        return;
+    }
+    [self.extractDropZone.layer removeAllAnimations];
+    self.extractDropZone.layer.transform = CATransform3DIdentity;
+    [self.extractDropZone removeFromSuperview];
+    self.extractDropZone.hidden = YES;
+    self.extractDropZone.alphaValue = 0.0;
+    if (self.searchField) {
+        self.searchField.alphaValue = 1.0;
+    }
+    if (self.folderTitleField) {
+        self.folderTitleField.alphaValue = 1.0;
+    }
+}
+
+- (void)resetExtractDropChrome {
+    [self teardownExtractDropZonePresentation];
+}
+
 - (void)resetChromeAlpha {
     if (!self.window) {
         return;
     }
+    [self resetExtractDropChrome];
     self.gridView.alphaValue = 1.0;
     self.blurView.alphaValue = 1.0;
     self.tintView.alphaValue = 1.0;
-    self.searchField.alphaValue = 1.0;
     self.pageIndicator.alphaValue = 1.0;
     self.dismissBackground.alphaValue = 1.0;
 }
@@ -1435,43 +1469,15 @@ doCommandBySelector:(SEL)commandSelector {
         return;
     }
     if (!visible) {
-        [self applyExtractDropHighlight:NO];
-        [self.extractDropZone.layer removeAnimationForKey:@"ml.extractPulse"];
-        [self.extractDropZone.layer removeAnimationForKey:@"ml.extractHover"];
-    }
-
-    if (!animated) {
-        if (visible) {
-            self.extractDropZone.hidden = NO;
-            self.extractDropZone.alphaValue = 1.0;
-            self.searchField.alphaValue = 0.0;
-            if (self.folderTitleField && !self.folderTitleField.hidden) {
-                self.folderTitleField.alphaValue = 0.35;
-            }
-            [self startExtractDropPulse];
-        } else {
-            self.extractDropZone.alphaValue = 0.0;
-            self.extractDropZone.hidden = YES;
-            self.searchField.alphaValue = 1.0;
-            self.folderTitleField.alphaValue = 1.0;
+        if (!self.extractDropZoneActive) {
+            return;
         }
-        return;
-    }
-
-    if (visible) {
-        self.extractDropZone.hidden = NO;
-        self.extractDropZone.alphaValue = 0.0;
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-            ctx.duration = 0.22;
-            ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
-            self.extractDropZone.animator.alphaValue = 1.0;
-            self.searchField.animator.alphaValue = 0.0;
-            if (self.folderTitleField && !self.folderTitleField.hidden) {
-                self.folderTitleField.animator.alphaValue = 0.35;
-            }
-        } completionHandler:nil];
-        [self startExtractDropPulse];
-    } else {
+        [self applyExtractDropHighlight:NO];
+        if (!animated || !self.visible) {
+            [self teardownExtractDropZonePresentation];
+            return;
+        }
+        __weak typeof(self) weakSelf = self;
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
             ctx.duration = 0.16;
             ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
@@ -1479,9 +1485,42 @@ doCommandBySelector:(SEL)commandSelector {
             self.searchField.animator.alphaValue = 1.0;
             self.folderTitleField.animator.alphaValue = 1.0;
         } completionHandler:^{
-            self.extractDropZone.hidden = YES;
+            [weakSelf teardownExtractDropZonePresentation];
         }];
+        return;
     }
+
+    if (!self.visible || !self.gridView.allowsExtractOnDragOutside || !self.openFolderId.length) {
+        return;
+    }
+
+    self.extractDropZoneActive = YES;
+    [self layoutChrome];
+    [self applyExtractDropHighlight:NO];
+
+    if (!animated) {
+        self.extractDropZone.hidden = NO;
+        self.extractDropZone.alphaValue = 1.0;
+        self.searchField.alphaValue = 0.0;
+        if (self.folderTitleField && !self.folderTitleField.hidden) {
+            self.folderTitleField.alphaValue = 0.35;
+        }
+        [self startExtractDropPulse];
+        return;
+    }
+
+    self.extractDropZone.hidden = NO;
+    self.extractDropZone.alphaValue = 0.0;
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 0.22;
+        ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+        self.extractDropZone.animator.alphaValue = 1.0;
+        self.searchField.animator.alphaValue = 0.0;
+        if (self.folderTitleField && !self.folderTitleField.hidden) {
+            self.folderTitleField.animator.alphaValue = 0.35;
+        }
+    } completionHandler:nil];
+    [self startExtractDropPulse];
 }
 
 - (void)gridViewDidBeginDragging:(MLGridView *)gridView {
@@ -1494,12 +1533,12 @@ doCommandBySelector:(SEL)commandSelector {
 
 - (void)gridViewDidEndDragging:(MLGridView *)gridView {
     (void)gridView;
-    [self setExtractDropZoneVisible:NO animated:YES];
+    [self setExtractDropZoneVisible:NO animated:NO];
 }
 
 - (void)gridView:(MLGridView *)gridView dragMovedToWindowPoint:(NSPoint)windowPoint {
     (void)gridView;
-    if (self.extractDropZone.hidden || self.extractDropZone.alphaValue < 0.05) {
+    if (!self.extractDropZoneActive || self.extractDropZone.alphaValue < 0.05) {
         return;
     }
     NSPoint p = [self.extractDropZone convertPoint:windowPoint fromView:nil];
@@ -1526,7 +1565,7 @@ doCommandBySelector:(SEL)commandSelector {
 - (BOOL)gridView:(MLGridView *)gridView isExtractDropAtWindowPoint:(NSPoint)windowPoint {
     (void)gridView;
     if (!self.gridView.allowsExtractOnDragOutside ||
-        self.extractDropZone.hidden ||
+        !self.extractDropZoneActive ||
         self.extractDropZone.alphaValue < 0.05) {
         return NO;
     }

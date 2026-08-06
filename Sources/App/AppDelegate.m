@@ -3,6 +3,7 @@
 #import "MLConfigStore.h"
 #import "MLAppScanWatcher.h"
 #import "MLStandardEditMenu.h"
+#import "MLHotKeyDisplay.h"
 #import "MLHotCornerMonitor.h"
 #import "MLHotKeyManager.h"
 #import "MLLayoutStore.h"
@@ -127,6 +128,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 - (void)configDidChange:(NSNotification *)note {
     (void)note;
+    [self refreshStatusMenuTitles];
     [self.hotCorner applyConfig:self.config];
     if (self.config.hotCornerEnabled &&
         self.config.hotCornerPosition != MLHotCornerPositionOff &&
@@ -354,8 +356,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
     NSMenu *menu = [[NSMenu alloc] initWithTitle:@"MeoLaunch"];
     self.showOverlayItem = [[NSMenuItem alloc] initWithTitle:@""
-                                                      action:@selector(showOverlay:)
-                                               keyEquivalent:@"s"];
+                                                      action:@selector(toggleOverlay)
+                                               keyEquivalent:@""];
     self.retryHotCornerItem = [[NSMenuItem alloc] initWithTitle:@""
                                                          action:@selector(retryHotCorner:)
                                                   keyEquivalent:@""];
@@ -380,7 +382,12 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.prefsItem.title = [MLStrings t:@"menu.preferences"];
     self.quitItem.title = [MLStrings t:@"menu.quit"];
     if (self.statusItem.button) {
-        self.statusItem.button.toolTip = [MLStrings t:@"menu.tooltip"];
+        NSString *tip = [MLStrings t:@"menu.tooltip"];
+        NSString *hk = [MLHotKeyDisplay displayStringFromConfig:self.config];
+        if (self.config.hotkeyEnabled && hk.length > 0 && ![hk isEqualToString:@"—"]) {
+            tip = [NSString stringWithFormat:@"%@ (%@)", tip, hk];
+        }
+        self.statusItem.button.toolTip = tip;
     }
 }
 
@@ -499,7 +506,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 - (void)hotKeyManagerDidFire:(MLHotKeyManager *)manager {
     (void)manager;
-    NSLog(@"[MeoLaunch] ⌥Space toggle");
+    NSLog(@"[MeoLaunch] hotkey toggle (%@)", [MLHotKeyDisplay displayStringFromConfig:self.config]);
     [self toggleOverlay];
 }
 

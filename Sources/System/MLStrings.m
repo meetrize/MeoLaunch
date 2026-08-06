@@ -14,8 +14,8 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
     sLanguage = [self systemPreferredLanguage];
     sTable = @{
         @"menu.show_overlay" : @{
-            @"en" : @"Show Overlay",
-            @"zh" : @"显示启动器",
+            @"en" : @"Toggle Overlay",
+            @"zh" : @"切换启动器",
         },
         @"menu.retry_hot_corner" : @{
             @"en" : @"Retry Hot Corner Permission",
@@ -30,8 +30,8 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"zh" : @"退出 MeoLaunch",
         },
         @"menu.tooltip" : @{
-            @"en" : @"MeoLaunch (⌥Space)",
-            @"zh" : @"MeoLaunch（⌥Space）",
+            @"en" : @"MeoLaunch",
+            @"zh" : @"MeoLaunch",
         },
         @"taskbar.pin" : @{
             @"en" : @"Pin",
@@ -169,6 +169,18 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Hot size (pt)",
             @"zh" : @"热区大小 (pt)",
         },
+        @"prefs.hotkey_enabled" : @{
+            @"en" : @"Overlay shortcut enabled",
+            @"zh" : @"启用启动器快捷键",
+        },
+        @"prefs.hotkey_shortcut" : @{
+            @"en" : @"Overlay shortcut",
+            @"zh" : @"启动器快捷键",
+        },
+        @"prefs.hotkey_record_prompt" : @{
+            @"en" : @"Press shortcut…",
+            @"zh" : @"按下快捷键…",
+        },
         @"prefs.taskbar_enabled" : @{
             @"en" : @"Show taskbar",
             @"zh" : @"显示任务栏",
@@ -250,8 +262,8 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"zh" : @"需要「辅助功能」权限",
         },
         @"a11y.body" : @{
-            @"en" : @"MeoLaunch uses a hot corner to show your apps. Allow MeoLaunch in System Settings → Privacy & Security → Accessibility.\n\nWithout permission you can still open it from the menu bar or ⌥Space.",
-            @"zh" : @"MeoLaunch 用触发角唤起应用列表。请在「系统设置 → 隐私与安全性 → 辅助功能」中允许 MeoLaunch。\n\n未授权时仍可通过菜单栏或 ⌥Space 打开。",
+            @"en" : @"MeoLaunch uses a hot corner to show your apps. Allow MeoLaunch in System Settings → Privacy & Security → Accessibility.\n\nWithout permission you can still open it from the menu bar or the overlay keyboard shortcut.",
+            @"zh" : @"MeoLaunch 用触发角唤起应用列表。请在「系统设置 → 隐私与安全性 → 辅助功能」中允许 MeoLaunch。\n\n未授权时仍可通过菜单栏或启动器快捷键打开。",
         },
         @"a11y.open_settings" : @{
             @"en" : @"Open System Settings",

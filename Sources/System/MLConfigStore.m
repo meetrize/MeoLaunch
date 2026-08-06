@@ -1,5 +1,7 @@
 #import "MLConfigStore.h"
 
+#import <Carbon/Carbon.h>
+
 NSNotificationName const MLConfigStoreDidChangeNotification = @"MLConfigStoreDidChangeNotification";
 NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     @"MLConfigStoreScanRootsDidChangeNotification";
@@ -188,11 +190,11 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.hotCornerDelayMs = 0;
 
     self.hotkeyEnabled = YES;
-    self.hotkeyKeyCode = 49;
+    self.hotkeyKeyCode = kVK_ANSI_8;
     self.hotkeyOption = YES;
-    self.hotkeyCommand = NO;
+    self.hotkeyCommand = YES;
     self.hotkeyControl = NO;
-    self.hotkeyShift = NO;
+    self.hotkeyShift = YES;
 
     self.wheelThreshold = 0.15;
     self.fadeMs = 100;
@@ -700,6 +702,36 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.hotCornerPosition = position;
     self.hotCornerSizePt = size;
     self.hotCornerDelayMs = delay;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateHotkeyEnabled:(BOOL)enabled
+                    keyCode:(NSInteger)keyCode
+                     option:(BOOL)option
+                    command:(BOOL)command
+                    control:(BOOL)control
+                      shift:(BOOL)shift {
+    if (keyCode < 0) {
+        keyCode = kVK_ANSI_8;
+    }
+    if (!option && !command && !control && !shift) {
+        option = YES;
+    }
+    if (self.hotkeyEnabled == enabled &&
+        self.hotkeyKeyCode == keyCode &&
+        self.hotkeyOption == option &&
+        self.hotkeyCommand == command &&
+        self.hotkeyControl == control &&
+        self.hotkeyShift == shift) {
+        return;
+    }
+    self.hotkeyEnabled = enabled;
+    self.hotkeyKeyCode = keyCode;
+    self.hotkeyOption = option;
+    self.hotkeyCommand = command;
+    self.hotkeyControl = control;
+    self.hotkeyShift = shift;
     [self notifyChanged];
     [self scheduleSave];
 }

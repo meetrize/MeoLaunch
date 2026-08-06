@@ -65,4 +65,7 @@
 /// Brief spring/glow on a cell after merge or add-to-folder.
 - (void)pulseVisibleIndex:(NSInteger)vis;
 
+/** Ends an in-progress drag without committing layout changes. */
+- (void)cancelActiveDrag;
+
 @end

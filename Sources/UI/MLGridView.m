@@ -1105,6 +1105,10 @@ enum { MLFolderCompositeMaxEntries = 16 };
     }
 }
 
+- (void)cancelActiveDrag {
+    [self endDragVisuals];
+}
+
 - (CGFloat)edgePageFlipBandWidth {
     CGFloat w = NSWidth(self.bounds);
     return MAX(48.0, MIN(56.0, w * 0.06));
