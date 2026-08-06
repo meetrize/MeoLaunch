@@ -18,10 +18,6 @@
 - (void)gridView:(MLGridView *)gridView didAddItem:(NSInteger)fromIndex toFolderAt:(NSInteger)folderIndex;
 - (void)gridView:(MLGridView *)gridView didActivateFolderId:(NSString *)folderId;
 - (void)gridView:(MLGridView *)gridView didExtractItemAt:(NSInteger)index;
-- (void)gridViewDidBeginDragging:(MLGridView *)gridView;
-- (void)gridViewDidEndDragging:(MLGridView *)gridView;
-- (void)gridView:(MLGridView *)gridView dragMovedToWindowPoint:(NSPoint)windowPoint;
-- (BOOL)gridView:(MLGridView *)gridView isExtractDropAtWindowPoint:(NSPoint)windowPoint;
 @end
 
 @interface MLGridView : NSView

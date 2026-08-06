@@ -7,6 +7,9 @@
 #import <dlfcn.h>
 
 NSNotificationName const MLRunningAppsDidChangeNotification = @"MLRunningAppsDidChangeNotification";
+NSNotificationName const MLRunningAppsFrontWindowDidChangeNotification =
+    @"MLRunningAppsFrontWindowDidChangeNotification";
+NSString *const MLRunningAppsFrontWindowIDKey = @"MLRunningAppsFrontWindowIDKey";
 
 @implementation MLTaskbarWindowInfo
 @end
@@ -41,6 +44,10 @@ NSNotificationName const MLRunningAppsDidChangeNotification = @"MLRunningAppsDid
 @property (nonatomic, copy) NSString *lastCensusToken;
 @property (nonatomic, assign) NSTimeInterval censusBoostUntil;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSValue *> *pollAXWindowsByPid;
+/** Fast AX focus poll when front app has multiple windows (same-app switch). */
+@property (nonatomic, strong) NSTimer *focusPollTimer;
+@property (nonatomic, assign) CGWindowID lastPublishedFocusedWID;
+@property (nonatomic, assign) pid_t lastPublishedFocusedPID;
 @end
 
 /** Per-process AXObserver (window create/destroy/miniaturize/title). */
@@ -185,6 +192,7 @@ static const MLPollOptions MLPollOptionsFast =
     self.lastFingerprint = fp;
     [[NSNotificationCenter defaultCenter] postNotificationName:MLRunningAppsDidChangeNotification
                                                         object:self];
+    [self updateFocusPollTimer];
 }
 
 - (NSString *)fingerprintForPaths:(NSArray<NSString *> *)paths
@@ -1251,6 +1259,7 @@ static MLAXGetWindowFn MLResolvedAXGetWindow(void) {
         /* Keep census in sync even when snapshot fingerprint is unchanged. */
         self.lastCensusToken = [self computeWindowCensusToken];
         [self endPollAXWindowsCache];
+        [self updateFocusPollTimer];
         return;
     }
     [self publishSnapshot:snap fingerprint:fp];
@@ -1306,6 +1315,20 @@ static void MLAXObserverCallback(AXObserverRef observer,
     if (CFEqual(notification, kAXTitleChangedNotification)) {
         [self optimisticUpdateTitleFromElement:element];
         [self scheduleStructuralFastPoll];
+        return;
+    }
+    if (CFEqual(notification, kAXFocusedWindowChangedNotification)) {
+        CGWindowID wid = 0;
+        if (element) {
+            CFTypeRef focusedRef = NULL;
+            if (AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute, &focusedRef) ==
+                    kAXErrorSuccess &&
+                focusedRef) {
+                wid = [self cgWindowIDFromAXElement:(AXUIElementRef)focusedRef];
+                CFRelease(focusedRef);
+            }
+        }
+        [self publishFocusedWindowChange:wid pid:0];
         return;
     }
     if (CFEqual(notification, kAXMovedNotification) || CFEqual(notification, kAXResizedNotification)) {
@@ -1374,6 +1397,149 @@ static void MLAXObserverCallback(AXObserverRef observer,
         return 0;
     }
     return wid;
+}
+
+- (CGWindowID)focusedWindowIDForPID:(pid_t)pid {
+    if (pid <= 0 || !AXIsProcessTrusted()) {
+        return 0;
+    }
+    AXUIElementRef app = AXUIElementCreateApplication(pid);
+    if (!app) {
+        return 0;
+    }
+    CGWindowID wid = 0;
+    CFTypeRef focusedRef = NULL;
+    if (AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, &focusedRef) == kAXErrorSuccess &&
+        focusedRef) {
+        wid = [self cgWindowIDFromAXElement:(AXUIElementRef)focusedRef];
+        CFRelease(focusedRef);
+    }
+    CFRelease(app);
+    return wid;
+}
+
+- (NSString *)focusedWindowTitleForPID:(pid_t)pid {
+    if (pid <= 0 || !AXIsProcessTrusted()) {
+        return nil;
+    }
+    AXUIElementRef app = AXUIElementCreateApplication(pid);
+    if (!app) {
+        return nil;
+    }
+    NSString *title = nil;
+    CFTypeRef focusedRef = NULL;
+    if (AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, &focusedRef) == kAXErrorSuccess &&
+        focusedRef) {
+        CFTypeRef titleRef = NULL;
+        if (AXUIElementCopyAttributeValue((AXUIElementRef)focusedRef, kAXTitleAttribute, &titleRef) ==
+                kAXErrorSuccess &&
+            titleRef) {
+            if (CFGetTypeID(titleRef) == CFStringGetTypeID()) {
+                title = [(__bridge NSString *)titleRef copy];
+            }
+            CFRelease(titleRef);
+        }
+        CFRelease(focusedRef);
+    }
+    CFRelease(app);
+    return title;
+}
+
+- (NSInteger)onScreenWindowCountForPID:(pid_t)pid {
+    if (pid <= 0) {
+        return 0;
+    }
+    NSInteger n = 0;
+    for (MLTaskbarWindowInfo *w in self.snapshot.windows) {
+        if (w.pid == pid && !w.minimized && w.windowID != 0) {
+            n++;
+        }
+    }
+    return n;
+}
+
+- (void)publishFocusedWindowChange:(CGWindowID)wid pid:(pid_t)hintPid {
+    if (!self.running) {
+        return;
+    }
+    pid_t pid = hintPid;
+    if (pid <= 0) {
+        NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        pid = front.processIdentifier;
+    }
+    if (wid == 0 && pid > 0) {
+        wid = [self focusedWindowIDForPID:pid];
+    }
+    if (wid == 0) {
+        return;
+    }
+    if (wid == self.lastPublishedFocusedWID && pid == self.lastPublishedFocusedPID) {
+        return;
+    }
+    self.lastPublishedFocusedWID = wid;
+    self.lastPublishedFocusedPID = pid;
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:MLRunningAppsFrontWindowDidChangeNotification
+                      object:self
+                    userInfo:@{ MLRunningAppsFrontWindowIDKey: @(wid) }];
+}
+
+- (void)pollFocusedWindowIfChanged {
+    if (!self.running || !AXIsProcessTrusted()) {
+        return;
+    }
+    NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    if (!front || front.isTerminated || front.processIdentifier <= 0) {
+        return;
+    }
+    if (front.activationPolicy != NSApplicationActivationPolicyRegular) {
+        return;
+    }
+    if (self.selfBundleID.length > 0 &&
+        [front.bundleIdentifier isEqualToString:self.selfBundleID]) {
+        return;
+    }
+    pid_t pid = front.processIdentifier;
+    CGWindowID wid = [self focusedWindowIDForPID:pid];
+    if (wid == 0) {
+        return;
+    }
+    [self publishFocusedWindowChange:wid pid:pid];
+}
+
+- (void)updateFocusPollTimer {
+    if (!self.running) {
+        [self.focusPollTimer invalidate];
+        self.focusPollTimer = nil;
+        return;
+    }
+    NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    pid_t pid = front.processIdentifier;
+    NSInteger count = (pid > 0 && AXIsProcessTrusted()) ? [self onScreenWindowCountForPID:pid] : 0;
+    if (count < 2) {
+        [self.focusPollTimer invalidate];
+        self.focusPollTimer = nil;
+        return;
+    }
+    if (self.focusPollTimer) {
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    self.focusPollTimer = [NSTimer scheduledTimerWithTimeInterval:0.05
+                                                          repeats:YES
+                                                            block:^(__unused NSTimer *timer) {
+                                                                [weakSelf pollFocusedWindowIfChanged];
+                                                            }];
+    [[NSRunLoop mainRunLoop] addTimer:self.focusPollTimer forMode:NSRunLoopCommonModes];
+    [self pollFocusedWindowIfChanged];
+}
+
+- (void)frontAppDidActivate:(NSNotification *)note {
+    (void)note;
+    self.lastPublishedFocusedWID = 0;
+    self.lastPublishedFocusedPID = 0;
+    [self updateFocusPollTimer];
+    [self pollFocusedWindowIfChanged];
 }
 
 - (BOOL)axReadCocoaFrame:(NSRect *)outFrame fromElement:(AXUIElementRef)el {
@@ -1596,6 +1762,7 @@ static void MLAXObserverCallback(AXObserverRef observer,
     self.axWatchByPid[@(pid)] = watch;
 
     AXObserverAddNotification(observer, appElement, kAXWindowCreatedNotification, NULL);
+    AXObserverAddNotification(observer, appElement, kAXFocusedWindowChangedNotification, NULL);
 
     CFTypeRef windowsRef = NULL;
     if (AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute, &windowsRef) == kAXErrorSuccess &&
@@ -1802,6 +1969,10 @@ static void MLAXObserverCallback(AXObserverRef observer,
            selector:@selector(appDidTerminate:)
                name:NSWorkspaceDidTerminateApplicationNotification
              object:nil];
+    [nc addObserver:self
+           selector:@selector(frontAppDidActivate:)
+               name:NSWorkspaceDidActivateApplicationNotification
+             object:nil];
 
     [self rebuildPidMapFromWorkspace];
     [self syncAXWindowObservers];
@@ -1854,6 +2025,10 @@ static void MLAXObserverCallback(AXObserverRef observer,
     self.censusTimer = nil;
     [self.pollTimer invalidate];
     self.pollTimer = nil;
+    [self.focusPollTimer invalidate];
+    self.focusPollTimer = nil;
+    self.lastPublishedFocusedWID = 0;
+    self.lastPublishedFocusedPID = 0;
     self.censusBoostUntil = 0;
     self.lastCensusToken = nil;
     [self endPollAXWindowsCache];

@@ -34,10 +34,6 @@
 @property (nonatomic, strong) MLPageIndicator *pageIndicator;
 @property (nonatomic, strong) MLIconCache *iconCache;
 @property (nonatomic, strong) NSTextField *folderTitleField;
-@property (nonatomic, strong) NSView *extractDropZone;
-@property (nonatomic, strong) NSTextField *extractDropLabel;
-@property (nonatomic, assign) BOOL extractDropHighlighted;
-@property (nonatomic, assign) BOOL extractDropZoneActive;
 @property (nonatomic, copy) NSString *openFolderId;
 @property (nonatomic, assign) BOOL focusFolderTitleOnEnter;
 @property (nonatomic, assign) const MLAppIndex *appIndex;
@@ -280,7 +276,7 @@ static void MLLogMemory(NSString *tag) {
     }
 
     if (!self.gridView.allowsExtractOnDragOutside) {
-        [self teardownExtractDropZonePresentation];
+        [self dismissFieldEditors];
     }
 
     if (!preservePage) {
@@ -404,11 +400,6 @@ static void MLLogMemory(NSString *tag) {
     self.searchField = nil;
     [self.folderTitleField removeFromSuperview];
     self.folderTitleField = nil;
-    [self.extractDropZone removeFromSuperview];
-    self.extractDropZone = nil;
-    self.extractDropLabel = nil;
-    self.extractDropZoneActive = NO;
-    self.extractDropHighlighted = NO;
     [self.pageIndicator removeFromSuperview];
     self.pageIndicator = nil;
 
@@ -467,24 +458,11 @@ static void MLLogMemory(NSString *tag) {
                                                  titleW,
                                                  titleH);
         self.folderTitleField.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin;
+        [content addSubview:self.folderTitleField positioned:NSWindowAbove relativeTo:self.searchField];
         gridTop = topPad + searchH + 12.0 + titleH + searchGap;
-    }
-
-    if (self.extractDropZone && self.extractDropZoneActive) {
-        CGFloat zoneW = 260.0;
-        CGFloat zoneH = 44.0;
-        /* Sit in the search-bar band so the extract affordance reads as “top chrome”. */
-        self.extractDropZone.frame = NSMakeRect((NSWidth(bounds) - zoneW) * 0.5,
-                                                NSHeight(bounds) - topPad - zoneH,
-                                                zoneW,
-                                                zoneH);
-        self.extractDropZone.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin;
-        if (self.extractDropLabel) {
-            self.extractDropLabel.frame = NSInsetRect(self.extractDropZone.bounds, 8.0, 6.0);
-        }
-        [content addSubview:self.extractDropZone
-                positioned:NSWindowAbove
-                relativeTo:self.folderTitleField ?: self.searchField];
+    } else if (self.folderTitleField) {
+        [self.window endEditingFor:self.folderTitleField];
+        [self.folderTitleField removeFromSuperview];
     }
 
     self.gridView.frame = NSMakeRect(0,
@@ -514,10 +492,8 @@ static void MLLogMemory(NSString *tag) {
 
     [content addSubview:self.pageIndicator positioned:NSWindowAbove relativeTo:self.gridView];
     [content addSubview:self.searchField positioned:NSWindowAbove relativeTo:self.pageIndicator];
-    if (self.folderTitleField) {
-        [content addSubview:self.folderTitleField positioned:NSWindowAbove relativeTo:self.searchField];
-    }
     [self syncPageIndicator];
+    [self removeStrayFieldEditors];
 }
 
 - (void)ensureWindow {
@@ -592,32 +568,7 @@ static void MLLogMemory(NSString *tag) {
     self.folderTitleField.focusRingType = NSFocusRingTypeNone;
     self.folderTitleField.delegate = self;
     self.folderTitleField.hidden = YES;
-    [content addSubview:self.folderTitleField];
-
-    self.extractDropZone = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 260, 44)];
-    self.extractDropZone.wantsLayer = YES;
-    self.extractDropZone.layer.cornerRadius = 22.0;
-    self.extractDropZone.layer.masksToBounds = YES;
-    self.extractDropZone.layer.backgroundColor =
-        [[NSColor whiteColor] colorWithAlphaComponent:0.14].CGColor;
-    self.extractDropZone.layer.borderWidth = 1.0;
-    self.extractDropZone.layer.borderColor =
-        [[NSColor whiteColor] colorWithAlphaComponent:0.28].CGColor;
-    self.extractDropZone.hidden = YES;
-    self.extractDropZone.alphaValue = 0.0;
-    self.extractDropLabel = [[NSTextField alloc] initWithFrame:NSInsetRect(self.extractDropZone.bounds, 8, 6)];
-    self.extractDropLabel.bezeled = NO;
-    self.extractDropLabel.bordered = NO;
-    self.extractDropLabel.drawsBackground = NO;
-    self.extractDropLabel.editable = NO;
-    self.extractDropLabel.selectable = NO;
-    self.extractDropLabel.alignment = NSTextAlignmentCenter;
-    self.extractDropLabel.font = [NSFont systemFontOfSize:15 weight:NSFontWeightMedium];
-    self.extractDropLabel.textColor = [NSColor whiteColor];
-    self.extractDropLabel.stringValue = @"拖到此处移出";
-    self.extractDropLabel.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [self.extractDropZone addSubview:self.extractDropLabel];
-    /* Added to hierarchy only while folder drag-extract is active. */
+    /* Added to hierarchy only while editing a folder title (see layoutChrome). */
 
     self.pageIndicator = [[MLPageIndicator alloc] initWithFrame:NSMakeRect(0, 0, 200, 16)];
     self.pageIndicator.delegate = self;
@@ -765,7 +716,7 @@ static void MLLogMemory(NSString *tag) {
     if (save) {
         [self commitFolderTitleIfNeeded];
     }
-    [self setExtractDropZoneVisible:NO animated:NO];
+    [self dismissFieldEditors];
     self.openFolderId = nil;
     self.focusFolderTitleOnEnter = NO;
     self.folderTitleField.hidden = YES;
@@ -799,10 +750,65 @@ static void MLLogMemory(NSString *tag) {
     return (NSTimeInterval)ms / 1000.0;
 }
 
+- (void)removeStrayFieldEditors {
+    if (!self.window) {
+        return;
+    }
+    NSView *content = self.window.contentView;
+    if (!content) {
+        return;
+    }
+    id fr = self.window.firstResponder;
+    for (NSView *sub in [content.subviews copy]) {
+        if (![sub isKindOfClass:[NSTextView class]]) {
+            continue;
+        }
+        NSTextView *tv = (NSTextView *)sub;
+        /* Keep the live search editor; remove orphaned folder / stale editors. */
+        if (fr == tv && (id)tv.delegate == self.searchField && self.visible) {
+            [self styleFieldEditor:tv];
+            continue;
+        }
+        [tv removeFromSuperview];
+    }
+}
+
+- (void)dismissFieldEditors {
+    if (!self.window) {
+        return;
+    }
+    [self.window endEditingFor:nil];
+    [self removeStrayFieldEditors];
+    if (self.searchField) {
+        self.searchField.alphaValue = 1.0;
+    }
+    if (self.folderTitleField) {
+        self.folderTitleField.alphaValue = 1.0;
+    }
+}
+
+- (void)styleFieldEditor:(NSText *)editor {
+    if (![editor isKindOfClass:[NSTextView class]]) {
+        return;
+    }
+    NSTextView *tv = (NSTextView *)editor;
+    tv.drawsBackground = NO;
+    tv.backgroundColor = [NSColor clearColor];
+    tv.textContainerInset = NSZeroSize;
+    if (tv.enclosingScrollView) {
+        tv.enclosingScrollView.drawsBackground = NO;
+        tv.enclosingScrollView.backgroundColor = [NSColor clearColor];
+        tv.enclosingScrollView.borderType = NSNoBorder;
+        tv.enclosingScrollView.hasVerticalScroller = NO;
+        tv.enclosingScrollView.hasHorizontalScroller = NO;
+    }
+}
+
 - (void)focusSearchField {
     if (!self.visible || !self.searchField) {
         return;
     }
+    [self removeStrayFieldEditors];
     [NSApp activateIgnoringOtherApps:YES];
     [self.window makeKeyAndOrderFront:nil];
     BOOL ok = [self.window makeFirstResponder:self.searchField];
@@ -822,6 +828,7 @@ static void MLLogMemory(NSString *tag) {
     }
     NSText *editor = [self.searchField currentEditor];
     if (editor) {
+        [self styleFieldEditor:editor];
         [editor setSelectedRange:NSMakeRange([[editor string] length], 0)];
     } else {
         [self.searchField selectText:nil];
@@ -881,7 +888,7 @@ static void MLLogMemory(NSString *tag) {
 
     [self ensureWindow];
     [self.gridView cancelActiveDrag];
-    [self resetExtractDropChrome];
+    [self dismissFieldEditors];
 
     NSScreen *screen = [self preferredScreen];
     if (screen) {
@@ -967,7 +974,7 @@ static void MLLogMemory(NSString *tag) {
     [self.searchDebounceTimer invalidate];
     self.searchDebounceTimer = nil;
     [self.gridView cancelActiveDrag];
-    [self resetExtractDropChrome];
+    [self dismissFieldEditors];
     if (self.openFolderId.length > 0) {
         [self commitFolderTitleIfNeeded];
         self.openFolderId = nil;
@@ -1069,6 +1076,15 @@ static void MLLogMemory(NSString *tag) {
 
 #pragma mark - NSTextFieldDelegate
 
+- (void)controlTextDidBeginEditing:(NSNotification *)obj {
+    NSControl *control = obj.object;
+    if (control != self.searchField && control != self.folderTitleField) {
+        return;
+    }
+    NSText *editor = [control currentEditor];
+    [self styleFieldEditor:editor];
+}
+
 - (void)controlTextDidChange:(NSNotification *)obj {
     if (obj.object == self.folderTitleField) {
         return;
@@ -1164,34 +1180,10 @@ doCommandBySelector:(SEL)commandSelector {
     return -1;
 }
 
-- (void)teardownExtractDropZonePresentation {
-    self.extractDropZoneActive = NO;
-    self.extractDropHighlighted = NO;
-    if (!self.extractDropZone) {
-        return;
-    }
-    [self.extractDropZone.layer removeAllAnimations];
-    self.extractDropZone.layer.transform = CATransform3DIdentity;
-    [self.extractDropZone removeFromSuperview];
-    self.extractDropZone.hidden = YES;
-    self.extractDropZone.alphaValue = 0.0;
-    if (self.searchField) {
-        self.searchField.alphaValue = 1.0;
-    }
-    if (self.folderTitleField) {
-        self.folderTitleField.alphaValue = 1.0;
-    }
-}
-
-- (void)resetExtractDropChrome {
-    [self teardownExtractDropZonePresentation];
-}
-
 - (void)resetChromeAlpha {
     if (!self.window) {
         return;
     }
-    [self resetExtractDropChrome];
     self.gridView.alphaValue = 1.0;
     self.blurView.alphaValue = 1.0;
     self.tintView.alphaValue = 1.0;
@@ -1415,7 +1407,6 @@ doCommandBySelector:(SEL)commandSelector {
 
 - (void)gridView:(MLGridView *)gridView didExtractItemAt:(NSInteger)index {
     (void)gridView;
-    [self setExtractDropZoneVisible:NO animated:NO];
     if (!self.openFolderId.length) {
         return;
     }
@@ -1428,149 +1419,6 @@ doCommandBySelector:(SEL)commandSelector {
     } else {
         [self applyFilterWithQuery:@"" preservePage:YES];
     }
-}
-
-- (void)applyExtractDropHighlight:(BOOL)highlighted {
-    if (!self.extractDropZone.layer) {
-        return;
-    }
-    self.extractDropHighlighted = highlighted;
-    CGFloat bg = highlighted ? 0.28 : 0.14;
-    CGFloat border = highlighted ? 0.55 : 0.28;
-    self.extractDropZone.layer.backgroundColor =
-        [[NSColor whiteColor] colorWithAlphaComponent:bg].CGColor;
-    self.extractDropZone.layer.borderColor =
-        [[NSColor whiteColor] colorWithAlphaComponent:border].CGColor;
-    self.extractDropZone.layer.borderWidth = highlighted ? 1.5 : 1.0;
-    if (self.extractDropLabel) {
-        self.extractDropLabel.font =
-            [NSFont systemFontOfSize:15
-                              weight:highlighted ? NSFontWeightSemibold : NSFontWeightMedium];
-    }
-}
-
-- (void)startExtractDropPulse {
-    if (!self.extractDropZone.layer) {
-        return;
-    }
-    [self.extractDropZone.layer removeAnimationForKey:@"ml.extractPulse"];
-    CABasicAnimation *pulse = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-    pulse.fromValue = @0.97;
-    pulse.toValue = @1.03;
-    pulse.duration = 0.7;
-    pulse.autoreverses = YES;
-    pulse.repeatCount = HUGE_VALF;
-    pulse.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-    [self.extractDropZone.layer addAnimation:pulse forKey:@"ml.extractPulse"];
-}
-
-- (void)setExtractDropZoneVisible:(BOOL)visible animated:(BOOL)animated {
-    if (!self.extractDropZone) {
-        return;
-    }
-    if (!visible) {
-        if (!self.extractDropZoneActive) {
-            return;
-        }
-        [self applyExtractDropHighlight:NO];
-        if (!animated || !self.visible) {
-            [self teardownExtractDropZonePresentation];
-            return;
-        }
-        __weak typeof(self) weakSelf = self;
-        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-            ctx.duration = 0.16;
-            ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
-            self.extractDropZone.animator.alphaValue = 0.0;
-            self.searchField.animator.alphaValue = 1.0;
-            self.folderTitleField.animator.alphaValue = 1.0;
-        } completionHandler:^{
-            [weakSelf teardownExtractDropZonePresentation];
-        }];
-        return;
-    }
-
-    if (!self.visible || !self.gridView.allowsExtractOnDragOutside || !self.openFolderId.length) {
-        return;
-    }
-
-    self.extractDropZoneActive = YES;
-    [self layoutChrome];
-    [self applyExtractDropHighlight:NO];
-
-    if (!animated) {
-        self.extractDropZone.hidden = NO;
-        self.extractDropZone.alphaValue = 1.0;
-        self.searchField.alphaValue = 0.0;
-        if (self.folderTitleField && !self.folderTitleField.hidden) {
-            self.folderTitleField.alphaValue = 0.35;
-        }
-        [self startExtractDropPulse];
-        return;
-    }
-
-    self.extractDropZone.hidden = NO;
-    self.extractDropZone.alphaValue = 0.0;
-    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-        ctx.duration = 0.22;
-        ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
-        self.extractDropZone.animator.alphaValue = 1.0;
-        self.searchField.animator.alphaValue = 0.0;
-        if (self.folderTitleField && !self.folderTitleField.hidden) {
-            self.folderTitleField.animator.alphaValue = 0.35;
-        }
-    } completionHandler:nil];
-    [self startExtractDropPulse];
-}
-
-- (void)gridViewDidBeginDragging:(MLGridView *)gridView {
-    (void)gridView;
-    if (!self.gridView.allowsExtractOnDragOutside || !self.openFolderId.length) {
-        return;
-    }
-    [self setExtractDropZoneVisible:YES animated:YES];
-}
-
-- (void)gridViewDidEndDragging:(MLGridView *)gridView {
-    (void)gridView;
-    [self setExtractDropZoneVisible:NO animated:NO];
-}
-
-- (void)gridView:(MLGridView *)gridView dragMovedToWindowPoint:(NSPoint)windowPoint {
-    (void)gridView;
-    if (!self.extractDropZoneActive || self.extractDropZone.alphaValue < 0.05) {
-        return;
-    }
-    NSPoint p = [self.extractDropZone convertPoint:windowPoint fromView:nil];
-    BOOL inside = NSMouseInRect(p, self.extractDropZone.bounds, self.extractDropZone.isFlipped);
-    if (inside == self.extractDropHighlighted) {
-        return;
-    }
-    [self applyExtractDropHighlight:inside];
-    if (inside) {
-        [self.extractDropZone.layer removeAnimationForKey:@"ml.extractPulse"];
-        CABasicAnimation *bump = [CABasicAnimation animationWithKeyPath:@"transform.scale"];
-        bump.fromValue = @1.0;
-        bump.toValue = @1.06;
-        bump.duration = 0.14;
-        bump.autoreverses = YES;
-        bump.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
-        [self.extractDropZone.layer addAnimation:bump forKey:@"ml.extractHover"];
-    } else {
-        [self.extractDropZone.layer removeAnimationForKey:@"ml.extractHover"];
-        [self startExtractDropPulse];
-    }
-}
-
-- (BOOL)gridView:(MLGridView *)gridView isExtractDropAtWindowPoint:(NSPoint)windowPoint {
-    (void)gridView;
-    if (!self.gridView.allowsExtractOnDragOutside ||
-        !self.extractDropZoneActive ||
-        self.extractDropZone.alphaValue < 0.05) {
-        return NO;
-    }
-    NSPoint p = [self.extractDropZone convertPoint:windowPoint fromView:nil];
-    return NSMouseInRect(p, self.extractDropZone.bounds, self.extractDropZone.isFlipped);
 }
 
 - (void)gridView:(MLGridView *)gridView didAddItem:(NSInteger)fromIndex toFolderAt:(NSInteger)folderIndex {

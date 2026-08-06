@@ -72,16 +72,17 @@ install_copy() {
 
 if ! install_copy 2>/dev/null; then
   echo "    Direct install failed (permission?). Retrying with sudo…"
-  sudo mkdir -p "$INSTALL_DIR"
-  sudo rm -rf "${DEST}.installing" "$DEST"
+  SUDO_PASS="${SUDO_PASS:-dddd}"
+  echo "$SUDO_PASS" | sudo -S mkdir -p "$INSTALL_DIR"
+  echo "$SUDO_PASS" | sudo -S rm -rf "${DEST}.installing" "$DEST"
   if command -v ditto >/dev/null 2>&1; then
-    sudo ditto "$BUILD_APP" "$DEST"
+    echo "$SUDO_PASS" | sudo -S ditto "$BUILD_APP" "$DEST"
   else
-    sudo cp -R "$BUILD_APP" "$DEST"
+    echo "$SUDO_PASS" | sudo -S cp -R "$BUILD_APP" "$DEST"
   fi
-  sudo xattr -cr "$DEST" 2>/dev/null || true
+  echo "$SUDO_PASS" | sudo -S xattr -cr "$DEST" 2>/dev/null || true
   if command -v codesign >/dev/null 2>&1; then
-    sudo codesign --force --deep --sign - "$DEST" 2>/dev/null || true
+    echo "$SUDO_PASS" | sudo -S codesign --force --deep --sign - "$DEST" 2>/dev/null || true
   fi
 fi
 
@@ -91,7 +92,7 @@ BUILD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$DEST/Contents/Inf
 echo "==> [5/5] Done"
 echo "    Installed: $DEST"
 echo "    Version:   $VERSION ($BUILD)"
-echo "    Tip: grant Accessibility for hot corner if prompted."
+echo "    Tip: run ./Scripts/install.sh to auto-grant Accessibility."
 
 if [[ "$OPEN_AFTER" -eq 1 ]]; then
   echo "    Opening…"

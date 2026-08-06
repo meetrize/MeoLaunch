@@ -10,6 +10,10 @@ enum {
 };
 
 FOUNDATION_EXPORT NSNotificationName const MLRunningAppsDidChangeNotification;
+/** Frontmost window within an app changed (same-app focus switch). */
+FOUNDATION_EXPORT NSNotificationName const MLRunningAppsFrontWindowDidChangeNotification;
+/** userInfo[MLRunningAppsFrontWindowIDKey] → NSNumber (CGWindowID) */
+FOUNDATION_EXPORT NSString *const MLRunningAppsFrontWindowIDKey;
 
 @interface MLTaskbarWindowInfo : NSObject
 @property (nonatomic, copy) NSString *path;
@@ -47,6 +51,10 @@ FOUNDATION_EXPORT NSNotificationName const MLRunningAppsDidChangeNotification;
 - (void)applyWindowPollInterval:(NSTimeInterval)seconds;
 /** Force an immediate window snapshot refresh. */
 - (void)pollNow;
+/** AX focused window for a process (0 if unknown). */
+- (CGWindowID)focusedWindowIDForPID:(pid_t)pid;
+/** AX title of the focused window (nil if unknown). */
+- (NSString *)focusedWindowTitleForPID:(pid_t)pid;
 - (CGRect)cachedBoundsForWindowID:(CGWindowID)windowID;
 - (CGRect)cachedBoundsForPID:(pid_t)pid title:(NSString *)title;
 /** Upsert last-seen frame; pass known AX windowID when available. */

@@ -765,6 +765,94 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     return [self windowChipCountInItems:bar.barView.items];
 }
 
+- (BOOL)displayedItemsContainWindowID:(CGWindowID)wid {
+    if (wid == 0) {
+        return NO;
+    }
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        for (MLTaskbarItem *it in bar.barView.items) {
+            if (it.windowID == wid) {
+                return YES;
+            }
+        }
+    }
+    return NO;
+}
+
+- (void)paintActiveHighlightForWindowID:(CGWindowID)frontWid {
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (!bar.barView) {
+            continue;
+        }
+        BOOL changed = NO;
+        for (MLTaskbarItem *it in bar.barView.items) {
+            BOOL shouldActive = frontWid != 0 && it.kind == MLTaskbarItemRunningWindow &&
+                                !it.minimized && it.windowID != 0 && it.windowID == frontWid;
+            if (it.active != shouldActive) {
+                it.active = shouldActive;
+                changed = YES;
+            }
+        }
+        for (MLTaskbarItem *it in bar.pendingItems) {
+            BOOL shouldActive = frontWid != 0 && it.kind == MLTaskbarItemRunningWindow &&
+                                !it.minimized && it.windowID != 0 && it.windowID == frontWid;
+            it.active = shouldActive;
+        }
+        if (changed) {
+            [bar.barView setNeedsDisplay:YES];
+        }
+    }
+}
+
+- (CGWindowID)windowIDOnBarsForPID:(pid_t)pid matchingTitle:(NSString *)focusTitle {
+    if (pid <= 0 || focusTitle.length == 0) {
+        return 0;
+    }
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        for (MLTaskbarItem *it in bar.barView.items) {
+            if (it.pid != pid || it.windowID == 0 || it.title.length == 0) {
+                continue;
+            }
+            if ([focusTitle isEqualToString:it.title] || [focusTitle hasPrefix:it.title] ||
+                [it.title hasPrefix:focusTitle]) {
+                return it.windowID;
+            }
+        }
+    }
+    return 0;
+}
+
+- (void)applyActiveHighlightForWindowID:(CGWindowID)hintWid {
+    if (!self.started || self.itemsFrozenForDesktopReveal) {
+        return;
+    }
+    NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+    pid_t frontPid = front.processIdentifier;
+    CGWindowID frontWid = hintWid;
+    if (frontWid == 0 || ![self displayedItemsContainWindowID:frontWid]) {
+        if (AXIsProcessTrusted() && frontPid > 0) {
+            CGWindowID axWid = [self.monitor focusedWindowIDForPID:frontPid];
+            if (axWid != 0 && [self displayedItemsContainWindowID:axWid]) {
+                frontWid = axWid;
+            } else {
+                NSString *axTitle = [self.monitor focusedWindowTitleForPID:frontPid];
+                CGWindowID byTitle = [self windowIDOnBarsForPID:frontPid matchingTitle:axTitle];
+                if (byTitle != 0) {
+                    frontWid = byTitle;
+                }
+            }
+        }
+    }
+    if (frontWid == 0 || ![self displayedItemsContainWindowID:frontWid]) {
+        frontWid = [self frontmostTrackedWindowID];
+    }
+    [self paintActiveHighlightForWindowID:frontWid];
+}
+
+- (void)applyActiveHighlightImmediate {
+    [self applyActiveHighlightForWindowID:0];
+}
+
 - (void)cancelItemsCommitTimer {
     [self.itemsCommitTimer invalidate];
     self.itemsCommitTimer = nil;
@@ -1879,6 +1967,10 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
                                                  name:MLRunningAppsDidChangeNotification
                                                object:self.monitor];
     [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(frontWindowDidChange:)
+                                                 name:MLRunningAppsFrontWindowDidChangeNotification
+                                               object:self.monitor];
+    [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(screenParamsChanged:)
                                                  name:NSApplicationDidChangeScreenParametersNotification
                                                object:nil];
@@ -1966,6 +2058,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 
 - (void)runningDidChange:(NSNotification *)note {
     (void)note;
+    [self applyActiveHighlightImmediate];
     if ([self shouldFreezeForDesktopReveal]) {
         [self freezeDesktopReveal];
     }
@@ -1978,8 +2071,15 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     }
 }
 
+- (void)frontWindowDidChange:(NSNotification *)note {
+    NSNumber *widNum = note.userInfo[MLRunningAppsFrontWindowIDKey];
+    CGWindowID wid = widNum.unsignedIntValue;
+    [self applyActiveHighlightForWindowID:wid];
+}
+
 - (void)frontAppDidChange:(NSNotification *)note {
     (void)note;
+    [self applyActiveHighlightImmediate];
     if ([self shouldFreezeForDesktopReveal]) {
         [self freezeDesktopReveal];
     }
@@ -1991,6 +2091,11 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
     }
     [self updateVisibilitySafetyTimer];
     __weak typeof(self) weakSelf = self;
+    /* CG window order can lag NSWorkspace by a frame — re-paint highlight once settled. */
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       [weakSelf applyActiveHighlightImmediate];
+                   });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.15 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
                        __strong typeof(weakSelf) self = weakSelf;
@@ -2001,6 +2106,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
                            [self freezeDesktopReveal];
                        }
                        [self refreshFullscreenVisibility];
+                       [self applyActiveHighlightImmediate];
                    });
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
@@ -2010,6 +2116,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarBarMode) {
 
 - (void)activeSpaceDidChange:(NSNotification *)note {
     (void)note;
+    [self applyActiveHighlightImmediate];
     [self scheduleFullscreenVisibilityCheck];
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),

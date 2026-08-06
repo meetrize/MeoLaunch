@@ -9,5 +9,14 @@ if [[ ! -x "$APP/Contents/MacOS/MeoLaunch" ]]; then
   "$ROOT/Scripts/build.sh"
 fi
 
+# Re-sign so TCC csreq matches the binary we are about to grant.
+xattr -cr "$APP" 2>/dev/null || true
+if command -v codesign >/dev/null 2>&1; then
+  codesign --force --deep --sign - "$APP" 2>/dev/null || true
+fi
+
+"$ROOT/Scripts/grant_accessibility.sh" "$APP" 2>/dev/null || \
+  echo "[run] Accessibility auto-grant skipped (run ./Scripts/install.sh once with sudo)"
+
 open "$APP"
 echo "[run] opened $APP"

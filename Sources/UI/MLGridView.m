@@ -1087,7 +1087,6 @@ enum { MLFolderCompositeMaxEntries = 16 };
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(edgeFlipTick) object:nil];
     [_dragImageView removeFromSuperview];
     _dragImageView = nil;
-    BOOL wasActive = _dragActive;
     _dragActive = NO;
     _dragTracking = NO;
     _dropAnimating = NO;
@@ -1100,9 +1099,6 @@ enum { MLFolderCompositeMaxEntries = 16 };
     _edgeEnterTime = 0;
     _dragIconBaseSize = NSZeroSize;
     [self setNeedsDisplay:YES];
-    if (wasActive && [self.delegate respondsToSelector:@selector(gridViewDidEndDragging:)]) {
-        [self.delegate gridViewDidEndDragging:self];
-    }
 }
 
 - (void)cancelActiveDrag {
@@ -1284,9 +1280,6 @@ enum { MLFolderCompositeMaxEntries = 16 };
     _gapAnimFromDest = _dragSourceVis;
     _gapAnimStart = 0;
     [self setNeedsDisplay:YES];
-    if ([self.delegate respondsToSelector:@selector(gridViewDidBeginDragging:)]) {
-        [self.delegate gridViewDidBeginDragging:self];
-    }
 }
 
 - (void)updateDragImageAtPoint:(NSPoint)p {
@@ -1567,9 +1560,6 @@ enum { MLFolderCompositeMaxEntries = 16 };
         [self setDropInsertIndexAnimated:[self destinationIndexForDropAtPoint:p]];
     }
     [self updateDragImageAtPoint:p];
-    if ([self.delegate respondsToSelector:@selector(gridView:dragMovedToWindowPoint:)]) {
-        [self.delegate gridView:self dragMovedToWindowPoint:event.locationInWindow];
-    }
 }
 
 - (void)mouseUp:(NSEvent *)event {
@@ -1581,13 +1571,10 @@ enum { MLFolderCompositeMaxEntries = 16 };
     if (_dragActive) {
         NSInteger src = _dragSourceVis;
 
-        /* Folder: drop on extract zone, or outside grid → extract to root */
+        /* Folder: drop outside grid → extract to root */
         BOOL extract = NO;
         if (self.allowsExtractOnDragOutside && src >= 0) {
-            if ([self.delegate respondsToSelector:@selector(gridView:isExtractDropAtWindowPoint:)] &&
-                [self.delegate gridView:self isExtractDropAtWindowPoint:event.locationInWindow]) {
-                extract = YES;
-            } else if (!NSMouseInRect(p, self.bounds, self.isFlipped)) {
+            if (!NSMouseInRect(p, self.bounds, self.isFlipped)) {
                 extract = YES;
             }
         }
