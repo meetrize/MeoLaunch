@@ -1,7 +1,9 @@
 #import "MLRunningAppsMonitor.h"
 
+#import "MLAXAppObserverRegistry.h"
 #import "MLAXWindowHelper.h"
 #import "MLScreenGeometry.h"
+#import "MLWindowCensus.h"
 #import "MLWindowSoftState.h"
 
 #import <ApplicationServices/ApplicationServices.h>
@@ -24,19 +26,19 @@ NSString *const MLRunningAppsFrontWindowIDKey = @"MLRunningAppsFrontWindowIDKey"
 @implementation MLRunningAppsSnapshot
 @end
 
-@interface MLRunningAppsMonitor ()
+@interface MLRunningAppsMonitor () <MLAXAppObserverRegistryDelegate>
 @property (nonatomic, strong, readwrite) MLRunningAppsSnapshot *snapshot;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *pidPathMap;
 /** Last on-screen task windows, keyed by CGWindowID — used to keep minimized items on the right display. */
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, MLTaskbarWindowInfo *> *lastSeenWindows;
 @property (nonatomic, strong, readwrite) MLWindowSoftState *softState;
+@property (nonatomic, strong) MLAXAppObserverRegistry *axRegistry;
+@property (nonatomic, strong) MLWindowCensus *windowCensus;
 @property (nonatomic, assign) NSUInteger nextSeenOrder;
 @property (nonatomic, strong) NSTimer *pollTimer;
 @property (nonatomic, assign, readwrite, getter=isRunning) BOOL running;
 @property (nonatomic, copy) NSString *selfBundleID;
 @property (nonatomic, copy) NSString *lastFingerprint;
-/** pid → AXObserver watch; drives near-instant taskbar updates on close/min. */
-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, id> *axWatchByPid;
 @property (nonatomic, assign) BOOL axStructuralPollPending;
 @property (nonatomic, assign) BOOL axGeometryPollPending;
 /** High-frequency CG census (no AX) — catches open/close/display-move without waiting for AX. */
@@ -48,34 +50,6 @@ NSString *const MLRunningAppsFrontWindowIDKey = @"MLRunningAppsFrontWindowIDKey"
 @property (nonatomic, strong) NSTimer *focusPollTimer;
 @property (nonatomic, assign) CGWindowID lastPublishedFocusedWID;
 @property (nonatomic, assign) pid_t lastPublishedFocusedPID;
-@end
-
-/** Per-process AXObserver (window create/destroy/miniaturize/title). */
-@interface MLAXPidWatch : NSObject
-@property (nonatomic, assign) pid_t pid;
-@property (nonatomic, assign) AXObserverRef observer;
-@property (nonatomic, assign) AXUIElementRef appElement;
-- (void)invalidate;
-@end
-
-@implementation MLAXPidWatch
-- (void)invalidate {
-    if (self.observer) {
-        CFRunLoopSourceRef src = AXObserverGetRunLoopSource(self.observer);
-        if (src) {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), src, kCFRunLoopCommonModes);
-        }
-        CFRelease(self.observer);
-        self.observer = NULL;
-    }
-    if (self.appElement) {
-        CFRelease(self.appElement);
-        self.appElement = NULL;
-    }
-}
-- (void)dealloc {
-    [self invalidate];
-}
 @end
 
 enum {
@@ -102,7 +76,9 @@ static const MLPollOptions MLPollOptionsFast =
         _pidPathMap = [NSMutableDictionary dictionary];
         _lastSeenWindows = [NSMutableDictionary dictionary];
         _softState = [[MLWindowSoftState alloc] init];
-        _axWatchByPid = [NSMutableDictionary dictionary];
+        _axRegistry = [[MLAXAppObserverRegistry alloc] init];
+        _axRegistry.delegate = self;
+        _windowCensus = [[MLWindowCensus alloc] init];
         _nextSeenOrder = 1;
         _selfBundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"";
         _snapshot = [self emptySnapshot];
@@ -1247,7 +1223,7 @@ static const MLPollOptions MLPollOptionsFast =
     NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
     if ([self shouldTrackApplication:app] && app.processIdentifier > 0) {
         self.pidPathMap[@(app.processIdentifier)] = app.bundleURL.path;
-        [self installAXWatchForPID:app.processIdentifier];
+        [self.axRegistry installWatchForPID:app.processIdentifier];
     }
     [self scheduleStructuralFastPoll];
 }
@@ -1256,63 +1232,61 @@ static const MLPollOptions MLPollOptionsFast =
     NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
     if (app.processIdentifier > 0) {
         [self.pidPathMap removeObjectForKey:@(app.processIdentifier)];
-        [self removeAXWatchForPID:app.processIdentifier];
+        [self.axRegistry removeWatchForPID:app.processIdentifier];
     }
     [self scheduleStructuralFastPoll];
 }
 
-#pragma mark - AX window observers (low-latency close / minimize / move)
+#pragma mark - AX window observers (via MLAXAppObserverRegistry)
 
-static void MLAXObserverCallback(AXObserverRef observer,
-                                 AXUIElementRef element,
-                                 CFStringRef notification,
-                                 void *refcon) {
-    (void)observer;
-    MLRunningAppsMonitor *self = (__bridge MLRunningAppsMonitor *)refcon;
-    if (!self || !self.running || !notification) {
-        return;
-    }
+- (void)syncAXWindowObservers {
+    [self.axRegistry syncWatchesForPIDs:[NSSet setWithArray:self.pidPathMap.allKeys]];
+}
 
-    if (CFEqual(notification, kAXWindowCreatedNotification) && element) {
-        [self axWatchRegisterNotificationsOnWindow:element];
-        [self scheduleStructuralFastPoll];
-        return;
-    }
-    if (CFEqual(notification, kAXUIElementDestroyedNotification)) {
-        [self optimisticRemoveWindowElement:element];
-        [self scheduleStructuralFastPoll];
-        return;
-    }
-    if (CFEqual(notification, kAXWindowMiniaturizedNotification) ||
-        CFEqual(notification, kAXWindowDeminiaturizedNotification)) {
-        [self scheduleStructuralFastPoll];
-        return;
-    }
-    if (CFEqual(notification, kAXTitleChangedNotification)) {
-        [self optimisticUpdateTitleFromElement:element];
-        [self scheduleStructuralFastPoll];
-        return;
-    }
-    if (CFEqual(notification, kAXFocusedWindowChangedNotification)) {
-        CGWindowID wid = 0;
-        if (element) {
-            CFTypeRef focusedRef = NULL;
-            if (AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute, &focusedRef) ==
-                    kAXErrorSuccess &&
-                focusedRef) {
-                wid = [self cgWindowIDFromAXElement:(AXUIElementRef)focusedRef];
-                CFRelease(focusedRef);
-            }
-        }
-        [self publishFocusedWindowChange:wid pid:0];
-        return;
-    }
-    if (CFEqual(notification, kAXMovedNotification) || CFEqual(notification, kAXResizedNotification)) {
-        [self optimisticUpdateBoundsFromElement:element];
-        [self scheduleGeometryFastPoll];
-        return;
-    }
+- (void)removeAllAXWatches {
+    [self.axRegistry removeAllWatches];
+}
+
+- (void)axRegistryDidRequestStructuralPoll:(MLAXAppObserverRegistry *)registry {
+    (void)registry;
     [self scheduleStructuralFastPoll];
+}
+
+- (void)axRegistryDidRequestGeometryPoll:(MLAXAppObserverRegistry *)registry {
+    (void)registry;
+    [self scheduleGeometryFastPoll];
+}
+
+- (void)axRegistry:(MLAXAppObserverRegistry *)registry didDestroyElement:(AXUIElementRef)element {
+    (void)registry;
+    [self optimisticRemoveWindowElement:element];
+}
+
+- (void)axRegistry:(MLAXAppObserverRegistry *)registry didCreateWindow:(AXUIElementRef)element {
+    (void)registry;
+    [self.axRegistry registerNotificationsOnWindow:element];
+}
+
+- (void)axRegistry:(MLAXAppObserverRegistry *)registry didChangeTitleOnElement:(AXUIElementRef)element {
+    (void)registry;
+    [self optimisticUpdateTitleFromElement:element];
+}
+
+- (void)axRegistry:(MLAXAppObserverRegistry *)registry didMoveOrResizeElement:(AXUIElementRef)element {
+    (void)registry;
+    [self optimisticUpdateBoundsFromElement:element];
+}
+
+- (void)axRegistry:(MLAXAppObserverRegistry *)registry
+    didChangeFocusedWindow:(CGWindowID)wid
+                       pid:(pid_t)pid {
+    (void)registry;
+    [self publishFocusedWindowChange:wid pid:pid];
+}
+
+- (CGWindowID)axRegistry:(MLAXAppObserverRegistry *)registry windowIDForElement:(AXUIElementRef)el {
+    (void)registry;
+    return [self cgWindowIDFromAXElement:el];
 }
 
 - (void)scheduleStructuralFastPoll {
@@ -1682,199 +1656,8 @@ static void MLAXObserverCallback(AXObserverRef observer,
     }
 }
 
-- (void)axWatchRegisterNotificationsOnWindow:(AXUIElementRef)win {
-    if (!win) {
-        return;
-    }
-    pid_t pid = 0;
-    if (AXUIElementGetPid(win, &pid) != kAXErrorSuccess || pid <= 0) {
-        return;
-    }
-    MLAXPidWatch *watch = self.axWatchByPid[@(pid)];
-    if (!watch || !watch.observer) {
-        return;
-    }
-    AXObserverAddNotification(watch.observer, win, kAXUIElementDestroyedNotification, NULL);
-    AXObserverAddNotification(watch.observer, win, kAXWindowMiniaturizedNotification, NULL);
-    AXObserverAddNotification(watch.observer, win, kAXWindowDeminiaturizedNotification, NULL);
-    AXObserverAddNotification(watch.observer, win, kAXTitleChangedNotification, NULL);
-    AXObserverAddNotification(watch.observer, win, kAXMovedNotification, NULL);
-    AXObserverAddNotification(watch.observer, win, kAXResizedNotification, NULL);
-}
-
-- (void)installAXWatchForPID:(pid_t)pid {
-    if (pid <= 0 || !AXIsProcessTrusted()) {
-        return;
-    }
-    if (self.axWatchByPid[@(pid)]) {
-        return;
-    }
-
-    AXObserverRef observer = NULL;
-    if (AXObserverCreate(pid, MLAXObserverCallback, &observer) != kAXErrorSuccess || !observer) {
-        return;
-    }
-    AXUIElementRef appElement = AXUIElementCreateApplication(pid);
-    if (!appElement) {
-        CFRelease(observer);
-        return;
-    }
-
-    MLAXPidWatch *watch = [[MLAXPidWatch alloc] init];
-    watch.pid = pid;
-    watch.observer = observer;
-    watch.appElement = appElement;
-    self.axWatchByPid[@(pid)] = watch;
-
-    AXObserverAddNotification(observer, appElement, kAXWindowCreatedNotification, NULL);
-    AXObserverAddNotification(observer, appElement, kAXFocusedWindowChangedNotification, NULL);
-
-    CFTypeRef windowsRef = NULL;
-    if (AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute, &windowsRef) == kAXErrorSuccess &&
-        windowsRef && CFGetTypeID(windowsRef) == CFArrayGetTypeID()) {
-        CFArrayRef axWindows = (CFArrayRef)windowsRef;
-        CFIndex count = CFArrayGetCount(axWindows);
-        for (CFIndex i = 0; i < count; i++) {
-            AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(axWindows, i);
-            [self axWatchRegisterNotificationsOnWindow:win];
-        }
-    }
-    if (windowsRef) {
-        CFRelease(windowsRef);
-    }
-
-    CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), kCFRunLoopCommonModes);
-}
-
-- (void)removeAXWatchForPID:(pid_t)pid {
-    if (pid <= 0) {
-        return;
-    }
-    MLAXPidWatch *watch = self.axWatchByPid[@(pid)];
-    if (!watch) {
-        return;
-    }
-    [watch invalidate];
-    [self.axWatchByPid removeObjectForKey:@(pid)];
-}
-
-- (void)syncAXWindowObservers {
-    if (!AXIsProcessTrusted()) {
-        if (self.axWatchByPid.count > 0) {
-            NSArray<NSNumber *> *keys = self.axWatchByPid.allKeys;
-            for (NSNumber *pidNum in keys) {
-                [self removeAXWatchForPID:(pid_t)pidNum.intValue];
-            }
-        }
-        return;
-    }
-    NSSet<NSNumber *> *wanted = [NSSet setWithArray:self.pidPathMap.allKeys];
-    NSArray<NSNumber *> *existing = self.axWatchByPid.allKeys;
-    for (NSNumber *pidNum in existing) {
-        if (![wanted containsObject:pidNum]) {
-            [self removeAXWatchForPID:(pid_t)pidNum.intValue];
-        }
-    }
-    for (NSNumber *pidNum in wanted) {
-        [self installAXWatchForPID:(pid_t)pidNum.intValue];
-    }
-}
-
-- (void)removeAllAXWatches {
-    NSArray<NSNumber *> *keys = self.axWatchByPid.allKeys;
-    for (NSNumber *pidNum in keys) {
-        [self removeAXWatchForPID:(pid_t)pidNum.intValue];
-    }
-}
-
-- (NSInteger)screenIndexForCocoaPoint:(CGPoint)point {
-    NSArray<NSScreen *> *screens = NSScreen.screens;
-    for (NSInteger i = 0; i < (NSInteger)screens.count; i++) {
-        if (NSPointInRect(NSMakePoint(point.x, point.y), screens[(NSUInteger)i].frame)) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-/**
- * Lightweight on-screen window census: id + owner + display index (+ quantized size).
- * Ignores intra-display pixel moves so dragging does not spam refreshes.
- * Open / close / cross-display moves change this token immediately via CG — no AX wait.
- */
 - (NSString *)computeWindowCensusToken {
-    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                     kCGWindowListExcludeDesktopElements,
-                                                 kCGNullWindowID);
-    if (!list) {
-        return @"";
-    }
-    NSMutableArray<NSString *> *rows = [NSMutableArray array];
-    CFIndex count = CFArrayGetCount(list);
-    for (CFIndex i = 0; i < count; i++) {
-        CFDictionaryRef info = (CFDictionaryRef)CFArrayGetValueAtIndex(list, i);
-        if (!info) {
-            continue;
-        }
-        CFNumberRef layerRef = CFDictionaryGetValue(info, kCGWindowLayer);
-        int layer = 0;
-        if (layerRef) {
-            CFNumberGetValue(layerRef, kCFNumberIntType, &layer);
-        }
-        if (layer != 0) {
-            continue;
-        }
-        CGRect bounds = CGRectZero;
-        CFDictionaryRef boundsDict = CFDictionaryGetValue(info, kCGWindowBounds);
-        if (!boundsDict || !CGRectMakeWithDictionaryRepresentation(boundsDict, &bounds)) {
-            continue;
-        }
-        if (bounds.size.width < 100.0 || bounds.size.height < 80.0) {
-            continue;
-        }
-        CFNumberRef alphaRef = CFDictionaryGetValue(info, kCGWindowAlpha);
-        if (alphaRef) {
-            double alpha = 1.0;
-            CFNumberGetValue(alphaRef, kCFNumberDoubleType, &alpha);
-            if (alpha < 0.1) {
-                continue;
-            }
-        }
-        CFNumberRef winRef = CFDictionaryGetValue(info, kCGWindowNumber);
-        CFNumberRef pidRef = CFDictionaryGetValue(info, kCGWindowOwnerPID);
-        CGWindowID wid = 0;
-        pid_t pid = 0;
-        if (winRef) {
-            CFNumberGetValue(winRef, kCFNumberIntType, &wid);
-        }
-        if (pidRef) {
-            CFNumberGetValue(pidRef, kCFNumberIntType, &pid);
-        }
-        if (wid == 0 || pid <= 0) {
-            continue;
-        }
-        if ([self.softState isSoftHiddenWindowID:wid]) {
-            continue;
-        }
-        CGPoint mid = CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds));
-        NSInteger screenIdx = [self screenIndexForCocoaPoint:mid];
-        /* Size buckets (~32pt) — ignore tiny resizes, keep big layout changes. */
-        int bw = (int)(bounds.size.width / 32.0);
-        int bh = (int)(bounds.size.height / 32.0);
-        [rows addObject:[NSString stringWithFormat:@"%u:%d:%ld:%d:%d",
-                                                   (unsigned)wid, (int)pid, (long)screenIdx, bw, bh]];
-    }
-    CFRelease(list);
-    [rows sortUsingSelector:@selector(compare:)];
-    /* Soft-min chips still count so census stays stable while hidden. */
-    NSSet<NSNumber *> *softIDs = self.softState.softHiddenWindowIDs;
-    if (softIDs.count > 0) {
-        NSArray *soft = [[softIDs allObjects] sortedArrayUsingSelector:@selector(compare:)];
-        for (NSNumber *widNum in soft) {
-            [rows addObject:[NSString stringWithFormat:@"soft:%u", (unsigned)widNum.unsignedIntValue]];
-        }
-    }
-    return [rows componentsJoinedByString:@"|"];
+    return [self.windowCensus computeTokenSkippingSoftHidden:self.softState.softHiddenWindowIDs];
 }
 
 - (void)censusTick {
@@ -1924,6 +1707,7 @@ static void MLAXObserverCallback(AXObserverRef observer,
         return;
     }
     self.running = YES;
+    self.axRegistry.active = YES;
 
     NSNotificationCenter *nc = [[NSWorkspace sharedWorkspace] notificationCenter];
     [nc addObserver:self
@@ -1986,6 +1770,7 @@ static void MLAXObserverCallback(AXObserverRef observer,
         return;
     }
     self.running = NO;
+    self.axRegistry.active = NO;
     [self.censusTimer invalidate];
     self.censusTimer = nil;
     [self.pollTimer invalidate];
