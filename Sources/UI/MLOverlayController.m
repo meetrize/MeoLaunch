@@ -9,7 +9,6 @@
 #import "MLOverlayWindow.h"
 #import "MLPageIndicator.h"
 #import "MLSearchField.h"
-#import "MLStandardEditMenu.h"
 #import "NSTextField+MLEditing.h"
 
 #include "ml_filter.h"
@@ -1179,6 +1178,16 @@ static void MLLogMemory(NSString *tag) {
        textView:(NSTextView *)textView
 doCommandBySelector:(SEL)commandSelector {
     (void)textView;
+    /* Never [textView doCommandBySelector:] here — NSTextView asks this
+     * delegate again and recurses until stack overflow (e.g. Right Arrow).
+     * Return NO so the field editor applies the command itself. */
+
+    /* Borderless overlay has no safe key-view loop; swallow Tab. */
+    if (commandSelector == @selector(insertTab:) ||
+        commandSelector == @selector(insertBacktab:)) {
+        return YES;
+    }
+
     if (control == self.folderTitleField) {
         if (commandSelector == @selector(insertNewline:) ||
             commandSelector == @selector(insertNewlineIgnoringFieldEditor:)) {
@@ -1191,15 +1200,7 @@ doCommandBySelector:(SEL)commandSelector {
             [self exitFolderSavingTitle:YES];
             return YES;
         }
-        if (MLIsStandardTextEditingCommand(commandSelector)) {
-            [textView doCommandBySelector:commandSelector];
-            return YES;
-        }
         return NO;
-    }
-    if (MLIsStandardTextEditingCommand(commandSelector)) {
-        [textView doCommandBySelector:commandSelector];
-        return YES;
     }
     if (commandSelector == @selector(insertNewline:) ||
         commandSelector == @selector(insertNewlineIgnoringFieldEditor:)) {
