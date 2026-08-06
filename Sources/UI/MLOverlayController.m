@@ -37,6 +37,8 @@
 @property (nonatomic, strong) NSTextField *folderTitleField;
 @property (nonatomic, copy) NSString *openFolderId;
 @property (nonatomic, assign) BOOL focusFolderTitleOnEnter;
+/** When YES, keep/restore search field first-responder across layout/reload. */
+@property (nonatomic, assign) BOOL prefersSearchFocus;
 @property (nonatomic, assign) const MLAppIndex *appIndex;
 @property (nonatomic, assign) uint32_t *filterIndices;
 @property (nonatomic, assign) size_t filterCapacity;
@@ -276,10 +278,6 @@ static void MLLogMemory(NSString *tag) {
         self.gridView.visibleCount = self.filterCount;
     }
 
-    if (!self.gridView.allowsExtractOnDragOutside) {
-        [self dismissFieldEditors];
-    }
-
     if (!preservePage) {
         [self.gridView clearSelection];
     }
@@ -293,8 +291,11 @@ static void MLLogMemory(NSString *tag) {
 
     if (self.focusFolderTitleOnEnter && !self.folderTitleField.hidden) {
         self.focusFolderTitleOnEnter = NO;
+        self.prefersSearchFocus = NO;
         [self.window makeFirstResponder:self.folderTitleField];
         [self.folderTitleField selectText:nil];
+    } else if (self.visible && self.prefersSearchFocus) {
+        [self focusSearchField];
     }
 
     NSLog(@"[MeoLaunch] %@ \"%@\" -> %zu (pages=%ld folder=%@)",
@@ -382,6 +383,10 @@ static void MLLogMemory(NSString *tag) {
     [w orderOut:nil];
     w.alphaValue = 1.0;
 
+    [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                    name:NSWindowDidBecomeKeyNotification
+                                                  object:w];
+
     /* Detach expensive blur first; keep strong locals so hierarchy release is orderly. */
     NSVisualEffectView *blur = self.blurView;
     blur.state = NSVisualEffectStateInactive;
@@ -459,10 +464,14 @@ static void MLLogMemory(NSString *tag) {
                                                  titleW,
                                                  titleH);
         self.folderTitleField.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin;
-        [content addSubview:self.folderTitleField positioned:NSWindowAbove relativeTo:self.searchField];
+        if (self.folderTitleField.superview != content) {
+            [content addSubview:self.folderTitleField positioned:NSWindowAbove relativeTo:self.searchField];
+        }
         gridTop = topPad + searchH + 12.0 + titleH + searchGap;
-    } else if (self.folderTitleField) {
-        [self.window endEditingFor:self.folderTitleField];
+    } else if (self.folderTitleField.superview) {
+        if ([self.folderTitleField currentEditor]) {
+            [self.window endEditingFor:self.folderTitleField];
+        }
         [self.folderTitleField removeFromSuperview];
     }
 
@@ -478,23 +487,32 @@ static void MLLogMemory(NSString *tag) {
     self.pageIndicator.frame = NSMakeRect((NSWidth(bounds) - indW) * 0.5, indBottom, indW, indH);
     self.pageIndicator.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMaxYMargin;
 
-    /* Backdrop stack: blur → tint → dismiss catcher, then grid/chrome above. */
-    [content addSubview:self.blurView positioned:NSWindowBelow relativeTo:self.dismissBackground];
     self.blurView.frame = bounds;
     self.blurView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-
-    [content addSubview:self.tintView positioned:NSWindowAbove relativeTo:self.blurView];
     self.tintView.frame = bounds;
     self.tintView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-
-    [content addSubview:self.dismissBackground positioned:NSWindowBelow relativeTo:self.gridView];
     self.dismissBackground.frame = bounds;
     self.dismissBackground.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
-    [content addSubview:self.pageIndicator positioned:NSWindowAbove relativeTo:self.gridView];
-    [content addSubview:self.searchField positioned:NSWindowAbove relativeTo:self.pageIndicator];
+    /*
+     * Re-addSubview: while a field editor is live ends editing (caret flash → blur).
+     * Only reorder the stack when search/folder title are not being edited.
+     */
+    BOOL textEditing = [self.searchField currentEditor] != nil ||
+                       [self.folderTitleField currentEditor] != nil;
+    if (!textEditing) {
+        [content addSubview:self.blurView positioned:NSWindowBelow relativeTo:self.dismissBackground];
+        [content addSubview:self.tintView positioned:NSWindowAbove relativeTo:self.blurView];
+        [content addSubview:self.dismissBackground positioned:NSWindowBelow relativeTo:self.gridView];
+        [content addSubview:self.pageIndicator positioned:NSWindowAbove relativeTo:self.gridView];
+        [content addSubview:self.searchField positioned:NSWindowAbove relativeTo:self.pageIndicator];
+        if (self.folderTitleField && !self.folderTitleField.hidden) {
+            [content addSubview:self.folderTitleField positioned:NSWindowAbove relativeTo:self.searchField];
+        }
+        [self removeStrayFieldEditors];
+    }
+
     [self syncPageIndicator];
-    [self removeStrayFieldEditors];
 }
 
 - (void)ensureWindow {
@@ -576,6 +594,10 @@ static void MLLogMemory(NSString *tag) {
     [content addSubview:self.pageIndicator];
 
     self.window = w;
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(overlayWindowDidBecomeKey:)
+                                                 name:NSWindowDidBecomeKeyNotification
+                                               object:w];
     [self applyBackdropAppearance];
     [self layoutChrome];
 }
@@ -732,6 +754,9 @@ static void MLLogMemory(NSString *tag) {
     self.searchField.stringValue = @"";
     self.openFolderId = folderId;
     self.focusFolderTitleOnEnter = focusTitle;
+    if (focusTitle) {
+        self.prefersSearchFocus = NO;
+    }
     [self applyFilterWithQuery:@""];
 }
 
@@ -739,6 +764,7 @@ static void MLLogMemory(NSString *tag) {
     if ([self.gridView visibleItemCount] == 0) {
         return;
     }
+    self.prefersSearchFocus = NO;
     [self.gridView selectFirstVisibleItem];
     [self.window makeFirstResponder:self.gridView];
 }
@@ -759,14 +785,16 @@ static void MLLogMemory(NSString *tag) {
     if (!content) {
         return;
     }
-    id fr = self.window.firstResponder;
+    /* Prefer currentEditor over firstResponder: layoutChrome may run mid-edit
+     * when firstResponder briefly is the NSTextField, not the NSTextView. */
+    NSText *searchEditor = self.visible ? [self.searchField currentEditor] : nil;
+    NSText *titleEditor = self.visible ? [self.folderTitleField currentEditor] : nil;
     for (NSView *sub in [content.subviews copy]) {
         if (![sub isKindOfClass:[NSTextView class]]) {
             continue;
         }
         NSTextView *tv = (NSTextView *)sub;
-        /* Keep the live search editor; remove orphaned folder / stale editors. */
-        if (fr == tv && (id)tv.delegate == self.searchField && self.visible) {
+        if (tv == (id)searchEditor || tv == (id)titleEditor) {
             [self styleFieldEditor:tv];
             continue;
         }
@@ -809,21 +837,31 @@ static void MLLogMemory(NSString *tag) {
     if (!self.visible || !self.searchField) {
         return;
     }
-    [self removeStrayFieldEditors];
+    self.prefersSearchFocus = YES;
     [NSApp activateIgnoringOtherApps:YES];
     [self.window makeKeyAndOrderFront:nil];
+
+    /* Already editing — do not reset caret/selection (breaks Cmd+A mid-edit). */
+    if ([self.searchField currentEditor] != nil) {
+        [self styleFieldEditor:[self.searchField currentEditor]];
+        return;
+    }
+
     BOOL ok = [self.window makeFirstResponder:self.searchField];
     if (!ok) {
-        /* Retry once after runloop turn */
         __weak typeof(self) weakSelf = self;
         dispatch_async(dispatch_get_main_queue(), ^{
             __strong typeof(weakSelf) self = weakSelf;
-            if (!self || !self.visible) {
+            if (!self || !self.visible || !self.prefersSearchFocus) {
                 return;
             }
             [self.window makeKeyWindow];
             [self.window makeFirstResponder:self.searchField];
-            [[self.searchField currentEditor] setSelectedRange:NSMakeRange(0, 0)];
+            NSText *editor = [self.searchField currentEditor];
+            if (editor) {
+                [self styleFieldEditor:editor];
+                [editor setSelectedRange:NSMakeRange(0, 0)];
+            }
         });
         return;
     }
@@ -833,9 +871,24 @@ static void MLLogMemory(NSString *tag) {
         [editor setSelectedRange:NSMakeRange([[editor string] length], 0)];
     } else {
         [self.searchField selectText:nil];
+        editor = [self.searchField currentEditor];
+        if (editor) {
+            [self styleFieldEditor:editor];
+            [editor setSelectedRange:NSMakeRange([[editor string] length], 0)];
+        }
     }
-    NSLog(@"[MeoLaunch] search field focused (firstResponder=%@)",
-          NSStringFromClass([self.window.firstResponder class]));
+    NSLog(@"[MeoLaunch] search field focused (firstResponder=%@ key=%d)",
+          NSStringFromClass([self.window.firstResponder class]),
+          self.window.isKeyWindow ? 1 : 0);
+}
+
+- (void)overlayWindowDidBecomeKey:(NSNotification *)note {
+    if (note.object != self.window || !self.visible || !self.prefersSearchFocus) {
+        return;
+    }
+    if ([self.searchField currentEditor] == nil) {
+        [self focusSearchField];
+    }
 }
 
 - (void)releaseFilterBuffer {
@@ -904,6 +957,7 @@ static void MLLogMemory(NSString *tag) {
     self.openFolderId = nil;
     self.focusFolderTitleOnEnter = NO;
     self.folderTitleField.hidden = YES;
+    self.prefersSearchFocus = YES;
     [self applyFilterWithQuery:@""];
 
     NSRunningApplication *front = [[NSWorkspace sharedWorkspace] frontmostApplication];
@@ -922,24 +976,33 @@ static void MLLogMemory(NSString *tag) {
     [self layoutChrome];
 
     NSTimeInterval dur = fade ? [self fadeDuration] : 0;
-    self.window.alphaValue = 1.0;
     [NSApp activateIgnoringOtherApps:YES];
     [self.window orderFrontRegardless];
     [self.window makeKeyAndOrderFront:nil];
     [self installEscapeMonitor];
     [self installOutsideClickMonitors];
-    [self focusSearchField];
 
-    /* Focus again after menu/activation settles */
-    __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-                       [weakSelf focusSearchField];
-                   });
-
+    /* Fade from near-zero first, then focus — avoids caret flash then alpha drop. */
     if (dur > 0) {
         self.window.alphaValue = 0.01;
         self.animating = YES;
+    } else {
+        self.window.alphaValue = 1.0;
+    }
+
+    [self focusSearchField];
+
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       __strong typeof(weakSelf) self = weakSelf;
+                       if (!self || self.showGeneration != gen) {
+                           return;
+                       }
+                       [self focusSearchField];
+                   });
+
+    if (dur > 0) {
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
             ctx.duration = dur;
             ctx.allowsImplicitAnimation = YES;
@@ -994,6 +1057,7 @@ static void MLLogMemory(NSString *tag) {
 
     self.visible = NO;
     self.animating = NO;
+    self.prefersSearchFocus = NO;
 
     NSRunningApplication *prev = self.previousApp;
     self.previousApp = nil;
@@ -1119,6 +1183,7 @@ doCommandBySelector:(SEL)commandSelector {
         if (commandSelector == @selector(insertNewline:) ||
             commandSelector == @selector(insertNewlineIgnoringFieldEditor:)) {
             [self commitFolderTitleIfNeeded];
+            self.prefersSearchFocus = NO;
             [self.window makeFirstResponder:self.gridView];
             return YES;
         }
