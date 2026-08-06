@@ -22,49 +22,10 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 
 - (void)start;
 - (void)stop;
-- (void)rebuildItems;
 
 - (void)overlayWillShow;
 - (void)overlayDidHide;
 
-/** Called after a custom / soft minimize. */
-- (void)refreshAfterCustomMinimize;
-
-/** Record window frame before soft-minimize; returns matched CGWindowID (0 if unknown). */
-- (CGWindowID)rememberWindowForCustomMinimizePID:(pid_t)pid
-                                           title:(NSString *)title
-                                          bounds:(CGRect)bounds
-                                        windowID:(CGWindowID)windowID;
-
-- (void)markSoftHiddenWindowID:(CGWindowID)windowID
-                           pid:(pid_t)pid
-                         title:(NSString *)title
-                 restoreFrame:(NSRect)restoreFrame
-                     screenID:(NSNumber *)screenID
-                     axWindow:(AXUIElementRef)axWindow;
-
-- (void)updateSoftHideMethod:(MLWindowHideMethod)method forWindowID:(CGWindowID)windowID;
-
-- (void)markSoftMinimizedWindowID:(CGWindowID)windowID;
-
-/**
- * Shared soft-minimize pipeline (yellow button + taskbar re-click).
- * Marks soft-hidden first, then hides via alpha / AXMinimized.
- * @param win May be NULL if only alpha hide is attempted with a known windowID.
- * @return YES if the window was hidden successfully.
- */
-- (BOOL)softMinimizeWindowWithAX:(AXUIElementRef)win
-                        windowID:(CGWindowID)windowID
-                             pid:(pid_t)pid
-                           title:(NSString *)title
-                    restoreFrame:(NSRect)restoreFrame;
-
-/**
- * Left-click on exposed desktop when no app window covers the screen (minimized,
- * soft-hidden, or all closed). Arms peek so the taskbar slides down; auto empty
- * desktop must not. A second desktop click while peeking exits and restores the bar.
- * Clicks on the taskbar itself are ignored (restore chips must not flash peek).
- */
-- (void)handleDesktopPeekClickAtCocoaPoint:(NSPoint)cocoaPoint;
-
 @end
+
+#import "MLTaskbarController+Categories.h"

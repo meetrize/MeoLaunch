@@ -54,6 +54,10 @@ FOUNDATION_EXPORT const MLPollOptions MLPollOptionsFast;
 - (NSString *)fingerprintForPaths:(NSArray<NSString *> *)paths windows:(NSArray<MLTaskbarWindowInfo *> *)windows;
 - (NSString *)computeWindowCensusToken;
 - (void)updateFocusPollTimer;
+@end
+
+@interface MLRunningAppsMonitor (SnapshotBuilder)
+
 - (void)pollWindows;
 - (void)pollWindowsWithOptions:(MLPollOptions)options;
 - (MLTaskbarWindowInfo *)copyWindowInfo:(MLTaskbarWindowInfo *)src minimized:(BOOL)minimized;
@@ -61,4 +65,5 @@ FOUNDATION_EXPORT const MLPollOptions MLPollOptionsFast;
 - (NSString *)preferredTaskTitleFromWindowTitle:(NSString *)title appName:(NSString *)appName;
 - (void)beginPollAXWindowsCache;
 - (void)endPollAXWindowsCache;
+
 @end
