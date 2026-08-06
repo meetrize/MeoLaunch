@@ -865,17 +865,16 @@
     NSUInteger perScreen = self.maxWindowEntries > 0 ? self.maxWindowEntries : MLTaskbarMaxWindowEntries;
     NSUInteger cap = perScreen * screenCount;
 
-    CFArrayRef onScreen = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                         kCGWindowListExcludeDesktopElements,
-                                                     kCGNullWindowID);
+    if (options == MLPollOptionNone) {
+        [self.windowCensus refreshWindowLists];
+    }
+
+    CFArrayRef onScreen = [self.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:NO];
     [self appendOnScreenWindowsFromList:onScreen
                                    into:windows
                           seenWindowIDs:seen
                             withWindows:withWindows
                                     cap:cap];
-    if (onScreen) {
-        CFRelease(onScreen);
-    }
 
     if ((options & MLPollOptionSkipGhostSweep) == 0) {
         [self removeCGGhostWindowsNotInAccessibility:windows seenWindowIDs:seen];
@@ -889,9 +888,7 @@
 
     [self rememberOnScreenWindows:windows];
 
-    CFArrayRef all = CGWindowListCopyWindowInfo(kCGWindowListOptionAll |
-                                                    kCGWindowListExcludeDesktopElements,
-                                                kCGNullWindowID);
+    CFArrayRef all = [self.windowCensus cachedAllWindowListRefreshingIfNeeded:NO];
     [self appendMinimizedFromCacheAndOffscreenList:all
                                               into:windows
                                      seenWindowIDs:seen
@@ -912,7 +909,6 @@
                 [aliveIDs addObject:@(wid)];
             }
         }
-        CFRelease(all);
     }
 
     [self appendSoftMinimizedWindows:windows

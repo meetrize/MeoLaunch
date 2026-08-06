@@ -34,7 +34,7 @@ NSNotificationName const MLLayoutStoreDidChangeNotification = @"MLLayoutStoreDid
 }
 
 - (void)dealloc {
-    [self.saveDebouncer cancel];
+    [_saveDebouncer cancel];
     if (_layout) {
         ml_layout_clear(_layout);
         free(_layout);

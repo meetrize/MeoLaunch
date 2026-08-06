@@ -577,6 +577,7 @@ const MLPollOptions MLPollOptionsFast =
         [self rescheduleCensusTimer];
     }
 
+    [self.windowCensus refreshWindowLists];
     NSString *token = [self computeWindowCensusToken];
     if ([token isEqualToString:self.lastCensusToken ?: @""]) {
         return;
@@ -630,6 +631,7 @@ const MLPollOptions MLPollOptionsFast =
 
     [self rebuildPidMapFromWorkspace];
     [self syncAXWindowObservers];
+    [self.windowCensus refreshWindowLists];
     [self pollWindows];
 
     self.censusBoostUntil = 0;
@@ -736,9 +738,7 @@ const MLPollOptions MLPollOptionsFast =
     if (wid == 0) {
         /* bounds are Cocoa; CG list is Quartz. */
         CGRect quartzHint = [MLScreenGeometry quartzBoundsFromCocoaRect:NSRectFromCGRect(bounds)];
-        CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                         kCGWindowListExcludeDesktopElements,
-                                                     kCGNullWindowID);
+        CFArrayRef list = [self.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
         if (list) {
             CFIndex count = CFArrayGetCount(list);
             CGFloat bestArea = -1;
@@ -767,7 +767,6 @@ const MLPollOptions MLPollOptionsFast =
                     }
                 }
             }
-            CFRelease(list);
         }
         if (wid != 0) {
             existing = self.lastSeenWindows[@(wid)];

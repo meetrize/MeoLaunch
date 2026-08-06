@@ -3,6 +3,7 @@
 #import <ApplicationServices/ApplicationServices.h>
 
 @class MLWindowSoftState;
+@class MLWindowCensus;
 
 enum {
     MLTaskbarTitleMaxChars = 40,
@@ -44,6 +45,8 @@ FOUNDATION_EXPORT NSString *const MLRunningAppsFrontWindowIDKey;
 @property (nonatomic, assign, readonly, getter=isRunning) BOOL running;
 /** Soft-hidden window lifecycle (chip survival + restore frames). */
 @property (nonatomic, strong, readonly) MLWindowSoftState *softState;
+/** Shared CGWindowList cache (census tick + taskbar visibility). */
+@property (nonatomic, strong, readonly) MLWindowCensus *windowCensus;
 
 - (void)start;
 - (void)stop;

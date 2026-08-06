@@ -115,9 +115,7 @@
         return 0;
     }
     pid_t pid = front.processIdentifier;
-    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                     kCGWindowListExcludeDesktopElements,
-                                                 kCGNullWindowID);
+    CFArrayRef list = [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
     if (!list) {
         return 0;
     }
@@ -155,7 +153,6 @@
         }
         break; /* first match is frontmost */
     }
-    CFRelease(list);
     return best;
 }
 
@@ -171,9 +168,7 @@
         return self.cachedTopmostUserWID;
     }
     pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
-    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                     kCGWindowListExcludeDesktopElements,
-                                                 kCGNullWindowID);
+    CFArrayRef list = [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
     if (!list) {
         return 0;
     }
@@ -231,7 +226,6 @@
         }
         break;
     }
-    CFRelease(list);
     self.cachedTopmostUserWID = best;
     self.cachedTopmostUserAt = now;
     return best;

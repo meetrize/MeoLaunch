@@ -63,6 +63,10 @@ These were fixed repeatedly. **Any peek / minimize / multi-screen change must pr
 
 ## 7. Regression checklist (before claiming peek work done)
 
+**Automated (headless):** `./Scripts/taskbar_peek_smoke.sh` — 10 controller logic assertions (no GUI).
+
+**Manual (GUI):** `./Scripts/taskbar_peek_checklist.sh` while MeoLaunch taskbar is running.
+
 1. All minimized → bar does not move.
 2. All windows closed → bar does not move (no auto peek).
 3. All windows closed → click desktop → bar slides down ~half; click again → restore.

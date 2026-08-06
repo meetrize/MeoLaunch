@@ -4,6 +4,7 @@
 #import "MLTaskbarScreenBar.h"
 #import "MLIconCache.h"
 #import "MLRunningAppsMonitor.h"
+#import "MLWindowCensus.h"
 #import "MLTaskbarPinStore.h"
 #import "MLWindowSoftState.h"
 

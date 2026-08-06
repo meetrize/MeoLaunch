@@ -3,7 +3,32 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <AppKit/AppKit.h>
 
+@interface MLWindowCensus ()
+@property (nonatomic, assign) CFArrayRef cachedOnScreenList;
+@property (nonatomic, assign) CFArrayRef cachedAllList;
+@property (nonatomic, assign) NSTimeInterval lastRefreshTime;
+@end
+
 @implementation MLWindowCensus
+
+- (instancetype)init {
+    self = [super init];
+    if (self) {
+        _maxStaleInterval = 0.25;
+    }
+    return self;
+}
+
+- (void)dealloc {
+    if (_cachedOnScreenList) {
+        CFRelease(_cachedOnScreenList);
+        _cachedOnScreenList = NULL;
+    }
+    if (_cachedAllList) {
+        CFRelease(_cachedAllList);
+        _cachedAllList = NULL;
+    }
+}
 
 + (NSInteger)screenIndexForCocoaPoint:(CGPoint)point {
     NSArray<NSScreen *> *screens = NSScreen.screens;
@@ -15,10 +40,64 @@
     return -1;
 }
 
+- (void)replaceCachedList:(CFArrayRef _Nullable * _Nonnull)slot withNewList:(CFArrayRef)newList {
+    if (*slot) {
+        CFRelease(*slot);
+        *slot = NULL;
+    }
+    if (newList) {
+        *slot = (CFArrayRef)CFRetain(newList);
+    }
+}
+
+- (void)refreshWindowLists {
+    CFArrayRef onScreen = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
+                                                         kCGWindowListExcludeDesktopElements,
+                                                     kCGNullWindowID);
+    CFArrayRef all = CGWindowListCopyWindowInfo(kCGWindowListOptionAll |
+                                                   kCGWindowListExcludeDesktopElements,
+                                               kCGNullWindowID);
+    [self replaceCachedList:&_cachedOnScreenList withNewList:onScreen];
+    [self replaceCachedList:&_cachedAllList withNewList:all];
+    if (onScreen) {
+        CFRelease(onScreen);
+    }
+    if (all) {
+        CFRelease(all);
+    }
+    self.lastRefreshTime = [NSDate date].timeIntervalSinceReferenceDate;
+}
+
+- (BOOL)shouldRefreshForStaleCheck:(BOOL)refreshIfStale {
+    if (!refreshIfStale) {
+        return NO;
+    }
+    if (!_cachedOnScreenList || !_cachedAllList) {
+        return YES;
+    }
+    if (self.maxStaleInterval <= 0) {
+        return YES;
+    }
+    NSTimeInterval age = [NSDate date].timeIntervalSinceReferenceDate - self.lastRefreshTime;
+    return age > self.maxStaleInterval;
+}
+
+- (CFArrayRef)cachedOnScreenWindowListRefreshingIfNeeded:(BOOL)refreshIfStale {
+    if ([self shouldRefreshForStaleCheck:refreshIfStale]) {
+        [self refreshWindowLists];
+    }
+    return _cachedOnScreenList;
+}
+
+- (CFArrayRef)cachedAllWindowListRefreshingIfNeeded:(BOOL)refreshIfStale {
+    if ([self shouldRefreshForStaleCheck:refreshIfStale]) {
+        [self refreshWindowLists];
+    }
+    return _cachedAllList;
+}
+
 - (NSString *)computeTokenSkippingSoftHidden:(NSSet<NSNumber *> *)softHiddenIDs {
-    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                     kCGWindowListExcludeDesktopElements,
-                                                 kCGNullWindowID);
+    CFArrayRef list = [self cachedOnScreenWindowListRefreshingIfNeeded:YES];
     if (!list) {
         return @"";
     }
@@ -76,7 +155,6 @@
         [rows addObject:[NSString stringWithFormat:@"%u:%d:%ld:%d:%d",
                                                    (unsigned)wid, (int)pid, (long)screenIdx, bw, bh]];
     }
-    CFRelease(list);
     [rows sortUsingSelector:@selector(compare:)];
     if (softHiddenIDs.count > 0) {
         NSArray *soft = [[softHiddenIDs allObjects] sortedArrayUsingSelector:@selector(compare:)];

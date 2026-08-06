@@ -41,6 +41,10 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @implementation MLConfigStore
 
 + (NSURL *)configFileURL {
+    const char *overridePath = getenv("MEOLAUNCH_CONFIG_PATH");
+    if (overridePath && overridePath[0] != '\0') {
+        return [NSURL fileURLWithPath:@(overridePath) isDirectory:NO];
+    }
     NSArray<NSURL *> *urls = [[NSFileManager defaultManager] URLsForDirectory:NSApplicationSupportDirectory
                                                                     inDomains:NSUserDomainMask];
     NSURL *base = urls.firstObject;

@@ -1,4 +1,4 @@
-/* Verify config.json round-trip for M4. */
+/* Verify config.json round-trip for M4. Uses MEOLAUNCH_CONFIG_PATH (set by Scripts/config_smoke.sh). */
 #import <Foundation/Foundation.h>
 #import "MLConfigStore.h"
 
@@ -7,13 +7,7 @@ int main(int argc, const char *argv[]) {
     (void)argv;
     @autoreleasepool {
         NSURL *url = [MLConfigStore configFileURL];
-        NSFileManager *fm = [NSFileManager defaultManager];
-        NSURL *bak = [url URLByAppendingPathExtension:@"smoke_bak"];
-        BOOL had = [fm fileExistsAtPath:url.path];
-        if (had) {
-            [fm removeItemAtURL:bak error:nil];
-            [fm copyItemAtURL:url toURL:bak error:nil];
-        }
+        [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
 
         MLConfigStore *store = [[MLConfigStore alloc] init];
         [store loadDefaults];
@@ -52,13 +46,7 @@ int main(int argc, const char *argv[]) {
                loaded.gridConfig.cols,
                loaded.gridConfig.rows);
 
-        if (had) {
-            [fm removeItemAtURL:url error:nil];
-            [fm moveItemAtURL:bak toURL:url error:nil];
-        } else {
-            [fm removeItemAtURL:url error:nil];
-            [fm removeItemAtURL:bak error:nil];
-        }
+        [[NSFileManager defaultManager] removeItemAtURL:url error:nil];
         return 0;
     }
 }

@@ -167,9 +167,7 @@
         return ids;
     }
 
-    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                     kCGWindowListExcludeDesktopElements,
-                                                 kCGNullWindowID);
+    CFArrayRef list = [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
     if (list) {
         CFIndex count = CFArrayGetCount(list);
         for (CFIndex i = 0; i < count; i++) {
@@ -252,7 +250,6 @@
                 }
             }
         }
-        CFRelease(list);
     }
 
     /* AXFullScreen on the frontmost app (Douyin / players often set this). */
@@ -320,9 +317,7 @@
     NSMutableDictionary<NSNumber *, NSNumber *> *centerCoverByScreen = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSNumber *, NSNumber *> *onScreenByScreen = [NSMutableDictionary dictionary];
 
-    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                     kCGWindowListExcludeDesktopElements,
-                                                 kCGNullWindowID);
+    CFArrayRef list = [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
     if (list) {
         CFIndex count = CFArrayGetCount(list);
         for (CFIndex i = 0; i < count; i++) {
@@ -391,7 +386,6 @@
                 }
             }
         }
-        CFRelease(list);
     }
 
     for (MLTaskbarScreenBar *bar in self.bars) {
@@ -677,9 +671,7 @@
     pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
     NSRect main = NSScreen.mainScreen.frame;
     CGPoint q = CGPointMake(cocoaPoint.x, NSMaxY(main) - cocoaPoint.y);
-    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                     kCGWindowListExcludeDesktopElements,
-                                                 kCGNullWindowID);
+    CFArrayRef list = [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
     if (!list) {
         return YES;
     }
@@ -709,7 +701,6 @@
             CFDictionaryRef boundsDict = CFDictionaryGetValue(info, kCGWindowBounds);
             if (boundsDict && CGRectMakeWithDictionaryRepresentation(boundsDict, &boundsQ) &&
                 CGRectContainsPoint(boundsQ, q)) {
-                CFRelease(list);
                 return NO;
             }
             continue;
@@ -770,7 +761,6 @@
         hitApp = YES;
         break;
     }
-    CFRelease(list);
     return hitFinderDesktop || !hitApp;
 }
 

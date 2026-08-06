@@ -31,7 +31,7 @@ NSNotificationName const MLTaskbarPinsDidChangeNotification = @"MLTaskbarPinsDid
 }
 
 - (void)dealloc {
-    [self.saveDebouncer cancel];
+    [_saveDebouncer cancel];
 }
 
 - (NSArray<NSString *> *)pinnedPaths {

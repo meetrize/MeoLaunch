@@ -108,25 +108,19 @@
         }
     };
 
-    CFArrayRef onList = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
-                                                       kCGWindowListExcludeDesktopElements,
-                                                   kCGNullWindowID);
+    CFArrayRef onList = [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
     if (onList) {
         CFIndex count = CFArrayGetCount(onList);
         for (CFIndex i = 0; i < count; i++) {
             consume((CFDictionaryRef)CFArrayGetValueAtIndex(onList, i), NO);
         }
-        CFRelease(onList);
     }
-    CFArrayRef allList = CGWindowListCopyWindowInfo(kCGWindowListOptionAll |
-                                                        kCGWindowListExcludeDesktopElements,
-                                                    kCGNullWindowID);
+    CFArrayRef allList = [self.monitor.windowCensus cachedAllWindowListRefreshingIfNeeded:YES];
     if (allList) {
         CFIndex count = CFArrayGetCount(allList);
         for (CFIndex i = 0; i < count; i++) {
             consume((CFDictionaryRef)CFArrayGetValueAtIndex(allList, i), YES);
         }
-        CFRelease(allList);
     }
 
     if (outCover) {
@@ -447,9 +441,7 @@
 - (NSInteger)countForeignOffscreenWindowsExcluding:(NSSet<NSNumber *> *)hiddenIDs {
     pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
     NSInteger foreign = 0;
-    CFArrayRef allList = CGWindowListCopyWindowInfo(kCGWindowListOptionAll |
-                                                        kCGWindowListExcludeDesktopElements,
-                                                    kCGNullWindowID);
+    CFArrayRef allList = [self.monitor.windowCensus cachedAllWindowListRefreshingIfNeeded:YES];
     if (!allList) {
         return 0;
     }
@@ -517,7 +509,6 @@
         }
         foreign += 1;
     }
-    CFRelease(allList);
     return foreign;
 }
 
