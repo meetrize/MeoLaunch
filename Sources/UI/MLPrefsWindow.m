@@ -7,6 +7,8 @@
 #import "MLHotKeyDisplay.h"
 #import "MLStrings.h"
 
+#import <Carbon/Carbon.h>
+
 /** Top-down layout coordinates for the prefs form. */
 @interface MLPrefsFormView : NSView
 @end
@@ -19,6 +21,11 @@
 @interface MLPrefsWindow () <NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @property (nonatomic, weak) MLConfigStore *config;
 @property (nonatomic, strong) NSWindow *window;
+@property (nonatomic, strong) NSScrollView *outerScroll;
+@property (nonatomic, strong) NSView *bottomBar;
+@property (nonatomic, strong) NSTextField *sectionGeneral;
+@property (nonatomic, strong) NSTextField *sectionHot;
+@property (nonatomic, strong) NSTextField *sectionPerf;
 @property (nonatomic, strong) NSTextField *languageLabel;
 @property (nonatomic, strong) NSPopUpButton *languagePopup;
 @property (nonatomic, strong) NSTextField *colsLabel;
@@ -59,6 +66,8 @@
 @property (nonatomic, strong) NSButton *addBtn;
 @property (nonatomic, strong) NSButton *removeBtn;
 @property (nonatomic, strong) NSButton *rescanBtn;
+@property (nonatomic, strong) NSButton *doneBtn;
+@property (nonatomic, strong) NSButton *resetBtn;
 @property (nonatomic, strong) NSTextField *pathLabel;
 @property (nonatomic, strong) NSTableView *extraRootsTable;
 @property (nonatomic, strong) NSArray<NSString *> *extraRootsCache;
@@ -66,6 +75,18 @@
 @end
 
 @implementation MLPrefsWindow
+
+static const CGFloat kPrefsWinW = 820;
+static const CGFloat kPrefsWinH = 720;
+static const CGFloat kPrefsMinW = 760;
+static const CGFloat kPrefsMinH = 640;
+static const CGFloat kPrefsBottomBarH = 52;
+static const CGFloat kPrefsPad = 20;
+static const CGFloat kPrefsContentW = 780;
+static const CGFloat kPrefsColGap = 20;
+/** Wide enough for zh「叠层图标缓存」/ en「Overlay display」. */
+static const CGFloat kPrefsLabelW = 128;
+static const CGFloat kPrefsValueW = 48;
 
 - (instancetype)initWithConfigStore:(MLConfigStore *)config {
     self = [super init];
@@ -83,6 +104,8 @@
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
+
+#pragma mark - Layout helpers
 
 - (NSTextField *)makeLabel:(NSString *)text frame:(NSRect)frame {
     NSTextField *f = [NSTextField labelWithString:text];
@@ -112,12 +135,67 @@
     return s;
 }
 
+- (NSTextField *)makeSectionTitle:(NSString *)text atY:(CGFloat *)yInOut inView:(NSView *)c {
+    CGFloat y = *yInOut;
+    if (y > kPrefsPad + 4) {
+        y += 6;
+        NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 1)];
+        line.boxType = NSBoxSeparator;
+        [c addSubview:line];
+        y += 10;
+    }
+    NSTextField *title = [self makeLabel:text
+                                   frame:NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 20)];
+    title.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
+    [c addSubview:title];
+    *yInOut = y + 26;
+    return title;
+}
+
+- (void)splitColumnsAtY:(CGFloat)y
+                 height:(CGFloat)h
+                   left:(NSRect *)outLeft
+                  right:(NSRect *)outRight {
+    CGFloat inner = kPrefsContentW - kPrefsPad * 2;
+    CGFloat colW = floor((inner - kPrefsColGap) * 0.5);
+    *outLeft = NSMakeRect(kPrefsPad, y, colW, h);
+    *outRight = NSMakeRect(kPrefsPad + colW + kPrefsColGap, y, colW, h);
+}
+
+- (void)placeLabel:(NSTextField *)label
+            slider:(NSSlider *)slider
+             value:(NSTextField *)valueLabel
+            inRect:(NSRect)r {
+    CGFloat labelW = kPrefsLabelW;
+    CGFloat valueW = kPrefsValueW;
+    label.frame = NSMakeRect(NSMinX(r), NSMinY(r) + 2, labelW, 20);
+    label.lineBreakMode = NSLineBreakByClipping;
+    valueLabel.frame = NSMakeRect(NSMaxX(r) - valueW, NSMinY(r) + 2, valueW, 20);
+    valueLabel.alignment = NSTextAlignmentRight;
+    CGFloat sliderX = NSMinX(r) + labelW + 8;
+    CGFloat sliderW = NSMaxX(r) - valueW - 6 - sliderX;
+    if (sliderW < 60) {
+        sliderW = 60;
+    }
+    slider.frame = NSMakeRect(sliderX, NSMinY(r), sliderW, 24);
+}
+
+- (void)placeLabel:(NSTextField *)label control:(NSView *)control inRect:(NSRect)r {
+    CGFloat labelW = kPrefsLabelW;
+    label.frame = NSMakeRect(NSMinX(r), NSMinY(r) + 2, labelW, 20);
+    label.lineBreakMode = NSLineBreakByClipping;
+    CGFloat ctrlX = NSMinX(r) + labelW + 8;
+    control.frame = NSMakeRect(ctrlX, NSMinY(r), NSMaxX(r) - ctrlX, 26);
+}
+
+#pragma mark - Window
+
 - (void)ensureWindow {
     if (self.window) {
         return;
     }
 
-    NSRect rect = NSMakeRect(0, 0, 520, 820);
+    NSRect rect = NSMakeRect(0, 0, kPrefsWinW, kPrefsWinH);
     NSWindow *w = [[NSWindow alloc] initWithContentRect:rect
                                               styleMask:NSWindowStyleMaskTitled |
                                                         NSWindowStyleMaskClosable |
@@ -125,56 +203,104 @@
                                                 backing:NSBackingStoreBuffered
                                                   defer:NO];
     w.releasedWhenClosed = NO;
-    w.minSize = NSMakeSize(480, 680);
+    w.minSize = NSMakeSize(kPrefsMinW, kPrefsMinH);
     w.level = NSStatusWindowLevel + 1;
     w.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces |
                            NSWindowCollectionBehaviorFullScreenAuxiliary;
 
-    NSScrollView *outerScroll = [[NSScrollView alloc] initWithFrame:w.contentView.bounds];
+    NSView *content = w.contentView;
+    CGFloat barH = kPrefsBottomBarH;
+    NSRect barFrame = NSMakeRect(0, 0, NSWidth(content.bounds), barH);
+    NSView *bar = [[NSView alloc] initWithFrame:barFrame];
+    bar.autoresizingMask = NSViewWidthSizable | NSViewMaxYMargin;
+    self.bottomBar = bar;
+
+    self.resetBtn = [NSButton buttonWithTitle:@""
+                                       target:self
+                                       action:@selector(resetDefaults:)];
+    self.resetBtn.bezelStyle = NSBezelStyleRounded;
+    self.resetBtn.frame = NSMakeRect(kPrefsPad, 10, 160, 28);
+    self.resetBtn.autoresizingMask = NSViewMaxXMargin;
+    [bar addSubview:self.resetBtn];
+
+    self.doneBtn = [NSButton buttonWithTitle:@""
+                                      target:self
+                                      action:@selector(done:)];
+    self.doneBtn.bezelStyle = NSBezelStyleRounded;
+    self.doneBtn.keyEquivalent = @"\r";
+    self.doneBtn.frame = NSMakeRect(NSWidth(barFrame) - kPrefsPad - 100, 10, 100, 28);
+    self.doneBtn.autoresizingMask = NSViewMinXMargin;
+    [bar addSubview:self.doneBtn];
+
+    /* Esc closes prefs unless hotkey recorder consumes it while recording. */
+    NSButton *escClose = [NSButton buttonWithTitle:@""
+                                            target:self
+                                            action:@selector(done:)];
+    escClose.keyEquivalent = @"\033";
+    escClose.frame = NSZeroRect;
+    [bar addSubview:escClose];
+
+    NSBox *barLine = [[NSBox alloc] initWithFrame:NSMakeRect(0, barH - 1, NSWidth(barFrame), 1)];
+    barLine.boxType = NSBoxSeparator;
+    barLine.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+    [bar addSubview:barLine];
+
+    NSRect scrollFrame = NSMakeRect(0, barH, NSWidth(content.bounds), NSHeight(content.bounds) - barH);
+    NSScrollView *outerScroll = [[NSScrollView alloc] initWithFrame:scrollFrame];
     outerScroll.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     outerScroll.hasVerticalScroller = YES;
     outerScroll.hasHorizontalScroller = NO;
     outerScroll.autohidesScrollers = YES;
     outerScroll.borderType = NSNoBorder;
     outerScroll.drawsBackground = NO;
+    self.outerScroll = outerScroll;
 
-    const CGFloat contentW = 500;
-    const CGFloat pad = 16;
-    CGFloat y = pad;
+    CGFloat y = kPrefsPad;
+    MLPrefsFormView *c = [[MLPrefsFormView alloc] initWithFrame:NSMakeRect(0, 0, kPrefsContentW, 10)];
 
-    MLPrefsFormView *c = [[MLPrefsFormView alloc] initWithFrame:NSMakeRect(0, 0, contentW, 10)];
+    /* —— General —— */
+    self.sectionGeneral = [self makeSectionTitle:@"" atY:&y inView:c];
 
-    self.languageLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    NSRect left, right;
+    [self splitColumnsAtY:y height:28 left:&left right:&right];
+    self.languageLabel = [self makeLabel:@"" frame:NSZeroRect];
     [c addSubview:self.languageLabel];
-    self.languagePopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(140, y - 1, 180, 26) pullsDown:NO];
+    self.languagePopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     [self.languagePopup addItemsWithTitles:@[ @"", @"" ]];
     self.languagePopup.target = self;
     self.languagePopup.action = @selector(languageChanged:);
     [c addSubview:self.languagePopup];
-    y += 40;
+    [self placeLabel:self.languageLabel control:self.languagePopup inRect:left];
 
-    self.colsLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
-    [c addSubview:self.colsLabel];
+    self.overlayScreenLabel = [self makeLabel:@"" frame:NSZeroRect];
+    [c addSubview:self.overlayScreenLabel];
+    self.overlayScreenPopup = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    self.overlayScreenPopup.target = self;
+    self.overlayScreenPopup.action = @selector(overlayScreenChanged:);
+    [c addSubview:self.overlayScreenPopup];
+    [self placeLabel:self.overlayScreenLabel control:self.overlayScreenPopup inRect:right];
+    y += 34;
+
+    [self splitColumnsAtY:y height:28 left:&left right:&right];
+    self.colsLabel = [self makeLabel:@"" frame:NSZeroRect];
     self.colsSlider = [self makeIntSliderMin:4 max:10 action:@selector(colsChanged:)];
-    self.colsSlider.frame = NSMakeRect(136, y - 2, 280, 28);
+    self.colsValueLabel = [self makeLabel:@"7" frame:NSZeroRect];
+    [c addSubview:self.colsLabel];
     [c addSubview:self.colsSlider];
-    self.colsValueLabel = [self makeLabel:@"7" frame:NSMakeRect(430, y, 40, 22)];
-    self.colsValueLabel.alignment = NSTextAlignmentRight;
     [c addSubview:self.colsValueLabel];
-    y += 40;
+    [self placeLabel:self.colsLabel slider:self.colsSlider value:self.colsValueLabel inRect:left];
 
-    self.rowsLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
-    [c addSubview:self.rowsLabel];
+    self.rowsLabel = [self makeLabel:@"" frame:NSZeroRect];
     self.rowsSlider = [self makeIntSliderMin:3 max:8 action:@selector(rowsChanged:)];
-    self.rowsSlider.frame = NSMakeRect(136, y - 2, 280, 28);
+    self.rowsValueLabel = [self makeLabel:@"5" frame:NSZeroRect];
+    [c addSubview:self.rowsLabel];
     [c addSubview:self.rowsSlider];
-    self.rowsValueLabel = [self makeLabel:@"5" frame:NSMakeRect(430, y, 40, 22)];
-    self.rowsValueLabel.alignment = NSTextAlignmentRight;
     [c addSubview:self.rowsValueLabel];
-    y += 40;
+    [self placeLabel:self.rowsLabel slider:self.rowsSlider value:self.rowsValueLabel inRect:right];
+    y += 34;
 
-    self.iconSizeLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
-    [c addSubview:self.iconSizeLabel];
+    [self splitColumnsAtY:y height:28 left:&left right:&right];
+    self.iconSizeLabel = [self makeLabel:@"" frame:NSZeroRect];
     self.iconSizeSlider = [NSSlider sliderWithValue:0
                                            minValue:0
                                            maxValue:160
@@ -183,15 +309,16 @@
     self.iconSizeSlider.numberOfTickMarks = 11;
     self.iconSizeSlider.allowsTickMarkValuesOnly = NO;
     self.iconSizeSlider.tickMarkPosition = NSTickMarkPositionBelow;
-    self.iconSizeSlider.frame = NSMakeRect(136, y - 2, 280, 28);
+    self.iconSizeValueLabel = [self makeLabel:@"" frame:NSZeroRect];
+    [c addSubview:self.iconSizeLabel];
     [c addSubview:self.iconSizeSlider];
-    self.iconSizeValueLabel = [self makeLabel:@"" frame:NSMakeRect(420, y, 50, 22)];
-    self.iconSizeValueLabel.alignment = NSTextAlignmentRight;
     [c addSubview:self.iconSizeValueLabel];
-    y += 40;
+    [self placeLabel:self.iconSizeLabel
+              slider:self.iconSizeSlider
+               value:self.iconSizeValueLabel
+              inRect:left];
 
-    self.opacityLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
-    [c addSubview:self.opacityLabel];
+    self.opacityLabel = [self makeLabel:@"" frame:NSZeroRect];
     self.opacitySlider = [NSSlider sliderWithValue:55
                                           minValue:0
                                           maxValue:100
@@ -200,87 +327,89 @@
     self.opacitySlider.numberOfTickMarks = 11;
     self.opacitySlider.allowsTickMarkValuesOnly = NO;
     self.opacitySlider.tickMarkPosition = NSTickMarkPositionBelow;
-    self.opacitySlider.frame = NSMakeRect(136, y - 2, 280, 28);
+    self.opacityValueLabel = [self makeLabel:@"55%" frame:NSZeroRect];
+    [c addSubview:self.opacityLabel];
     [c addSubview:self.opacitySlider];
-    self.opacityValueLabel = [self makeLabel:@"55%" frame:NSMakeRect(420, y, 50, 22)];
-    self.opacityValueLabel.alignment = NSTextAlignmentRight;
     [c addSubview:self.opacityValueLabel];
-    y += 40;
+    [self placeLabel:self.opacityLabel
+              slider:self.opacitySlider
+               value:self.opacityValueLabel
+              inRect:right];
+    y += 34;
 
-    self.overlayScreenLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
-    [c addSubview:self.overlayScreenLabel];
-    self.overlayScreenPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(140, y - 1, 320, 26)
-                                                         pullsDown:NO];
-    self.overlayScreenPopup.target = self;
-    self.overlayScreenPopup.action = @selector(overlayScreenChanged:);
-    [c addSubview:self.overlayScreenPopup];
-    y += 40;
-
+    [self splitColumnsAtY:y height:24 left:&left right:&right];
     self.launchAtLoginCheckbox = [NSButton checkboxWithTitle:@""
                                                       target:self
                                                       action:@selector(launchAtLoginChanged:)];
-    self.launchAtLoginCheckbox.frame = NSMakeRect(pad, y, 320, 24);
+    self.launchAtLoginCheckbox.frame = left;
     [c addSubview:self.launchAtLoginCheckbox];
-    y += 32;
+    self.taskbarEnabled = [NSButton checkboxWithTitle:@""
+                                               target:self
+                                               action:@selector(prefsChanged:)];
+    self.taskbarEnabled.frame = right;
+    [c addSubview:self.taskbarEnabled];
+    y += 28;
 
+    self.memoryFreeEnabled = [NSButton checkboxWithTitle:@""
+                                                  target:self
+                                                  action:@selector(prefsChanged:)];
+    self.memoryFreeEnabled.frame = NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 24);
+    [c addSubview:self.memoryFreeEnabled];
+    y += 30;
+
+    /* —— Hot corner & shortcut —— */
+    self.sectionHot = [self makeSectionTitle:@"" atY:&y inView:c];
+
+    [self splitColumnsAtY:y height:28 left:&left right:&right];
     self.hotCornerEnabled = [NSButton checkboxWithTitle:@""
                                                  target:self
                                                  action:@selector(prefsChanged:)];
-    self.hotCornerEnabled.frame = NSMakeRect(pad, y, 280, 24);
+    self.hotCornerEnabled.frame = left;
     [c addSubview:self.hotCornerEnabled];
-    y += 32;
 
-    self.hotCornerLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    /* Right: corner popup + size field (compact; checkbox carries the meaning). */
+    CGFloat popupW = floor(NSWidth(right) * 0.58);
+    self.hotCornerLabel = [self makeLabel:@"" frame:NSMakeRect(NSMinX(right), NSMinY(right) + 2, 1, 20)];
+    self.hotCornerLabel.hidden = YES;
     [c addSubview:self.hotCornerLabel];
-    self.cornerPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(140, y - 1, 180, 26) pullsDown:NO];
+    self.cornerPopup = [[NSPopUpButton alloc] initWithFrame:NSMakeRect(NSMinX(right), NSMinY(right), popupW, 26)
+                                                  pullsDown:NO];
     [self.cornerPopup addItemsWithTitles:@[ @"", @"", @"", @"", @"" ]];
     self.cornerPopup.target = self;
     self.cornerPopup.action = @selector(prefsChanged:);
     [c addSubview:self.cornerPopup];
-    y += 32;
-
-    self.sizeLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    CGFloat sizeX = NSMinX(right) + popupW + 6;
+    self.sizeLabel = [self makeLabel:@"" frame:NSMakeRect(sizeX, NSMinY(right) + 2, 28, 20)];
     [c addSubview:self.sizeLabel];
-    self.sizeField = [self makeField:NSMakeRect(140, y, 60, 24)];
+    self.sizeField = [self makeField:NSMakeRect(sizeX + 30, NSMinY(right), NSMaxX(right) - (sizeX + 30), 24)];
     self.sizeField.delegate = self;
     self.sizeField.target = self;
     self.sizeField.action = @selector(prefsChanged:);
     [c addSubview:self.sizeField];
-    y += 36;
+    y += 34;
 
+    [self splitColumnsAtY:y height:28 left:&left right:&right];
     self.hotkeyEnabled = [NSButton checkboxWithTitle:@""
                                               target:self
                                               action:@selector(prefsChanged:)];
-    self.hotkeyEnabled.frame = NSMakeRect(pad, y, 320, 24);
+    self.hotkeyEnabled.frame = left;
     [c addSubview:self.hotkeyEnabled];
-    y += 32;
-
-    self.hotkeyLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
+    self.hotkeyLabel = [self makeLabel:@"" frame:NSZeroRect];
     [c addSubview:self.hotkeyLabel];
-    self.hotkeyRecorder = [[MLHotKeyRecorder alloc] initWithFrame:NSMakeRect(140, y - 2, 220, 28)];
+    self.hotkeyRecorder = [[MLHotKeyRecorder alloc] initWithFrame:NSZeroRect];
     __weak typeof(self) weakSelf = self;
     self.hotkeyRecorder.onChange = ^{
         [weakSelf hotkeyRecorderChanged];
     };
     [c addSubview:self.hotkeyRecorder];
-    y += 36;
+    [self placeLabel:self.hotkeyLabel control:self.hotkeyRecorder inRect:right];
+    y += 34;
 
-    self.taskbarEnabled = [NSButton checkboxWithTitle:@""
-                                               target:self
-                                               action:@selector(prefsChanged:)];
-    self.taskbarEnabled.frame = NSMakeRect(pad, y, 320, 24);
-    [c addSubview:self.taskbarEnabled];
-    y += 32;
+    /* —— Performance —— */
+    self.sectionPerf = [self makeSectionTitle:@"" atY:&y inView:c];
 
-    self.memoryFreeEnabled = [NSButton checkboxWithTitle:@""
-                                                  target:self
-                                                  action:@selector(prefsChanged:)];
-    self.memoryFreeEnabled.frame = NSMakeRect(pad, y, 360, 24);
-    [c addSubview:self.memoryFreeEnabled];
-    y += 32;
-
-    self.pollLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
-    [c addSubview:self.pollLabel];
+    [self splitColumnsAtY:y height:28 left:&left right:&right];
+    self.pollLabel = [self makeLabel:@"" frame:NSZeroRect];
     self.pollSlider = [NSSlider sliderWithValue:10
                                        minValue:5
                                        maxValue:50
@@ -289,61 +418,54 @@
     self.pollSlider.numberOfTickMarks = 10;
     self.pollSlider.allowsTickMarkValuesOnly = NO;
     self.pollSlider.tickMarkPosition = NSTickMarkPositionBelow;
-    self.pollSlider.frame = NSMakeRect(136, y - 2, 280, 28);
+    self.pollValueLabel = [self makeLabel:@"1.0s" frame:NSZeroRect];
+    [c addSubview:self.pollLabel];
     [c addSubview:self.pollSlider];
-    self.pollValueLabel = [self makeLabel:@"1.0s" frame:NSMakeRect(420, y, 50, 22)];
-    self.pollValueLabel.alignment = NSTextAlignmentRight;
     [c addSubview:self.pollValueLabel];
-    y += 40;
+    [self placeLabel:self.pollLabel slider:self.pollSlider value:self.pollValueLabel inRect:left];
 
-    self.iconCacheLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 120, 22)];
-    [c addSubview:self.iconCacheLabel];
+    self.iconCacheLabel = [self makeLabel:@"" frame:NSZeroRect];
     self.iconCacheSlider = [self makeIntSliderMin:32 max:256 action:@selector(iconCacheChanged:)];
     self.iconCacheSlider.numberOfTickMarks = 8;
     self.iconCacheSlider.allowsTickMarkValuesOnly = YES;
-    self.iconCacheSlider.frame = NSMakeRect(136, y - 2, 280, 28);
+    self.iconCacheValueLabel = [self makeLabel:@"128" frame:NSZeroRect];
+    [c addSubview:self.iconCacheLabel];
     [c addSubview:self.iconCacheSlider];
-    self.iconCacheValueLabel = [self makeLabel:@"128" frame:NSMakeRect(420, y, 50, 22)];
-    self.iconCacheValueLabel.alignment = NSTextAlignmentRight;
     [c addSubview:self.iconCacheValueLabel];
-    y += 40;
+    [self placeLabel:self.iconCacheLabel
+              slider:self.iconCacheSlider
+               value:self.iconCacheValueLabel
+              inRect:right];
+    y += 36;
 
-    self.scanTitle = [self makeLabel:@"" frame:NSMakeRect(pad, y, 200, 20)];
-    self.scanTitle.font = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold];
-    [c addSubview:self.scanTitle];
-    y += 22;
+    /* —— App folders —— */
+    self.scanTitle = [self makeSectionTitle:@"" atY:&y inView:c];
 
-    self.scanHint = [self makeLabel:@"" frame:NSMakeRect(pad, y, 468, 32)];
+    self.scanHint = [self makeLabel:@"" frame:NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 28)];
     self.scanHint.font = [NSFont systemFontOfSize:11];
     self.scanHint.textColor = [NSColor secondaryLabelColor];
     self.scanHint.maximumNumberOfLines = 2;
     self.scanHint.lineBreakMode = NSLineBreakByWordWrapping;
     [c addSubview:self.scanHint];
-    y += 36;
+    y += 30;
 
-    self.sysLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 200, 16)];
+    self.sysLabel = [self makeLabel:@"" frame:NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 16)];
     self.sysLabel.font = [NSFont systemFontOfSize:11];
     self.sysLabel.textColor = [NSColor secondaryLabelColor];
+    self.sysLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
     [c addSubview:self.sysLabel];
-    y += 16;
+    y += 20;
 
-    for (NSString *root in [MLConfigStore builtInScanRoots]) {
-        NSTextField *row = [self makeLabel:root frame:NSMakeRect(pad + 8, y, 456, 14)];
-        row.font = [NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightRegular];
-        row.textColor = [NSColor tertiaryLabelColor];
-        [c addSubview:row];
-        y += 14;
-    }
-    y += 6;
-
-    self.extraLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 200, 16)];
+    self.extraLabel = [self makeLabel:@"" frame:NSMakeRect(kPrefsPad, y, 200, 16)];
     self.extraLabel.font = [NSFont systemFontOfSize:11];
     self.extraLabel.textColor = [NSColor secondaryLabelColor];
     [c addSubview:self.extraLabel];
     y += 18;
 
-    CGFloat tableH = 72;
-    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(pad, y, 468, tableH)];
+    CGFloat tableH = 92;
+    CGFloat btnColW = 118;
+    CGFloat tableW = kPrefsContentW - kPrefsPad * 2 - btnColW - 8;
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(kPrefsPad, y, tableW, tableH)];
     scroll.hasVerticalScroller = YES;
     scroll.autohidesScrollers = YES;
     scroll.borderType = NSBezelBorder;
@@ -351,7 +473,7 @@
     NSTableView *table = [[NSTableView alloc] initWithFrame:scroll.bounds];
     NSTableColumn *col = [[NSTableColumn alloc] initWithIdentifier:@"path"];
     col.title = @"";
-    col.width = 440;
+    col.width = tableW - 20;
     [table addTableColumn:col];
     table.headerView = nil;
     table.rowHeight = 20;
@@ -362,48 +484,65 @@
     scroll.documentView = table;
     self.extraRootsTable = table;
     [c addSubview:scroll];
-    y += tableH + 10;
 
+    CGFloat bx = kPrefsPad + tableW + 8;
     self.addBtn = [NSButton buttonWithTitle:@""
                                      target:self
                                      action:@selector(addExtraRoot:)];
-    self.addBtn.frame = NSMakeRect(pad, y, 130, 28);
+    self.addBtn.frame = NSMakeRect(bx, y + tableH - 28, btnColW, 26);
     [c addSubview:self.addBtn];
-
     self.removeBtn = [NSButton buttonWithTitle:@""
                                         target:self
                                         action:@selector(removeExtraRoot:)];
-    self.removeBtn.frame = NSMakeRect(pad + 138, y, 80, 28);
+    self.removeBtn.frame = NSMakeRect(bx, y + tableH - 58, btnColW, 26);
     [c addSubview:self.removeBtn];
-
     self.rescanBtn = [NSButton buttonWithTitle:@""
                                         target:self
                                         action:@selector(rescanApps:)];
-    self.rescanBtn.frame = NSMakeRect(pad + 226, y, 110, 28);
+    self.rescanBtn.frame = NSMakeRect(bx, y + tableH - 88, btnColW, 26);
     [c addSubview:self.rescanBtn];
-    y += 34;
+    y += tableH + 10;
 
-    self.pathLabel = [self makeLabel:@"" frame:NSMakeRect(pad, y, 468, 16)];
+    self.pathLabel = [self makeLabel:@"" frame:NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 16)];
     self.pathLabel.font = [NSFont systemFontOfSize:10];
     self.pathLabel.textColor = [NSColor secondaryLabelColor];
     self.pathLabel.maximumNumberOfLines = 1;
     self.pathLabel.lineBreakMode = NSLineBreakByTruncatingMiddle;
     [c addSubview:self.pathLabel];
-    y += 24;
+    y += 28;
 
-    c.frame = NSMakeRect(0, 0, contentW, y);
+    c.frame = NSMakeRect(0, 0, kPrefsContentW, y);
     outerScroll.documentView = c;
-    [w.contentView addSubview:outerScroll];
+    [content addSubview:outerScroll];
+    [content addSubview:bar];
+
+    /* Size window so the form fits without a vertical scroller. */
+    CGFloat fitH = y + barH + 8;
+    if (fitH < kPrefsWinH) {
+        fitH = kPrefsWinH;
+    }
+    [w setContentSize:NSMakeSize(kPrefsWinW, fitH)];
+    bar.frame = NSMakeRect(0, 0, kPrefsWinW, barH);
+    self.doneBtn.frame = NSMakeRect(kPrefsWinW - kPrefsPad - 100, 12, 100, 28);
+    outerScroll.frame = NSMakeRect(0, barH, kPrefsWinW, fitH - barH);
+    outerScroll.hasVerticalScroller = YES;
+    outerScroll.autohidesScrollers = YES;
+
     self.window = w;
 
     [self applyLocalizedStrings];
 }
+
+#pragma mark - Localization
 
 - (void)applyLocalizedStrings {
     if (!self.window) {
         return;
     }
     self.window.title = [MLStrings t:@"prefs.title"];
+    self.sectionGeneral.stringValue = [MLStrings t:@"prefs.section.general"];
+    self.sectionHot.stringValue = [MLStrings t:@"prefs.section.hot"];
+    self.sectionPerf.stringValue = [MLStrings t:@"prefs.section.performance"];
     self.languageLabel.stringValue = [MLStrings t:@"prefs.language"];
     [[self.languagePopup itemAtIndex:0] setTitle:[MLStrings t:@"prefs.lang.zh"]];
     [[self.languagePopup itemAtIndex:1] setTitle:[MLStrings t:@"prefs.lang.en"]];
@@ -430,7 +569,7 @@
         [self.cornerPopup selectItemAtIndex:cornerIdx];
     }
 
-    self.sizeLabel.stringValue = [MLStrings t:@"prefs.hot_size"];
+    self.sizeLabel.stringValue = @"pt";
     self.hotkeyEnabled.title = [MLStrings t:@"prefs.hotkey_enabled"];
     self.hotkeyLabel.stringValue = [MLStrings t:@"prefs.hotkey_shortcut"];
     self.taskbarEnabled.title = [MLStrings t:@"prefs.taskbar_enabled"];
@@ -439,11 +578,15 @@
     self.iconCacheLabel.stringValue = [MLStrings t:@"prefs.overlay_icon_cache"];
     self.scanTitle.stringValue = [MLStrings t:@"prefs.scan_title"];
     self.scanHint.stringValue = [MLStrings t:@"prefs.scan_hint"];
-    self.sysLabel.stringValue = [MLStrings t:@"prefs.system_dirs"];
+    NSString *roots = [[MLConfigStore builtInScanRoots] componentsJoinedByString:@" · "];
+    self.sysLabel.stringValue =
+        [NSString stringWithFormat:[MLStrings t:@"prefs.system_dirs_inline"], roots];
     self.extraLabel.stringValue = [MLStrings t:@"prefs.extra_dirs"];
     self.addBtn.title = [MLStrings t:@"prefs.add_folder"];
     self.removeBtn.title = [MLStrings t:@"prefs.remove"];
     self.rescanBtn.title = [MLStrings t:@"prefs.rescan"];
+    self.doneBtn.title = [MLStrings t:@"prefs.done"];
+    self.resetBtn.title = [MLStrings t:@"prefs.reset"];
     [self updateIconSizeLabel];
     self.pathLabel.stringValue =
         [NSString stringWithFormat:[MLStrings t:@"prefs.config_path"],
@@ -454,6 +597,76 @@
 - (void)languageDidChange:(NSNotification *)note {
     (void)note;
     [self applyLocalizedStrings];
+}
+
+#pragma mark - Actions
+
+- (void)done:(id)sender {
+    (void)sender;
+    if (self.hotkeyRecorder.isRecording) {
+        return;
+    }
+    [self.window performClose:nil];
+}
+
+- (void)resetDefaults:(id)sender {
+    (void)sender;
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.messageText = [MLStrings t:@"prefs.reset_title"];
+    alert.informativeText = [MLStrings t:@"prefs.reset_info"];
+    [alert addButtonWithTitle:[MLStrings t:@"prefs.reset_confirm"]];
+    [alert addButtonWithTitle:[MLStrings t:@"prefs.reset_cancel"]];
+    [alert beginSheetModalForWindow:self.window
+                  completionHandler:^(NSModalResponse returnCode) {
+                      if (returnCode != NSAlertFirstButtonReturn) {
+                          return;
+                      }
+                      [self applyFactoryDefaultsKeepingLanguageAndFolders];
+                  }];
+}
+
+- (void)applyFactoryDefaultsKeepingLanguageAndFolders {
+    self.suppressApply = YES;
+    self.colsSlider.doubleValue = 7;
+    self.rowsSlider.doubleValue = 5;
+    self.colsValueLabel.stringValue = @"7";
+    self.rowsValueLabel.stringValue = @"5";
+    self.iconSizeSlider.doubleValue = 0;
+    [self updateIconSizeLabel];
+    self.opacitySlider.doubleValue = 55;
+    self.opacityValueLabel.stringValue = @"55%";
+    [self.config updateOverlayScreenMode:MLOverlayScreenModeMouse screenID:0];
+    [self rebuildOverlayScreenPopupPreservingSelection:NO];
+    self.hotCornerEnabled.state = NSControlStateValueOn;
+    [self selectPopupForPosition:MLHotCornerPositionTopLeft];
+    self.sizeField.stringValue = @"12";
+    self.hotkeyEnabled.state = NSControlStateValueOn;
+    [self.hotkeyRecorder setKeyCode:kVK_ANSI_8
+                            command:YES
+                             option:YES
+                            control:NO
+                              shift:YES];
+    self.taskbarEnabled.state = NSControlStateValueOn;
+    self.memoryFreeEnabled.state = NSControlStateValueOff;
+    self.pollSlider.doubleValue = 10;
+    [self updatePollValueLabel];
+    self.iconCacheSlider.doubleValue = 128;
+    self.iconCacheValueLabel.stringValue = @"128";
+    [self updateDependentControlsEnabled];
+    self.suppressApply = NO;
+    [self applyLive];
+}
+
+- (void)updateDependentControlsEnabled {
+    BOOL hotOn = (self.hotCornerEnabled.state == NSControlStateValueOn);
+    self.cornerPopup.enabled = hotOn;
+    self.sizeField.enabled = hotOn;
+    self.hotCornerLabel.textColor = hotOn ? [NSColor labelColor] : [NSColor disabledControlTextColor];
+    self.sizeLabel.textColor = hotOn ? [NSColor labelColor] : [NSColor disabledControlTextColor];
+
+    BOOL keyOn = (self.hotkeyEnabled.state == NSControlStateValueOn);
+    self.hotkeyRecorder.enabled = keyOn;
+    self.hotkeyLabel.textColor = keyOn ? [NSColor labelColor] : [NSColor disabledControlTextColor];
 }
 
 - (void)languageChanged:(id)sender {
@@ -487,7 +700,6 @@
         return 0.f;
     }
     if (v < 48.0) {
-        self.iconSizeSlider.doubleValue = v;
         return 48.f;
     }
     return (float)v;
@@ -581,7 +793,6 @@
     }
 
     if (mode == MLOverlayScreenModeFixed && selectIdx == 0) {
-        /* Saved display missing: keep fixed intent visible via main fallback label. */
         selectIdx = 1;
     }
     if (selectIdx >= 0 && selectIdx < self.overlayScreenPopup.numberOfItems) {
@@ -604,7 +815,6 @@
 }
 
 - (NSTimeInterval)pollSecondsFromSlider {
-    /* Slider is tenths of a second: 5…50 → 0.5…5.0 */
     return self.pollSlider.doubleValue / 10.0;
 }
 
@@ -627,9 +837,8 @@
 }
 
 - (void)prefsChanged:(id)sender {
-    if (sender == self.hotkeyEnabled) {
-        self.hotkeyRecorder.enabled = (self.hotkeyEnabled.state == NSControlStateValueOn);
-    }
+    (void)sender;
+    [self updateDependentControlsEnabled];
     [self applyLive];
 }
 
@@ -807,7 +1016,6 @@
                              option:self.config.hotkeyOption
                             control:self.config.hotkeyControl
                               shift:self.config.hotkeyShift];
-    self.hotkeyRecorder.enabled = self.config.hotkeyEnabled;
     self.taskbarEnabled.state = self.config.taskbarEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     self.memoryFreeEnabled.state = self.config.memoryFreeEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     NSTimeInterval poll = self.config.taskbarWindowPollSeconds;
@@ -824,6 +1032,7 @@
         [NSString stringWithFormat:[MLStrings t:@"prefs.config_path"],
                                    [MLConfigStore configFileURL].path];
     [self reloadExtraRootsTable];
+    [self updateDependentControlsEnabled];
     self.suppressApply = NO;
 }
 

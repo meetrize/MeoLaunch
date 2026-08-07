@@ -7,6 +7,7 @@
 @property (nonatomic, assign) BOOL capturedOption;
 @property (nonatomic, assign) BOOL capturedControl;
 @property (nonatomic, assign) BOOL capturedShift;
+@property (nonatomic, assign, readonly, getter=isRecording) BOOL recording;
 @property (nonatomic, copy, nullable) void (^onChange)(void);
 
 - (void)setKeyCode:(NSInteger)keyCode

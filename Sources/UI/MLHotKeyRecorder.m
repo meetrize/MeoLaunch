@@ -7,7 +7,7 @@
 
 @interface MLHotKeyRecorder ()
 @property (nonatomic, assign) id localMonitor;
-@property (nonatomic, assign) BOOL recording;
+@property (nonatomic, assign, readwrite) BOOL recording;
 @end
 
 @implementation MLHotKeyRecorder

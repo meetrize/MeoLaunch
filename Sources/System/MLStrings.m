@@ -90,12 +90,12 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"zh" : @"中文",
         },
         @"prefs.grid_cols" : @{
-            @"en" : @"Grid columns",
-            @"zh" : @"网格列数",
+            @"en" : @"Columns",
+            @"zh" : @"列数",
         },
         @"prefs.grid_rows" : @{
-            @"en" : @"Grid rows",
-            @"zh" : @"网格行数",
+            @"en" : @"Rows",
+            @"zh" : @"行数",
         },
         @"prefs.icon_size" : @{
             @"en" : @"Icon size",
@@ -106,12 +106,12 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"zh" : @"自动",
         },
         @"prefs.overlay_opacity" : @{
-            @"en" : @"Overlay opacity",
-            @"zh" : @"遮罩透明度",
+            @"en" : @"Opacity",
+            @"zh" : @"透明度",
         },
         @"prefs.overlay_screen" : @{
-            @"en" : @"Overlay display",
-            @"zh" : @"Overlay 显示器",
+            @"en" : @"Display",
+            @"zh" : @"显示器",
         },
         @"prefs.overlay_screen.mouse" : @{
             @"en" : @"Follow mouse",
@@ -174,8 +174,8 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"zh" : @"启用启动器快捷键",
         },
         @"prefs.hotkey_shortcut" : @{
-            @"en" : @"Overlay shortcut",
-            @"zh" : @"启动器快捷键",
+            @"en" : @"Shortcut",
+            @"zh" : @"快捷键",
         },
         @"prefs.hotkey_record_prompt" : @{
             @"en" : @"Press shortcut…",
@@ -198,8 +198,8 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"zh" : @"窗口轮询",
         },
         @"prefs.overlay_icon_cache" : @{
-            @"en" : @"Overlay icons",
-            @"zh" : @"叠层图标缓存",
+            @"en" : @"Icon cache",
+            @"zh" : @"图标缓存",
         },
         @"prefs.scan_title" : @{
             @"en" : @"App Folders",
@@ -256,6 +256,46 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
         @"prefs.ok" : @{
             @"en" : @"OK",
             @"zh" : @"好",
+        },
+        @"prefs.done" : @{
+            @"en" : @"Done",
+            @"zh" : @"完成",
+        },
+        @"prefs.reset" : @{
+            @"en" : @"Restore Defaults…",
+            @"zh" : @"恢复默认…",
+        },
+        @"prefs.reset_title" : @{
+            @"en" : @"Restore Defaults?",
+            @"zh" : @"恢复默认设置？",
+        },
+        @"prefs.reset_info" : @{
+            @"en" : @"Grid, overlay, hot corner, shortcut, taskbar, and performance settings will reset. Language, login item, and extra app folders are kept.",
+            @"zh" : @"将恢复网格、遮罩、触发角、快捷键、任务栏与性能相关设置。语言、开机启动与额外应用目录会保留。",
+        },
+        @"prefs.reset_confirm" : @{
+            @"en" : @"Restore",
+            @"zh" : @"恢复",
+        },
+        @"prefs.reset_cancel" : @{
+            @"en" : @"Cancel",
+            @"zh" : @"取消",
+        },
+        @"prefs.section.general" : @{
+            @"en" : @"General",
+            @"zh" : @"通用",
+        },
+        @"prefs.section.hot" : @{
+            @"en" : @"Hot Corner & Shortcut",
+            @"zh" : @"触发与快捷键",
+        },
+        @"prefs.section.performance" : @{
+            @"en" : @"Performance",
+            @"zh" : @"性能",
+        },
+        @"prefs.system_dirs_inline" : @{
+            @"en" : @"System: %@",
+            @"zh" : @"系统：%@",
         },
         @"a11y.title" : @{
             @"en" : @"Accessibility Permission Required",
