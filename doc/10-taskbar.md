@@ -240,7 +240,8 @@ FOUNDATION_EXPORT NSNotificationName const MLTaskbarPinsDidChangeNotification;
 - (BOOL)pinPath:(NSString *)path;
 - (BOOL)unpinPath:(NSString *)path;
 - (BOOL)isPinned:(NSString *)path;
-- (BOOL)movePinFrom:(NSInteger)from to:(NSInteger)to; /* 可二期 */
+- (BOOL)movePinFrom:(NSInteger)from to:(NSInteger)to;
+- (BOOL)movePinPath:(NSString *)path beforePath:(NSString *)beforePath; /* 拖拽排序 */
 @end
 ```
 
@@ -518,3 +519,29 @@ Prefs / schema（见 [06-config-schema.md](./06-config-schema.md)）：
 - 进入 `hidden` 需连续 2 次确认；退出 `peek` **同步**复位 frame 并 `orderFront`，清 fullscreen streak，禁止同帧误藏。
 - **展示列表 ≠ 实时快照**：monitor 抖动只写入 `pendingItems`；安静约 0.32s 后才 `commit` 到 `barView`。显示桌面期间拒绝提交「芯片大跌」的候选，并冻结快照。
 - 退出 peek：保持旧芯片 → 窗列表安静约 0.45s → **一次**原子提交（粘性窗口约 1.25s 内不接受明显偏少的候选），避免进出时芯片逐个增减。用户点击桌面武装的 peek，仅在桌面中心再次被窗口覆盖时退出。
+
+---
+
+## 11. 芯片拖拽排序（现行实现）
+
+### 11.1 交互
+
+- 位移阈值约 4pt 后进入拖拽；未达阈值的 `mouseUp` 仍为点击激活。
+- 条带分两区：**固定启动器**（`PinnedOnly`）与 **窗口芯片**（`RunningWindow`）。只允许同区内重排，禁止跨区。
+- 拖中：跟随层（独立 `NSWindow`）+ 源槽留空 + 插入位虚线占位，同区其它芯片挤开让位。
+- 可拖到另一屏同区：固定区只改全局 `pinnedPaths`；窗口区经 AX 搬窗到目标屏，并写 `chipScreenAffinityByWid` + 短 sticky，避免 settle 回跳。
+- Peek / frozen / sticky settle 期间禁止开始拖；进入 freeze 时取消进行中的拖拽。
+
+### 11.2 模块
+
+| 模块 | 职责 |
+|------|------|
+| `MLTaskbarView` | 阈值手势、ghost、gap/占位绘制、区段几何 |
+| `MLTaskbarController+Drag` | 跨屏会话、pin/窗口 commit、搬窗几何 |
+| `MLTaskbarPinStore.movePinPath:beforePath:` | 全局 pin 顺序持久化 |
+| `MLRunningAppsMonitor.applySeenOrderByWindowID:` | 会话级窗口顺序 |
+
+### 11.3 顺序语义
+
+- Pin：全局一份列表，任一屏重排后各屏一致。
+- 窗口：按 `seenOrder` 排序；拖拽后重编号并写入 monitor 的 last-seen（不落盘）。

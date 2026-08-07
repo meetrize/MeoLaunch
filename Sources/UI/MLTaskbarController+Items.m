@@ -750,6 +750,9 @@
     if (!self.started) {
         return;
     }
+    if (self.chipDragActive && !force) {
+        return;
+    }
     if (self.itemsFrozenForDesktopReveal) {
         [self restoreFrozenItemsOntoBars];
         return;
@@ -835,6 +838,9 @@
  */
 - (void)rebuildItemsImmediate:(BOOL)immediate {
     if (!self.started) {
+        return;
+    }
+    if (self.chipDragActive) {
         return;
     }
     if (self.itemsFrozenForDesktopReveal) {

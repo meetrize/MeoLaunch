@@ -20,6 +20,7 @@
 | [08-layout-folders.md](./08-layout-folders.md) | 拖动排序与目录分组设计 + 开发计划 |
 | [12-memory-perf.md](./12-memory-perf.md) | 内存与响应优化扫描 / P0–P2 |
 | [13-menubar-memory.md](./13-menubar-memory.md) | 菜单栏系统剩余内存显示方案 |
+| [14-growth-6m.md](./14-growth-6m.md) | 半年增长与变现计划（开源/内容/出海/Pro） |
 
 ## 产品定位
 

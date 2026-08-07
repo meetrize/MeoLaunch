@@ -231,6 +231,7 @@
         MLDebugLog(@"[Taskbar] desktop reveal freeze skipped — all minimized/soft-hidden");
         return;
     }
+    [self cancelChipDragSession];
     [self cancelItemsCommitTimer];
     [self.frozenItemsByScreenID removeAllObjects];
     for (MLTaskbarScreenBar *bar in self.bars) {

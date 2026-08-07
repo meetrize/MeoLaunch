@@ -29,6 +29,7 @@ UI_SOURCES=(
   "$ROOT/Sources/UI/MLTaskbarController+Items.m"
   "$ROOT/Sources/UI/MLTaskbarController+Bars.m"
   "$ROOT/Sources/UI/MLTaskbarController+WindowActions.m"
+  "$ROOT/Sources/UI/MLTaskbarController+Drag.m"
   "$ROOT/Sources/UI/MLTaskbarView.m"
   "$ROOT/Sources/UI/MLTaskbarScreenBar.m"
   "$ROOT/Sources/UI/MLTaskbarConstants.m"

@@ -156,4 +156,16 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
+@interface MLTaskbarController (Drag)
+
+- (BOOL)taskbarViewShouldBeginDrag:(MLTaskbarView *)view;
+- (void)taskbarView:(MLTaskbarView *)view beganDragAtIndex:(NSInteger)index;
+- (void)taskbarView:(MLTaskbarView *)view draggedToScreenPoint:(NSPoint)screenPoint;
+- (void)taskbarView:(MLTaskbarView *)view
+    endedDragAtScreenPoint:(NSPoint)screenPoint
+                 cancelled:(BOOL)cancelled;
+- (void)cancelChipDragSession;
+
+@end
+
 NS_ASSUME_NONNULL_END

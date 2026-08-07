@@ -34,6 +34,11 @@ ask 4 "All minimized → click desktop → bar slides ~half down; click desktop 
 ask 5 "All minimized → click chip to restore → no peek flash."
 ask 6 "Multi-screen: windows on screen 2 → Show Desktop / peek → chips stay on screen 2 bar."
 ask 7 "Exit peek → chips return to same screens (no cross-screen hop during settle)."
+ask 8 "Same screen: drag pin chip → placeholder gap; drop reorders; restart keeps pin order."
+ask 9 "Same screen: drag window chip within window zone → order sticks across poll."
+ask 10 "Cross-screen: drag window chip to other bar → real window moves; chip lands at insert; no hop-back."
+ask 11 "Cannot drop pin into window zone (or window into pin zone); short click still activates."
+ask 12 "During peek/freeze, drag does not start; entering peek cancels an in-progress drag."
 
 echo ""
 echo "=== Summary ==="

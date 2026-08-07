@@ -14,6 +14,7 @@ macOS Launchpad 替代应用——极低内存、原生 AppKit（C 核心 + Obje
 - [工程结构](./doc/05-project-structure.md)
 - [配置 Schema](./doc/06-config-schema.md)
 - [Agent Playbook（自动化）](./doc/07-agent-playbook.md)
+- [半年增长与变现计划](./doc/14-growth-6m.md)
 
 ## 技术栈（摘要）
 

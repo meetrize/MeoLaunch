@@ -860,4 +860,51 @@ const MLPollOptions MLPollOptionsFast =
     return [self.softState isSoftHiddenWindowID:windowID];
 }
 
+- (void)applySeenOrderByWindowID:(NSDictionary<NSNumber *, NSNumber *> *)orderByWid {
+    if (orderByWid.count == 0) {
+        return;
+    }
+    for (NSNumber *key in orderByWid) {
+        NSUInteger ord = orderByWid[key].unsignedIntegerValue;
+        if (ord == 0) {
+            continue;
+        }
+        MLTaskbarWindowInfo *seen = self.lastSeenWindows[key];
+        if (seen) {
+            seen.seenOrder = ord;
+        }
+        if (ord >= self.nextSeenOrder) {
+            self.nextSeenOrder = ord + 1;
+        }
+    }
+    NSArray<MLTaskbarWindowInfo *> *windows = self.snapshot.windows;
+    if (windows.count == 0) {
+        return;
+    }
+    NSMutableArray<MLTaskbarWindowInfo *> *updated = [NSMutableArray arrayWithCapacity:windows.count];
+    BOOL changed = NO;
+    for (MLTaskbarWindowInfo *w in windows) {
+        if (w.windowID == 0) {
+            [updated addObject:w];
+            continue;
+        }
+        NSNumber *ordNum = orderByWid[@(w.windowID)];
+        if (!ordNum || ordNum.unsignedIntegerValue == 0) {
+            [updated addObject:w];
+            continue;
+        }
+        if (w.seenOrder != ordNum.unsignedIntegerValue) {
+            MLTaskbarWindowInfo *copy = [self copyWindowInfo:w minimized:w.minimized];
+            copy.seenOrder = ordNum.unsignedIntegerValue;
+            [updated addObject:copy];
+            changed = YES;
+        } else {
+            [updated addObject:w];
+        }
+    }
+    if (changed) {
+        self.snapshot.windows = [updated copy];
+    }
+}
+
 @end

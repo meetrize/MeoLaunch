@@ -67,6 +67,13 @@ FOUNDATION_EXPORT NSString *const MLRunningAppsFrontWindowIDKey;
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID;
 - (BOOL)isSoftMinimizedWindowID:(CGWindowID)windowID;
 
+/**
+ * Persist user-chosen taskbar window order into last-seen state (and live snapshot
+ * entries) so the next poll / rebuild keeps the new sequence.
+ * Keys and values are NSNumber-wrapped CGWindowID → seenOrder (1-based preferred).
+ */
+- (void)applySeenOrderByWindowID:(NSDictionary<NSNumber *, NSNumber *> *)orderByWid;
+
 /** Convenience: mark soft-hidden with full metadata (preferred). axWindow is retained. */
 - (void)markSoftHiddenWindowID:(CGWindowID)windowID
                            pid:(pid_t)pid

@@ -209,4 +209,42 @@ NSNotificationName const MLTaskbarPinsDidChangeNotification = @"MLTaskbarPinsDid
     return YES;
 }
 
+- (NSInteger)indexOfPinPath:(NSString *)path {
+    if (path.length == 0) {
+        return -1;
+    }
+    NSString *std = path.stringByStandardizingPath;
+    for (NSInteger i = 0; i < (NSInteger)self.pins.count; i++) {
+        NSString *existing = self.pins[(NSUInteger)i];
+        if ([existing isEqualToString:path]) {
+            return i;
+        }
+        if (std.length > 0 && [existing.stringByStandardizingPath isEqualToString:std]) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+- (BOOL)movePinPath:(NSString *)path beforePath:(NSString *)beforePath {
+    NSInteger from = [self indexOfPinPath:path];
+    if (from < 0) {
+        return NO;
+    }
+    NSString *moving = self.pins[(NSUInteger)from];
+    [self.pins removeObjectAtIndex:(NSUInteger)from];
+
+    NSInteger insertAt = (NSInteger)self.pins.count;
+    if (beforePath.length > 0) {
+        NSInteger before = [self indexOfPinPath:beforePath];
+        if (before >= 0) {
+            insertAt = before;
+        }
+    }
+    [self.pins insertObject:moving atIndex:(NSUInteger)insertAt];
+    [self scheduleSave];
+    [self notifyChanged];
+    return YES;
+}
+
 @end

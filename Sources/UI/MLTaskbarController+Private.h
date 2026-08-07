@@ -2,6 +2,7 @@
 
 #import "MLTaskbarConstants.h"
 #import "MLTaskbarScreenBar.h"
+#import "MLTaskbarView.h"
 #import "MLIconCache.h"
 #import "MLRunningAppsMonitor.h"
 #import "MLWindowCensus.h"
@@ -42,6 +43,16 @@
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL fullscreenCheckPending;
 @property (nonatomic, assign) NSUInteger startupVisibilityGeneration;
+
+/** Non-nil while a chip drag session is active (blocks peek-sensitive commits). */
+@property (nonatomic, assign) BOOL chipDragActive;
+@property (nonatomic, weak) MLTaskbarScreenBar *chipDragSourceBar;
+@property (nonatomic, assign) NSInteger chipDragSourceIndex;
+@property (nonatomic, strong) MLTaskbarItem *chipDragItem;
+@property (nonatomic, assign) MLTaskbarChipZone chipDragZone;
+@property (nonatomic, weak) MLTaskbarScreenBar *chipDragTargetBar;
+@property (nonatomic, assign) NSInteger chipDragTargetInsert;
+@property (nonatomic, assign) CGFloat chipDragPlaceholderWidth;
 
 + (NSNumber *)screenIDForScreen:(NSScreen *)screen;
 @end

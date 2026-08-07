@@ -156,7 +156,7 @@
 - **改**：`MLTaskbarView` 菜单、`MLTaskbarController`、`MLOverlayController` show/hide 钩子
 - **做**：右键钉住/取消钉住并 `scheduleSave`；Overlay show → taskbar `orderOut`，hide → 恢复
 - **验收**：钉住重启仍在；Overlay 打开时任务栏不挡网格；关闭 Overlay 后任务栏回来
-- **禁止**：Prefs UI、多屏每屏一条、拖拽重排 pins（可二期）
+- **禁止**：Prefs UI（本卡范围内）；芯片拖拽排序已另见 [10-taskbar.md](./10-taskbar.md) §11
 
 ---
 
