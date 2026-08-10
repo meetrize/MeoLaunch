@@ -1384,11 +1384,23 @@ enum { MLFolderCompositeMaxEntries = 16 };
     if (!content) {
         return;
     }
-    content.wantsLayer = YES;
-    if (!content.layer) {
+    /* Prefer overlay animation host — avoids contentView.wantsLayer which can
+     * glitch NSVisualEffectView + field-editor chrome (ghost panel under search). */
+    NSView *host = nil;
+    for (NSView *sub in content.subviews) {
+        if ([sub.identifier isEqualToString:@"ml.animationHost"]) {
+            host = sub;
+            break;
+        }
+    }
+    if (!host) {
+        host = content;
+    }
+    host.wantsLayer = YES;
+    if (!host.layer) {
         return;
     }
-    NSRect dest = [self convertRect:iconRect toView:content];
+    NSRect dest = [self convertRect:iconRect toView:host];
     /* contentView is typically non-flipped; convertRect already maps correctly. */
     CALayer *pulse = [CALayer layer];
     pulse.frame = NSRectToCGRect(dest);
@@ -1397,7 +1409,7 @@ enum { MLFolderCompositeMaxEntries = 16 };
     pulse.borderWidth = 2.0;
     pulse.borderColor = [[NSColor whiteColor] colorWithAlphaComponent:0.75].CGColor;
     pulse.opacity = 0.0;
-    [content.layer addSublayer:pulse];
+    [host.layer addSublayer:pulse];
 
     CABasicAnimation *fadeIn = [CABasicAnimation animationWithKeyPath:@"opacity"];
     fadeIn.fromValue = @0.0;

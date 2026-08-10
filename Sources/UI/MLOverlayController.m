@@ -52,6 +52,11 @@
 @property (nonatomic, assign) NSUInteger iconPurgeGeneration;
 @property (nonatomic, strong) NSRunningApplication *previousApp;
 @property (nonatomic, strong) NSTimer *searchDebounceTimer;
+/** Periodic scan for orphan AppKit chrome (ghost panel under search). */
+@property (nonatomic, strong) NSTimer *chromeWatchdogTimer;
+/** Layer host for launch/pulse — keeps contentView non-layer-backed. */
+@property (nonatomic, strong) NSView *animationHost;
+@property (nonatomic, assign) NSUInteger chromeAnomalyCount;
 @end
 
 /** Lets clicks fall through to the dismiss catcher below. */
@@ -64,6 +69,20 @@
     return nil;
 }
 @end
+
+/** Layer-backed host for transient CALayer animations; never intercepts hits. */
+@interface MLAnimationHostView : NSView
+@end
+
+@implementation MLAnimationHostView
+- (NSView *)hitTest:(NSPoint)point {
+    (void)point;
+    return nil;
+}
+@end
+
+/** Minimum area (pt²) for a contentView subview to count as a "ghost panel". */
+static const CGFloat kMLChromeGhostMinArea = 8000.0;
 
 @implementation MLOverlayController
 
@@ -407,6 +426,9 @@ static void MLLogMemory(NSString *tag) {
     self.folderTitleField = nil;
     [self.pageIndicator removeFromSuperview];
     self.pageIndicator = nil;
+    [self.animationHost removeFromSuperview];
+    self.animationHost = nil;
+    [self stopChromeWatchdog];
 
     /* Replace content view after children are gone. Do NOT close/releasedWhenClosed. */
     self.window = nil;
@@ -492,10 +514,16 @@ static void MLLogMemory(NSString *tag) {
     self.tintView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     self.dismissBackground.frame = bounds;
     self.dismissBackground.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    if (self.animationHost) {
+        self.animationHost.frame = bounds;
+        self.animationHost.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    }
 
     /*
      * Re-addSubview: while a field editor is live ends editing (caret flash → blur).
      * Only reorder the stack when search/folder title are not being edited.
+     * Chrome sanitize always runs — including while editing — so orphan field-editor
+     * chrome cannot survive for the whole session (ghost panel under search).
      */
     BOOL textEditing = [self.searchField currentEditor] != nil ||
                        [self.folderTitleField currentEditor] != nil;
@@ -508,8 +536,11 @@ static void MLLogMemory(NSString *tag) {
         if (self.folderTitleField && !self.folderTitleField.hidden) {
             [content addSubview:self.folderTitleField positioned:NSWindowAbove relativeTo:self.searchField];
         }
-        [self removeStrayFieldEditors];
+        if (self.animationHost) {
+            [content addSubview:self.animationHost positioned:NSWindowAbove relativeTo:nil];
+        }
     }
+    [self sanitizeOverlayChrome:@"layoutChrome"];
 
     [self syncPageIndicator];
 }
@@ -573,6 +604,15 @@ static void MLLogMemory(NSString *tag) {
     self.searchField.delegate = self;
     self.searchField.settingsDelegate = self;
     [content addSubview:self.searchField];
+
+    /* Dedicated layer host — never set contentView.wantsLayer (breaks VisualEffect + editors). */
+    MLAnimationHostView *animHost = [[MLAnimationHostView alloc] initWithFrame:content.bounds];
+    animHost.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    animHost.identifier = @"ml.animationHost";
+    animHost.wantsLayer = YES;
+    animHost.layer.backgroundColor = [NSColor clearColor].CGColor;
+    self.animationHost = animHost;
+    [content addSubview:animHost];
 
     self.folderTitleField = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 320, 28)];
     self.folderTitleField.bezeled = NO;
@@ -776,7 +816,182 @@ static void MLLogMemory(NSString *tag) {
     return (NSTimeInterval)ms / 1000.0;
 }
 
-- (void)removeStrayFieldEditors {
+- (BOOL)isKnownOverlayChromeView:(NSView *)view {
+    return view == self.blurView ||
+           view == self.tintView ||
+           view == self.dismissBackground ||
+           view == self.gridView ||
+           view == self.searchField ||
+           view == self.folderTitleField ||
+           view == self.pageIndicator ||
+           view == self.animationHost;
+}
+
+- (NSText *)liveSearchEditor {
+    return self.visible ? [self.searchField currentEditor] : nil;
+}
+
+- (NSText *)liveTitleEditor {
+    return self.visible ? [self.folderTitleField currentEditor] : nil;
+}
+
+- (BOOL)isLiveFieldEditorView:(NSView *)view {
+    NSText *searchEditor = [self liveSearchEditor];
+    NSText *titleEditor = [self liveTitleEditor];
+    if (view == (id)searchEditor || view == (id)titleEditor) {
+        return YES;
+    }
+    /* Scroll/clip wrappers that only host the live editor. */
+    if ([view isKindOfClass:[NSScrollView class]]) {
+        NSView *doc = ((NSScrollView *)view).documentView;
+        return doc == (id)searchEditor || doc == (id)titleEditor;
+    }
+    if ([view isKindOfClass:[NSClipView class]]) {
+        NSView *doc = ((NSClipView *)view).documentView;
+        return doc == (id)searchEditor || doc == (id)titleEditor;
+    }
+    /* currentEditor can briefly be nil while firstResponder is still the field /
+     * its editor — do not treat that NSTextView as an orphan. */
+    NSResponder *fr = self.window.firstResponder;
+    if (view == (id)fr) {
+        return YES;
+    }
+    if ([view isKindOfClass:[NSTextView class]] &&
+        ((NSTextView *)view).isFieldEditor &&
+        (fr == self.searchField || fr == self.folderTitleField ||
+         fr == (id)searchEditor || fr == (id)titleEditor)) {
+        return YES;
+    }
+    if ([self.window isKindOfClass:[MLOverlayWindow class]]) {
+        NSTextView *owned = [(MLOverlayWindow *)self.window ml_ownedFieldEditorIfAny];
+        if (owned && (view == owned ||
+                      ([view isKindOfClass:[NSScrollView class]] &&
+                       ((NSScrollView *)view).documentView == owned))) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (void)logChromeAnomaly:(NSString *)reason view:(NSView *)view {
+    self.chromeAnomalyCount += 1;
+    NSMutableString *chain = [NSMutableString string];
+    for (NSView *v = view; v; v = v.superview) {
+        if (chain.length) {
+            [chain appendString:@" ← "];
+        }
+        [chain appendFormat:@"%@%@", NSStringFromClass(v.class), NSStringFromRect(v.frame)];
+    }
+    NSResponder *fr = self.window.firstResponder;
+    NSLog(@"[MeoLaunch][ChromeAnomaly] #%lu reason=%@ class=%@ frame=%@ hidden=%d alpha=%.2f "
+          @"editingSearch=%d editingTitle=%d firstResponder=%@ prefersSearchFocus=%d chain=%@",
+          (unsigned long)self.chromeAnomalyCount,
+          reason,
+          NSStringFromClass(view.class),
+          NSStringFromRect(view.frame),
+          view.hidden ? 1 : 0,
+          view.alphaValue,
+          [self liveSearchEditor] != nil,
+          [self liveTitleEditor] != nil,
+          fr ? NSStringFromClass(fr.class) : @"(nil)",
+          self.prefersSearchFocus ? 1 : 0,
+          chain);
+
+    /* Also dump sibling inventory once so Console.app captures the full picture. */
+    NSView *content = self.window.contentView;
+    if (!content) {
+        return;
+    }
+    NSMutableArray<NSString *> *subs = [NSMutableArray array];
+    for (NSView *sub in content.subviews) {
+        [subs addObject:[NSString stringWithFormat:@"%@%@",
+                         NSStringFromClass(sub.class), NSStringFromRect(sub.frame)]];
+    }
+    NSLog(@"[MeoLaunch][ChromeAnomaly] contentView.subviews=%@", [subs componentsJoinedByString:@", "]);
+
+    /* Cross-window check: IME / system panels live outside our contentView. */
+    for (NSWindow *w in [NSApp windows]) {
+        if (w == self.window || ![w isVisible]) {
+            continue;
+        }
+        if (w.level < self.window.level) {
+            continue;
+        }
+        NSLog(@"[MeoLaunch][ChromeAnomaly] otherWindow class=%@ level=%ld frame=%@ title=%@",
+              NSStringFromClass(w.class),
+              (long)w.level,
+              NSStringFromRect(w.frame),
+              w.title ?: @"");
+    }
+}
+
+- (void)styleFieldEditor:(NSText *)editor {
+    if (![editor isKindOfClass:[NSTextView class]]) {
+        return;
+    }
+    if ([self.window isKindOfClass:[MLOverlayWindow class]]) {
+        [(MLOverlayWindow *)self.window ml_restyleFieldEditor];
+    }
+    NSTextView *tv = (NSTextView *)editor;
+    tv.drawsBackground = NO;
+    tv.backgroundColor = [NSColor clearColor];
+    tv.textContainerInset = NSZeroSize;
+    tv.focusRingType = NSFocusRingTypeNone;
+    if (tv.wantsLayer) {
+        tv.layer.backgroundColor = [NSColor clearColor].CGColor;
+    }
+    NSScrollView *scroll = tv.enclosingScrollView;
+    if (scroll) {
+        scroll.drawsBackground = NO;
+        scroll.backgroundColor = [NSColor clearColor];
+        scroll.borderType = NSNoBorder;
+        scroll.hasVerticalScroller = NO;
+        scroll.hasHorizontalScroller = NO;
+        if (scroll.wantsLayer) {
+            scroll.layer.backgroundColor = [NSColor clearColor].CGColor;
+        }
+        NSClipView *clip = scroll.contentView;
+        if ([clip isKindOfClass:[NSClipView class]]) {
+            clip.drawsBackground = NO;
+            clip.backgroundColor = [NSColor clearColor];
+        }
+    }
+}
+
+/** Keep the live editor geometry inside its control's title rect. */
+- (void)clampFieldEditor:(NSTextView *)tv toField:(NSTextField *)field reason:(NSString *)reason {
+    if (!tv || !field || !tv.superview || field.hidden) {
+        return;
+    }
+    NSRect titleRect = [[field cell] titleRectForBounds:field.bounds];
+    NSRect expected = [field convertRect:titleRect toView:tv.superview];
+    if (NSIsEmptyRect(expected) || NSWidth(expected) < 4.0 || NSHeight(expected) < 4.0) {
+        return;
+    }
+    NSRect frame = tv.frame;
+    CGFloat area = NSWidth(frame) * NSHeight(frame);
+    CGFloat expectedArea = NSWidth(expected) * NSHeight(expected);
+    BOOL tooBig = area > expectedArea * 2.5 + 400.0 ||
+                  NSWidth(frame) > NSWidth(expected) + 80.0 ||
+                  NSHeight(frame) > NSHeight(expected) + 24.0;
+    BOOL tooLow = NSMaxY(frame) < NSMinY(field.frame) - 8.0;
+    BOOL farAway = !NSIntersectsRect(NSInsetRect(expected, -40, -40), frame);
+    if (!tooBig && !tooLow && !farAway) {
+        return;
+    }
+    [self logChromeAnomaly:[NSString stringWithFormat:@"editor-frame/%@", reason] view:tv];
+    tv.frame = expected;
+    if (tv.enclosingScrollView && tv.enclosingScrollView.superview == tv.superview) {
+        tv.enclosingScrollView.frame = expected;
+    }
+}
+
+/**
+ * Heal intermittent AppKit chrome: orphan field editors / scroll wrappers /
+ * unexpected visual-effect panels that cover the icon grid under search.
+ * Safe while editing — never ends editing or reorders known chrome via addSubview:.
+ */
+- (void)sanitizeOverlayChrome:(NSString *)reason {
     if (!self.window) {
         return;
     }
@@ -784,21 +999,58 @@ static void MLLogMemory(NSString *tag) {
     if (!content) {
         return;
     }
-    /* Prefer currentEditor over firstResponder: layoutChrome may run mid-edit
-     * when firstResponder briefly is the NSTextField, not the NSTextView. */
-    NSText *searchEditor = self.visible ? [self.searchField currentEditor] : nil;
-    NSText *titleEditor = self.visible ? [self.folderTitleField currentEditor] : nil;
-    for (NSView *sub in [content.subviews copy]) {
-        if (![sub isKindOfClass:[NSTextView class]]) {
-            continue;
-        }
-        NSTextView *tv = (NSTextView *)sub;
-        if (tv == (id)searchEditor || tv == (id)titleEditor) {
-            [self styleFieldEditor:tv];
-            continue;
-        }
-        [tv removeFromSuperview];
+
+    NSText *searchEditor = [self liveSearchEditor];
+    NSText *titleEditor = [self liveTitleEditor];
+    if ([searchEditor isKindOfClass:[NSTextView class]]) {
+        [self styleFieldEditor:searchEditor];
+        [self clampFieldEditor:(NSTextView *)searchEditor toField:self.searchField reason:reason];
     }
+    if ([titleEditor isKindOfClass:[NSTextView class]]) {
+        [self styleFieldEditor:titleEditor];
+        [self clampFieldEditor:(NSTextView *)titleEditor toField:self.folderTitleField reason:reason];
+    }
+
+    for (NSView *sub in [content.subviews copy]) {
+        if ([self isKnownOverlayChromeView:sub]) {
+            continue;
+        }
+        if ([self isLiveFieldEditorView:sub]) {
+            if ([sub isKindOfClass:[NSTextView class]]) {
+                [self styleFieldEditor:(NSText *)sub];
+                NSTextField *owner = (sub == (id)searchEditor ||
+                                      self.window.firstResponder == self.searchField)
+                    ? self.searchField : self.folderTitleField;
+                if (owner == self.folderTitleField && self.folderTitleField.hidden) {
+                    owner = self.searchField;
+                }
+                [self clampFieldEditor:(NSTextView *)sub toField:owner reason:reason];
+            } else if ([sub isKindOfClass:[NSScrollView class]]) {
+                NSView *doc = ((NSScrollView *)sub).documentView;
+                if ([doc isKindOfClass:[NSTextView class]]) {
+                    [self styleFieldEditor:(NSText *)doc];
+                }
+            }
+            continue;
+        }
+
+        CGFloat area = NSWidth(sub.frame) * NSHeight(sub.frame);
+        BOOL looksLikeGhost = area >= kMLChromeGhostMinArea ||
+                              [sub isKindOfClass:[NSVisualEffectView class]] ||
+                              [sub isKindOfClass:[NSTextView class]] ||
+                              [sub isKindOfClass:[NSScrollView class]] ||
+                              [sub isKindOfClass:[NSClipView class]];
+        if (!looksLikeGhost) {
+            continue;
+        }
+
+        [self logChromeAnomaly:[NSString stringWithFormat:@"orphan/%@", reason] view:sub];
+        [sub removeFromSuperview];
+    }
+}
+
+- (void)removeStrayFieldEditors {
+    [self sanitizeOverlayChrome:@"removeStray"];
 }
 
 - (void)dismissFieldEditors {
@@ -806,7 +1058,7 @@ static void MLLogMemory(NSString *tag) {
         return;
     }
     [self.window endEditingFor:nil];
-    [self removeStrayFieldEditors];
+    [self sanitizeOverlayChrome:@"dismiss"];
     if (self.searchField) {
         self.searchField.alphaValue = 1.0;
     }
@@ -815,21 +1067,24 @@ static void MLLogMemory(NSString *tag) {
     }
 }
 
-- (void)styleFieldEditor:(NSText *)editor {
-    if (![editor isKindOfClass:[NSTextView class]]) {
-        return;
-    }
-    NSTextView *tv = (NSTextView *)editor;
-    tv.drawsBackground = NO;
-    tv.backgroundColor = [NSColor clearColor];
-    tv.textContainerInset = NSZeroSize;
-    if (tv.enclosingScrollView) {
-        tv.enclosingScrollView.drawsBackground = NO;
-        tv.enclosingScrollView.backgroundColor = [NSColor clearColor];
-        tv.enclosingScrollView.borderType = NSNoBorder;
-        tv.enclosingScrollView.hasVerticalScroller = NO;
-        tv.enclosingScrollView.hasHorizontalScroller = NO;
-    }
+- (void)startChromeWatchdog {
+    [self stopChromeWatchdog];
+    __weak typeof(self) weakSelf = self;
+    self.chromeWatchdogTimer = [NSTimer scheduledTimerWithTimeInterval:0.75
+                                                                repeats:YES
+                                                                  block:^(__unused NSTimer *timer) {
+                                                                      __strong typeof(weakSelf) self = weakSelf;
+                                                                      if (!self || !self.visible || self.animating) {
+                                                                          return;
+                                                                      }
+                                                                      [self sanitizeOverlayChrome:@"watchdog"];
+                                                                  }];
+    [[NSRunLoop mainRunLoop] addTimer:self.chromeWatchdogTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopChromeWatchdog {
+    [self.chromeWatchdogTimer invalidate];
+    self.chromeWatchdogTimer = nil;
 }
 
 - (void)focusSearchField {
@@ -990,6 +1245,8 @@ static void MLLogMemory(NSString *tag) {
     }
 
     [self focusSearchField];
+    [self startChromeWatchdog];
+    [self sanitizeOverlayChrome:@"show"];
 
     __weak typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
@@ -999,6 +1256,7 @@ static void MLLogMemory(NSString *tag) {
                            return;
                        }
                        [self focusSearchField];
+                       [self sanitizeOverlayChrome:@"show+50ms"];
                    });
 
     if (dur > 0) {
@@ -1036,6 +1294,7 @@ static void MLLogMemory(NSString *tag) {
 - (void)finishHide {
     [self.searchDebounceTimer invalidate];
     self.searchDebounceTimer = nil;
+    [self stopChromeWatchdog];
     [self.gridView cancelActiveDrag];
     [self dismissFieldEditors];
     if (self.openFolderId.length > 0) {
@@ -1293,7 +1552,8 @@ doCommandBySelector:(SEL)commandSelector {
     }
 
     NSView *content = self.window.contentView;
-    NSRect startRect = [self.gridView convertRect:iconRect toView:content];
+    NSView *layerHost = self.animationHost ?: content;
+    NSRect startRect = [self.gridView convertRect:iconRect toView:layerHost];
     /* Ensure a valid on-screen rect before animating */
     if (NSWidth(startRect) < 8.0 || NSHeight(startRect) < 8.0) {
         [self removeEscapeMonitor];
@@ -1303,7 +1563,7 @@ doCommandBySelector:(SEL)commandSelector {
         return;
     }
 
-    content.wantsLayer = YES;
+    layerHost.wantsLayer = YES;
     CGFloat w = NSWidth(startRect);
     CGFloat h = NSHeight(startRect);
     CGFloat midX = NSMidX(startRect);
@@ -1339,7 +1599,7 @@ doCommandBySelector:(SEL)commandSelector {
     iconLayer.anchorPoint = CGPointMake(0.5, 0.5);
     iconLayer.position = CGPointMake(midX, midY);
     iconLayer.opacity = 1.0;
-    [content.layer addSublayer:iconLayer];
+    [layerHost.layer addSublayer:iconLayer];
 
     [self removeEscapeMonitor];
     self.showGeneration += 1;

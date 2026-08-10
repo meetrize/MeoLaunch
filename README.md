@@ -1,27 +1,62 @@
 # meoLaunch
 
-macOS Launchpad 替代应用——极低内存、原生 AppKit（C 核心 + Objective-C UI）。
+**恢复 Launchpad，超越 Launchpad——一款 App，两种能力，极致内存。**
 
-## 方案文档
+> English: *Bring back Launchpad—and go beyond. App grid + Taskbar. Native. Tiny memory.*
 
-完整设计见 [`doc/`](./doc/)：
+新版 macOS 拿掉了 Launchpad，找应用又回到 Dock 翻、Spotlight 搜、文件夹挖。meoLaunch 把熟悉的全屏应用网格**找回来**，并在同进程里加上轻量 **Taskbar**（每屏底栏、窗口切换 / 钉住），用一份极低常驻内存同时覆盖「启动」与「切换」。
 
-- [总览](./doc/00-overview.md)
-- [技术选型](./doc/01-tech-stack.md)
-- [架构](./doc/02-architecture.md)
-- [功能规格](./doc/03-features.md)
-- [实现路径](./doc/04-implementation.md)
-- [工程结构](./doc/05-project-structure.md)
-- [配置 Schema](./doc/06-config-schema.md)
-- [Agent Playbook（自动化）](./doc/07-agent-playbook.md)
-- [半年增长与变现计划](./doc/14-growth-6m.md)
+真·原生：C 核心 + AppKit，不背 Electron、不背 WebView。
 
-## 技术栈（摘要）
+适合：怀念 Launchpad、想要 Windows 式底栏、又极度在意内存的 Mac 用户。
 
-**C 核心**（扫描 / 过滤 / 网格）+ **Objective-C / AppKit**（窗口 / 事件 / 图标）  
-不用 Electron / WebView / SwiftUI。
+---
 
-## 构建（M0）
+## 为什么选 meoLaunch
+
+| | 系统现状 | meoLaunch |
+|--|----------|-----------|
+| 应用网格 | Launchpad **已移除** | **恢复**全屏网格 + 搜索 / 热角，体验更可控 |
+| 窗口切换 | 主要靠 Dock / Mission Control | **同 App 内置 Taskbar**（每屏一条） |
+| 技术栈 | — | **原生 AppKit**（非 Electron） |
+| 常驻内存 | 多工具叠加易膨胀 | **一份进程扛两种功能**，目标 ≤ 15–25 MB（未打开网格时） |
+| 唤起 | — | **热角 + 搜索即开**；底栏随时切换窗口 |
+| 体感 | — | 设计目标：热角 → 首帧 ≤ 80–120 ms |
+
+**一句话差异化：** 恢复 Launchpad 不够——还要**更好用**；再加 Taskbar——**一个应用两种功能**，内存仍压到极致。
+
+**三点卖点：**
+
+1. **恢复并超越** — 全屏网格、实时搜索、热角唤起；比当年 Launchpad 更干净、更快。
+2. **一 App 双能力** — Launchpad 式启动器 + 轻量 Taskbar（按屏显示窗口、图标+标题、钉住），不必再装第二套常驻软件。
+3. **极致内存** — C 核心 + AppKit；网格图标按需加载，任务栏独立小图标 cache，一份常驻吃下两种场景。
+
+---
+
+## 功能一览
+
+### Launchpad 网格（恢复 + 增强）
+
+- 扫描 `/Applications`、系统应用与用户应用，展示图标与名称
+- 关键字实时过滤，打开即聚焦搜索
+- 默认 7×5 网格，行列可配置
+- 滚轮 / 触控板翻页
+- 左上角热角唤起（需辅助功能权限）
+
+### Taskbar（同 App 第二能力）
+
+- 每块显示器底部一条轻量任务栏
+- 按屏显示该屏窗口（图标 + 标题）
+- 左键切换 / 软最小化；支持钉住常用应用
+- 与网格共用同一进程，Overlay 打开时底栏自动让位
+
+> 不做全能启动器（不与 Raycast / Alfred 比插件生态）。**主打：找回并超越 Launchpad + 轻量 Taskbar + 极致内存。**
+
+---
+
+## 快速体验
+
+### 从源码构建（开发者）
 
 无需完整 Xcode，Command Line Tools + clang 即可：
 
@@ -74,12 +109,41 @@ xcodegen generate
 xcodebuild -scheme MeoLaunch -configuration Debug
 ```
 
-## MVP 功能
+首次使用热角：系统设置 → 隐私与安全性 → **辅助功能**，勾选 meoLaunch。
 
-1. 展示 Applications 中的应用，关键字过滤  
-2. 默认 7×5 网格，可配置  
-3. 滚轮翻页  
-4. 左上角触发角唤起（需辅助功能权限）
+---
+
+## 给 Star / 反馈
+
+如果觉得有用，欢迎点右上角 **Star**，让更多人在没有 Launchpad 的 macOS 上，用一份极致内存同时拥有网格启动 + Taskbar。
+
+- Bug / 想法：欢迎开 [Issue](../../issues)
+- 增长与路线图：[半年增长与变现计划](./doc/14-growth-6m.md)
+
+---
+
+## 技术栈（摘要）
+
+**C 核心**（扫描 / 过滤 / 网格）+ **Objective-C / AppKit**（窗口 / 事件 / 图标 / Taskbar）  
+不用 Electron / WebView / SwiftUI。
+
+平台：macOS 13+（优先 Apple Silicon，兼容 Intel）。
+
+## 方案文档
+
+完整设计见 [`doc/`](./doc/)：
+
+- [总览](./doc/00-overview.md)
+- [技术选型](./doc/01-tech-stack.md)
+- [架构](./doc/02-architecture.md)
+- [功能规格](./doc/03-features.md)
+- [实现路径](./doc/04-implementation.md)
+- [工程结构](./doc/05-project-structure.md)
+- [配置 Schema](./doc/06-config-schema.md)
+- [Agent Playbook（自动化）](./doc/07-agent-playbook.md)
+- [底部任务栏](./doc/10-taskbar.md)
+- [内存与性能](./doc/12-memory-perf.md)
+- [半年增长与变现计划](./doc/14-growth-6m.md)
 
 ## 自动化开发
 
