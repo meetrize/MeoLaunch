@@ -82,13 +82,16 @@ INSTALL_DIR="$HOME/Applications" ./Scripts/release_install.sh  # 装到用户 Ap
 ### 打包成安装包（DMG / ZIP）
 
 ```bash
-./Scripts/package.sh
+./Scripts/package.sh                 # 默认本机架构
+./Scripts/build.sh --universal && ./Scripts/package.sh --no-build   # Universal
+./Scripts/ci_package.sh 0.1.0        # 写版本 + Universal + DMG/ZIP + SHA256
 ```
 
 产出：
 
 - `dist/MeoLaunch-<version>.dmg` — 含 `MeoLaunch.app` + **「一键安装并授权.command」**
 - `dist/MeoLaunch-<version>.zip` — 仅应用包（解压后拖到应用程序文件夹）
+- CI 额外：`MeoLaunch-<version>-macos-universal.{dmg,zip}` + `SHA256SUMS.txt`
 
 **无 Developer ID 时推荐用户流程：** 打开 DMG → 双击「一键安装并授权」（若被拦截则右键 → 打开）→ 输入本机管理员密码 → 自动安装到「应用程序」、清除隔离标记，并尝试授权辅助功能。
 
@@ -113,6 +116,34 @@ xcodebuild -scheme MeoLaunch -configuration Debug
 
 若一键授权未能写入 TCC（较新 macOS 常见）：系统设置 → 隐私与安全性 → **辅助功能**，勾选 MeoLaunch。
 
+### GitHub Actions 自动发布
+
+推送版本 tag 即触发 Universal 打包并创建 [GitHub Release](../../releases)：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+也可在 Actions 里手动跑 **Release** workflow。同一 Release 会附带：
+
+| 资产 | 说明 |
+|------|------|
+| `MeoLaunch-*-macos-universal.dmg` / `.zip` | macOS 13+（arm64 + x86_64） |
+| `SHA256SUMS.txt` | 校验和 |
+| `meolaunch-website-*.zip` | 官网静态站产物（可解压到 `/meolaunch/`） |
+
+仓库 Secrets（可选，用于 Developer ID 签名 / 公证）：
+
+| Secret | 用途 |
+|--------|------|
+| `APPLE_CERTIFICATE_BASE64` | Developer ID `.p12` 的 base64 |
+| `APPLE_CERTIFICATE_PASSWORD` | 证书密码 |
+| `APPLE_API_KEY_BASE64` | App Store Connect API `.p8` 的 base64 |
+| `APPLE_API_KEY_ID` / `APPLE_API_ISSUER` | API Key 元数据 |
+| 或 `APPLE_ID` + `APPLE_APP_SPECIFIC_PASSWORD` + `APPLE_TEAM_ID` | 账号公证 |
+
+未配置证书时使用 ad-hoc 签名，仍可发 Release 供下载。
 ---
 
 ## 给 Star / 反馈
