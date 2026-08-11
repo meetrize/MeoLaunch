@@ -2,9 +2,9 @@
 
 export const site = {
   name: 'meoLaunch',
-  tagline: '原生 Launchpad 替代 · 极致轻量',
+  tagline: '一个应用 · Launchpad + Taskbar · 极省内存',
   description:
-    '把 Launchpad 找回来。真·原生 AppKit，常驻内存极低，热角一触网格即开——启动与切换，一 App 两份能力。',
+    '一个应用，两种能力：全屏 Launchpad 网格 + 轻量 Taskbar。真·原生 AppKit，常驻约 15–25 MB，热角即开。',
   url: 'http://www.meofind.top/meolaunch',
   github: 'https://github.com/meetrize/MeoLaunch',
   /** 未配置环境变量时回退到 Releases 页 */
@@ -15,32 +15,37 @@ export const site = {
 
 export const hero = {
   brand: 'meoLaunch',
-  title: '把 Launchpad 找回来。再让它配得上你的 Mac。',
+  title: '一个应用，两种能力。',
   support:
-    '真·原生 AppKit。常驻内存压到极致。热角一触，网格即开——启动与切换，一 App 两份能力。',
+    'Launchpad 全屏网格 + 轻量 Taskbar，同进程协作。常驻约 15–25 MB——找回启动，也覆盖切换，内存只记一次。',
   ctaPrimary: '下载 macOS 版',
   ctaSecondary: '查看 GitHub',
   trustReady: '已签名与公证 · 支持 Apple Silicon 与 Intel · macOS 13+',
   trustSoon: '即将提供公证安装包 · 支持 Apple Silicon 与 Intel · macOS 13+',
 };
 
+export const featuresSection = {
+  title: '一个 App，两份桌面能力',
+  lead: '不必再叠两套常驻工具。网格负责启动，底栏负责切换，极省内存是默认结果。',
+};
+
 export const features = [
   {
-    title: '熟悉的全屏网格，更干净的节奏',
-    body: '系统拿走了 Launchpad。meoLaunch 把它带回桌面——实时搜索、热角唤起、可配置网格。不是怀念旧物，是把「找应用」重新做成一种体感。',
+    title: 'Launchpad：熟悉的全屏网格',
+    body: '系统拿走了 Launchpad。meoLaunch 把它带回桌面——实时搜索、热角唤起、可配置网格。找应用，重新变成一种干净的体感。',
   },
   {
-    title: '启动与切换，不必再装第二套常驻',
-    body: '全屏应用网格 + 每屏轻量 Taskbar，同进程协作。钉住常用、底栏切换，内存账只记一次。',
+    title: 'Taskbar：每屏一条轻量底栏',
+    body: '同进程内置 Taskbar：按屏显示窗口、钉住常用、底栏一键切换。启动与切换，装一个就够。',
   },
   {
-    title: 'C 核心 · AppKit 薄层 · 数字说话',
-    body: '设计目标：未打开网格时常驻约 15–25 MB；热角到首帧约 80–120 ms。少占资源，不是口号——是架构选择。',
+    title: '极省内存：数字说话',
+    body: '设计目标：未打开网格时常驻约 15–25 MB；热角到首帧约 80–120 ms。C 核心 + AppKit 薄层——少占资源，是架构，不是口号。',
   },
 ] as const;
 
 export const proof = {
-  headline: '别人用一堆工具堆出功能。我们用一份进程，压住两份能力。',
+  headline: '一份进程，压住 Launchpad + Taskbar；内存仍压到极致。',
   idleLabel: '常驻内存（未打开网格）',
   idleValue: '15–25',
   idleUnit: 'MB',
@@ -49,16 +54,16 @@ export const proof = {
   latencyUnit: 'ms',
   mediaCaption: 'Activity Monitor 对比与唤起演示（素材可替换）',
   rows: [
-    { aspect: '应用网格', before: '系统已移除 Launchpad', after: '恢复全屏网格 + 搜索 / 热角' },
-    { aspect: '窗口切换', before: 'Dock / Mission Control', after: '同 App 内置 Taskbar（每屏一条）' },
-    { aspect: '技术栈', before: '—', after: '原生 AppKit（非 Electron）' },
-    { aspect: '常驻内存', before: '多工具叠加易膨胀', after: '一份进程扛两种功能' },
+    { aspect: 'Launchpad', before: '系统已移除', after: '全屏网格 + 搜索 / 热角' },
+    { aspect: 'Taskbar', before: '另装常驻工具', after: '同 App 每屏一条轻量底栏' },
+    { aspect: '技术栈', before: 'Electron / 多进程叠加', after: '原生 AppKit · 单进程' },
+    { aspect: '常驻内存', before: '多工具叠加易膨胀', after: '目标约 15–25 MB' },
   ],
 };
 
 export const install = {
   title: '三步装上，热角即开',
-  subtitle: '陌生人按官网 3 步能装上并用热角唤起。',
+  subtitle: '按官网 3 步装上，即可用热角唤起网格；Taskbar 随应用常驻。',
   steps: [
     {
       n: '01',
@@ -68,26 +73,14 @@ export const install = {
     {
       n: '02',
       title: '授予辅助功能',
-      body: '热角需要辅助功能权限；菜单栏与快捷键仍可先用，不必等权限就绪。',
+      body: '热角与窗口相关能力需要辅助功能权限；菜单栏与快捷键仍可先用。',
     },
     {
       n: '03',
       title: '移入热角',
-      body: '默认左上角移入即唤起。Esc 或点击空白关闭网格。',
+      body: '默认左上角移入即唤起网格。Esc 或点击空白关闭。底栏随时切换窗口。',
     },
   ],
-};
-
-export const enSummary = {
-  title: 'English',
-  line: 'Launchpad, restored—and refined. Native. Tiny memory. Instant. Grid + Taskbar in one process.',
-  bullets: [
-    'Native AppKit — not Electron, not WebView.',
-    'Design targets: ~15–25 MB idle; hot-corner to first frame ~80–120 ms.',
-    'One process: app grid + per-display taskbar.',
-  ],
-  cta: 'Download for macOS',
-  github: 'Star on GitHub',
 };
 
 export const subscribe = {
@@ -103,7 +96,7 @@ export const footer = {
   privacy: '隐私政策',
   changelog: '更新日志',
   github: 'GitHub',
-  rights: '极致轻量 macOS 工具',
+  rights: '一个应用 · Launchpad + Taskbar · 极省内存',
 };
 
 export const privacy = {

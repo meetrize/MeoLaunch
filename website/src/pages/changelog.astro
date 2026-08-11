@@ -10,7 +10,7 @@ import { withBase } from '../lib/paths';
   <section class="section changelog-page">
     <div class="wrap">
       <h1>更新日志</h1>
-      <p class="lead">Changelog · 中英要点</p>
+      <p class="lead">版本更新要点</p>
       <div class="entries">
         {
           changelog.map((e) => (
@@ -21,22 +21,12 @@ import { withBase } from '../lib/paths';
                   <span class="date">{e.date}</span>
                 </h2>
                 <p class="title-zh">{e.titleZh}</p>
-                <p class="title-en" lang="en">
-                  {e.titleEn}
-                </p>
               </header>
-              <div class="cols">
-                <ul>
-                  {e.itemsZh.map((item) => (
-                    <li>{item}</li>
-                  ))}
-                </ul>
-                <ul lang="en">
-                  {e.itemsEn.map((item) => (
-                    <li>{item}</li>
-                  ))}
-                </ul>
-              </div>
+              <ul>
+                {e.itemsZh.map((item) => (
+                  <li>{item}</li>
+                ))}
+              </ul>
             </article>
           ))
         }
@@ -86,26 +76,8 @@ import { withBase } from '../lib/paths';
   }
 
   .title-zh {
-    margin: 0.5rem 0 0.15rem;
+    margin: 0.5rem 0 1rem;
     font-size: 1.15rem;
-  }
-
-  .title-en {
-    color: var(--muted);
-    margin: 0 0 1rem;
-    font-size: 0.95rem;
-  }
-
-  .cols {
-    display: grid;
-    gap: 1rem;
-  }
-
-  @media (min-width: 800px) {
-    .cols {
-      grid-template-columns: 1fr 1fr;
-      gap: 2rem;
-    }
   }
 
   ul {
