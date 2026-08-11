@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">
+  <rect width="960" height="640" fill="#f7f9fc"/>
+  <text x="480" y="70" text-anchor="middle" fill="#1a2a44" font-family="system-ui" font-size="22" font-weight="700">Tiny Memory Footprint</text>
+  <rect x="80" y="140" width="360" height="400" rx="20" fill="#fff" stroke="#e0a090"/>
+  <text x="260" y="200" text-anchor="middle" fill="#8a5a4a" font-family="system-ui" font-size="16">Stacked tools</text>
+  <rect x="130" y="240" width="200" height="200" rx="10" fill="#ffb4a2"/>
+  <text x="260" y="470" text-anchor="middle" fill="#1a2a44" font-family="system-ui" font-size="32" font-weight="700">180+ MB</text>
+  <rect x="520" y="140" width="360" height="400" rx="20" fill="#fff" stroke="#4f8cff"/>
+  <text x="700" y="200" text-anchor="middle" fill="#3a6db5" font-family="system-ui" font-size="16">meoLaunch idle</text>
+  <rect x="640" y="320" width="120" height="120" rx="10" fill="#4f8cff" fill-opacity="0.85"/>
+  <text x="700" y="470" text-anchor="middle" fill="#1a2a44" font-family="system-ui" font-size="32" font-weight="700">15–25 MB</text>
+</svg>

@@ -1,0 +1,63 @@
+---
+import { enSummary, site } from '../content/copy';
+
+const downloadUrl =
+  import.meta.env.PUBLIC_DOWNLOAD_URL || site.downloadFallback;
+---
+
+<section class="section en" id="en" lang="en" aria-labelledby="en-title">
+  <div class="wrap">
+    <p class="eyebrow">{enSummary.title}</p>
+    <h2 id="en-title">{enSummary.line}</h2>
+    <ul>
+      {enSummary.bullets.map((b) => <li>{b}</li>)}
+    </ul>
+    <div class="en-cta">
+      <a class="btn btn-primary" href={downloadUrl}>{enSummary.cta}</a>
+      <a
+        class="btn btn-ghost"
+        href={site.github}
+        rel="noopener noreferrer"
+        target="_blank">{enSummary.github}</a>
+    </div>
+  </div>
+</section>
+
+<style>
+  .en {
+    border-top: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), transparent);
+  }
+
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.78rem;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 0.85rem;
+  }
+
+  h2 {
+    font-size: clamp(1.35rem, 2.8vw, 1.9rem);
+    max-width: 28ch;
+    margin-bottom: 1.25rem;
+  }
+
+  ul {
+    margin: 0 0 1.75rem;
+    padding-left: 1.15rem;
+    color: var(--muted);
+    max-width: 40rem;
+  }
+
+  li {
+    margin-bottom: 0.4rem;
+  }
+
+  .en-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+</style>

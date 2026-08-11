@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="440" viewBox="0 0 440 440">
+  <rect width="440" height="440" fill="#fff"/>
+  <rect x="36" y="36" width="368" height="368" rx="16" fill="#f4f7fb" stroke="#c5d0de"/>
+  <text x="220" y="210" text-anchor="middle" fill="#6b7788" font-family="system-ui" font-size="18">WeChat QR</text>
+  <text x="220" y="242" text-anchor="middle" fill="#6b7788" font-family="system-ui" font-size="14">Replace wechat-qr.png</text>
+</svg>

@@ -1,0 +1,42 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import { privacy, site } from '../content/copy';
+import { withBase } from '../lib/paths';
+---
+
+<BaseLayout title={`隐私政策 — ${site.name}`} description="meoLaunch 隐私政策：本地配置，不上传应用列表。">
+  <section class="section privacy-page">
+    <div class="wrap prose">
+      <h1>{privacy.title}</h1>
+      <p class="updated">更新日期：{privacy.updated}</p>
+      {
+        privacy.sections.map((s) => (
+          <>
+            <h2>{s.h}</h2>
+            <p>{s.p}</p>
+          </>
+        ))
+      }
+      <p>
+        <a href={withBase('/')}>← 返回首页</a>
+      </p>
+    </div>
+  </section>
+  <SiteFooter />
+</BaseLayout>
+
+<style>
+  .privacy-page {
+    padding-top: 7rem;
+  }
+
+  h1 {
+    font-size: clamp(1.8rem, 4vw, 2.5rem);
+  }
+
+  .updated {
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+</style>

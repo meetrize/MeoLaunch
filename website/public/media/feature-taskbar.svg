@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640">
+  <defs><linearGradient id="d" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#d9e6f7"/><stop offset="100%" stop-color="#eef3f9"/></linearGradient></defs>
+  <rect width="960" height="640" fill="url(#d)"/>
+  <text x="480" y="80" text-anchor="middle" fill="#1a2a44" font-family="system-ui" font-size="22" font-weight="700">Per-display Taskbar</text>
+  <rect x="80" y="140" width="360" height="220" rx="16" fill="#fff" stroke="#c5d0de"/>
+  <rect x="520" y="140" width="360" height="220" rx="16" fill="#fff" stroke="#c5d0de"/>
+  <rect x="80" y="500" width="800" height="56" rx="12" fill="#1a2a44" fill-opacity="0.88"/>
+  <g fill="#fff">
+    <rect x="110" y="514" width="28" height="28" rx="6" fill="#4f8cff"/>
+    <rect x="156" y="514" width="28" height="28" rx="6" fill="#3aa0a0"/>
+    <rect x="202" y="514" width="28" height="28" rx="6" fill="#e08a4a"/>
+    <text x="250" y="534" fill="#dce4ef" font-family="system-ui" font-size="14">Safari · Notes · Terminal</text>
+  </g>
+</svg>

@@ -1,0 +1,74 @@
+---
+import { footer, site } from '../content/copy';
+import { withBase } from '../lib/paths';
+
+const year = new Date().getFullYear();
+---
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand">
+      <p class="name">{site.name}</p>
+      <p class="tag">{footer.rights}</p>
+    </div>
+    <nav class="footer-nav" aria-label="页脚">
+      <a href={withBase('/privacy/')}>{footer.privacy}</a>
+      <a href={withBase('/changelog/')}>{footer.changelog}</a>
+      <a href={site.github} rel="noopener noreferrer" target="_blank">{footer.github}</a>
+    </nav>
+    <p class="copy">© {year} {site.name}</p>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--line);
+    padding: 2.5rem 0 3rem;
+    margin-top: 1rem;
+  }
+
+  .footer-inner {
+    display: grid;
+    gap: 1.25rem;
+  }
+
+  @media (min-width: 720px) {
+    .footer-inner {
+      grid-template-columns: 1fr auto;
+      align-items: end;
+    }
+
+    .copy {
+      grid-column: 1 / -1;
+    }
+  }
+
+  .name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 1.1rem;
+    margin: 0 0 0.25rem;
+  }
+
+  .tag,
+  .copy {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0;
+  }
+
+  .footer-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.1rem;
+  }
+
+  .footer-nav a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  .footer-nav a:hover {
+    color: var(--fg);
+  }
+</style>

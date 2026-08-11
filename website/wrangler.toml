@@ -1,0 +1,8 @@
+# Cloudflare Pages — meoLaunch website
+# Dashboard: connect this repo, set Root directory = website
+# Or CLI: npx wrangler pages deploy dist --project-name=meolaunch
+
+name = "meolaunch"
+compatibility_date = "2026-08-01"
+
+pages_build_output_dir = "dist"

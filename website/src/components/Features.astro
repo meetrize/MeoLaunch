@@ -1,0 +1,113 @@
+---
+import { features } from '../content/copy';
+import { withBase } from '../lib/paths';
+
+const visuals = [
+  {
+    src: withBase('/media/feature-grid.png'),
+    alt: '全屏应用网格示意',
+  },
+  {
+    src: withBase('/media/taskbar-photo.jpg'),
+    alt: '每屏轻量 Taskbar 示意',
+  },
+  {
+    src: withBase('/media/feature-memory.png'),
+    alt: '内存占用对比示意',
+  },
+];
+---
+
+<section class="section features" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <h2 id="features-title" class="section-title">三件事，说清为什么值得装</h2>
+    <p class="section-lead">不堆功能清单。只留下 Launchpad 体验与资源占用的硬差别。</p>
+    <ol class="feature-list">
+      {
+        features.map((f, i) => (
+          <li class={i % 2 === 1 ? 'reverse' : undefined}>
+            <div class="feature-text">
+              <span class="feature-index" aria-hidden="true">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              <h3>{f.title}</h3>
+              <p>{f.body}</p>
+            </div>
+            <figure class="feature-media media-frame">
+              <img src={visuals[i].src} alt={visuals[i].alt} width="960" height="640" loading="lazy" />
+            </figure>
+          </li>
+        ))
+      }
+    </ol>
+  </div>
+</section>
+
+<style>
+  .features {
+    border-top: 1px solid var(--line);
+  }
+
+  .feature-list {
+    list-style: none;
+    margin: 2.75rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 2.75rem;
+  }
+
+  .feature-list li {
+    display: grid;
+    gap: 1.5rem;
+    align-items: center;
+  }
+
+  @media (min-width: 880px) {
+    .feature-list li {
+      grid-template-columns: 1fr 1.05fr;
+      gap: 2.5rem;
+    }
+
+    .feature-list li.reverse {
+      grid-template-columns: 1.05fr 1fr;
+    }
+
+    .feature-list li.reverse .feature-text {
+      order: 2;
+    }
+
+    .feature-list li.reverse .feature-media {
+      order: 1;
+    }
+  }
+
+  .feature-index {
+    display: inline-block;
+    font-family: var(--font-display);
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 0.95rem;
+    margin-bottom: 0.55rem;
+  }
+
+  h3 {
+    font-size: clamp(1.2rem, 2vw, 1.5rem);
+    margin-bottom: 0.55rem;
+  }
+
+  p {
+    color: var(--muted);
+    max-width: 36rem;
+    margin: 0;
+  }
+
+  .feature-media {
+    margin: 0;
+  }
+
+  .feature-media img {
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    object-fit: cover;
+  }
+</style>

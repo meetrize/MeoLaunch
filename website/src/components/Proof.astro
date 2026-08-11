@@ -1,0 +1,274 @@
+---
+import { proof } from '../content/copy';
+import { withBase } from '../lib/paths';
+---
+
+<section class="section proof" id="proof" aria-labelledby="proof-title">
+  <div class="wrap">
+    <h2 id="proof-title" class="section-title">{proof.headline}</h2>
+
+    <div class="metrics" data-reveal>
+      <div class="metric">
+        <p class="metric-label">{proof.idleLabel}</p>
+        <p class="metric-value">
+          <span class="num">{proof.idleValue}</span>
+          <span class="unit">{proof.idleUnit}</span>
+        </p>
+      </div>
+      <div class="metric">
+        <p class="metric-label">{proof.latencyLabel}</p>
+        <p class="metric-value">
+          <span class="num">{proof.latencyValue}</span>
+          <span class="unit">{proof.latencyUnit}</span>
+        </p>
+      </div>
+    </div>
+
+    <div class="proof-media">
+      <figure class="media-frame">
+        <img
+          src={withBase('/media/memory-compare.png')}
+          alt="Activity Monitor 内存对比示意"
+          width="1200"
+          height="675"
+          loading="lazy"
+        />
+        <figcaption>{proof.mediaCaption}</figcaption>
+      </figure>
+      <div class="video-slot media-frame">
+        <video
+          controls
+          playsinline
+          preload="metadata"
+          poster={withBase('/media/demo-poster.png')}
+          aria-label="meoLaunch 唤起演示"
+        >
+          <source src={withBase('/media/demo.mp4')} type="video/mp4" />
+        </video>
+        <p class="video-hint">15–30 秒唤起对比视频位（放入 public/media/demo.mp4）</p>
+      </div>
+    </div>
+
+    <div class="shot-row">
+      <figure class="media-frame">
+        <img src={withBase('/media/hotcorner.png')} alt="热角唤起示意" width="960" height="640" loading="lazy" />
+        <figcaption>热角一触，网格即开</figcaption>
+      </figure>
+      <figure class="media-frame">
+        <img src={withBase('/media/taskbar-photo.jpg')} alt="Taskbar 底栏示意" width="960" height="540" loading="lazy" />
+        <figcaption>同进程 Taskbar，底栏随时切换</figcaption>
+      </figure>
+      <figure class="media-frame">
+        <img src={withBase('/media/feature-grid.png')} alt="应用网格示意" width="960" height="640" loading="lazy" />
+        <figcaption>熟悉的全屏网格，搜索即过滤</figcaption>
+      </figure>
+    </div>
+
+    <div class="compare" role="table" aria-label="系统现状与 meoLaunch 对比">
+      <div class="compare-head" role="row">
+        <span role="columnheader">维度</span>
+        <span role="columnheader">系统现状</span>
+        <span role="columnheader">meoLaunch</span>
+      </div>
+      {
+        proof.rows.map((row) => (
+          <div class="compare-row" role="row">
+            <span role="cell">{row.aspect}</span>
+            <span role="cell">{row.before}</span>
+            <span role="cell" class="after">
+              {row.after}
+            </span>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .proof {
+    background:
+      radial-gradient(ellipse 55% 40% at 15% 0%, var(--accent-dim), transparent 60%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.55), transparent 40%),
+      var(--bg);
+    border-top: 1px solid var(--line);
+  }
+
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 16rem));
+    gap: 1.5rem;
+    margin: 2rem 0 2.5rem;
+  }
+
+  .metric {
+    padding: 1.25rem 1.25rem 1.1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.9rem;
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow);
+  }
+
+  .metric-label {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0 0 0.35rem;
+  }
+
+  .metric-value {
+    margin: 0;
+    font-family: var(--font-display);
+    letter-spacing: -0.03em;
+    opacity: 0;
+    transform: translateY(10px);
+    transition:
+      opacity 0.7s var(--ease),
+      transform 0.7s var(--ease);
+  }
+
+  .metrics.is-visible .metric-value {
+    opacity: 1;
+    transform: none;
+  }
+
+  .metrics.is-visible .metric:nth-child(2) .metric-value {
+    transition-delay: 0.12s;
+  }
+
+  .num {
+    font-size: clamp(2.4rem, 5vw, 3.4rem);
+    font-weight: 800;
+    color: var(--fg);
+  }
+
+  .unit {
+    margin-left: 0.35rem;
+    font-size: 1.1rem;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .proof-media {
+    display: grid;
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+
+  @media (min-width: 900px) {
+    .proof-media {
+      grid-template-columns: 1.2fr 1fr;
+      align-items: start;
+    }
+  }
+
+  figure,
+  .video-slot {
+    margin: 0;
+  }
+
+  .proof-media img,
+  .proof-media video,
+  .shot-row img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    background: var(--bg-soft);
+  }
+
+  figcaption,
+  .video-hint {
+    margin: 0;
+    padding: 0.75rem 1rem 0.9rem;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+
+  .shot-row {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 2.5rem;
+  }
+
+  @media (min-width: 800px) {
+    .shot-row {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  .compare {
+    display: grid;
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: 0.9rem;
+    overflow: hidden;
+    background: var(--bg-elevated);
+    box-shadow: var(--shadow);
+  }
+
+  .compare-head,
+  .compare-row {
+    display: grid;
+    grid-template-columns: 0.8fr 1.2fr 1.4fr;
+    gap: 1rem;
+    padding: 0.95rem 1.1rem;
+  }
+
+  .compare-head {
+    background: var(--bg-soft);
+    color: var(--muted);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .compare-row {
+    border-top: 1px solid var(--line);
+    font-size: 0.98rem;
+  }
+
+  .compare-row span:first-child {
+    color: var(--metal);
+    font-weight: 600;
+  }
+
+  .compare-row span:nth-child(2) {
+    color: var(--muted);
+  }
+
+  .after {
+    color: var(--fg);
+  }
+
+  @media (max-width: 720px) {
+    .metrics {
+      grid-template-columns: 1fr;
+    }
+
+    .compare-head {
+      display: none;
+    }
+
+    .compare-row {
+      grid-template-columns: 1fr;
+      gap: 0.35rem;
+    }
+  }
+</style>
+
+<script>
+  const el = document.querySelector('.metrics[data-reveal]');
+  if (el) {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            io.disconnect();
+          }
+        }
+      },
+      { threshold: 0.35 },
+    );
+    io.observe(el);
+  }
+</script>

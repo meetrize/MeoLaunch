@@ -1,0 +1,124 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import { changelog } from '../content/changelog';
+import { site } from '../content/copy';
+import { withBase } from '../lib/paths';
+---
+
+<BaseLayout title={`更新日志 — ${site.name}`} description="meoLaunch 版本更新日志。">
+  <section class="section changelog-page">
+    <div class="wrap">
+      <h1>更新日志</h1>
+      <p class="lead">Changelog · 中英要点</p>
+      <div class="entries">
+        {
+          changelog.map((e) => (
+            <article class="entry">
+              <header>
+                <h2>
+                  <span class="ver">v{e.version}</span>
+                  <span class="date">{e.date}</span>
+                </h2>
+                <p class="title-zh">{e.titleZh}</p>
+                <p class="title-en" lang="en">
+                  {e.titleEn}
+                </p>
+              </header>
+              <div class="cols">
+                <ul>
+                  {e.itemsZh.map((item) => (
+                    <li>{item}</li>
+                  ))}
+                </ul>
+                <ul lang="en">
+                  {e.itemsEn.map((item) => (
+                    <li>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </article>
+          ))
+        }
+      </div>
+      <p class="back">
+        <a href={withBase('/')}>← 返回首页</a>
+      </p>
+    </div>
+  </section>
+  <SiteFooter />
+</BaseLayout>
+
+<style>
+  .changelog-page {
+    padding-top: 7rem;
+  }
+
+  h1 {
+    font-size: clamp(1.8rem, 4vw, 2.5rem);
+    margin-bottom: 0.35rem;
+  }
+
+  .lead {
+    color: var(--muted);
+    margin-bottom: 2.5rem;
+  }
+
+  .entries {
+    display: grid;
+    gap: 2rem;
+  }
+
+  .entry {
+    padding: 1.5rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .ver {
+    font-family: var(--font-display);
+    margin-right: 0.75rem;
+  }
+
+  .date {
+    color: var(--muted);
+    font-size: 0.95rem;
+    font-weight: 500;
+  }
+
+  .title-zh {
+    margin: 0.5rem 0 0.15rem;
+    font-size: 1.15rem;
+  }
+
+  .title-en {
+    color: var(--muted);
+    margin: 0 0 1rem;
+    font-size: 0.95rem;
+  }
+
+  .cols {
+    display: grid;
+    gap: 1rem;
+  }
+
+  @media (min-width: 800px) {
+    .cols {
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+    }
+  }
+
+  ul {
+    margin: 0;
+    padding-left: 1.15rem;
+    color: var(--muted);
+  }
+
+  li {
+    margin-bottom: 0.35rem;
+  }
+
+  .back {
+    margin-top: 2.5rem;
+  }
+</style>

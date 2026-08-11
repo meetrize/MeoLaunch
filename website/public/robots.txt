@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /meolaunch/
+
+Sitemap: http://www.meofind.top/meolaunch/sitemap.xml

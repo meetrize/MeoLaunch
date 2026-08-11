@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <rect width="1200" height="675" fill="#e8eef6"/>
+  <circle cx="600" cy="300" r="58" fill="#4f8cff" fill-opacity="0.18" stroke="#4f8cff" stroke-width="3"/>
+  <polygon points="585,270 585,330 635,300" fill="#1a2a44"/>
+  <text x="600" y="420" text-anchor="middle" fill="#1a2a44" font-family="system-ui" font-size="28" font-weight="700">Hot corner → Instant grid</text>
+  <text x="600" y="460" text-anchor="middle" fill="#6b7788" font-family="system-ui" font-size="16">Drop demo.mp4 · 15–30s</text>
+</svg>

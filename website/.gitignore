@@ -1,0 +1,16 @@
+# Editor
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# Dependencies
+node_modules/
+
+# Build
+dist/
+.astro/
+
+# Env
+.env
+.env.*
+!.env.example

@@ -1,0 +1,154 @@
+---
+import { subscribe } from '../content/copy';
+import { withBase } from '../lib/paths';
+
+const action = import.meta.env.PUBLIC_SUBSCRIBE_ACTION || '';
+---
+
+<section class="section subscribe" id="subscribe" aria-labelledby="subscribe-title">
+  <div class="wrap subscribe-grid">
+    <div>
+      <h2 id="subscribe-title" class="section-title">{subscribe.title}</h2>
+      <p class="section-lead">{subscribe.body}</p>
+      {
+        action ? (
+          <form class="sub-form" method="post" action={action}>
+            <label class="sr-only" for="email">
+              Email
+            </label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              required
+              autocomplete="email"
+              placeholder={subscribe.emailPlaceholder}
+            />
+            <button class="btn btn-primary" type="submit">
+              {subscribe.emailCta}
+            </button>
+          </form>
+        ) : (
+          <form class="sub-form" id="local-subscribe">
+            <label class="sr-only" for="email">
+              Email
+            </label>
+            <input
+              id="email"
+              name="email"
+              type="email"
+              required
+              autocomplete="email"
+              placeholder={subscribe.emailPlaceholder}
+            />
+            <button class="btn btn-primary" type="submit">
+              {subscribe.emailCta}
+            </button>
+            <p class="form-note" id="sub-note" hidden>
+              {subscribe.success}
+            </p>
+          </form>
+        )
+      }
+      <p class="community">{subscribe.communityHint}</p>
+    </div>
+    <div class="qr-slot">
+      <img
+        src={withBase('/media/wechat-qr.png')}
+        alt="微信交流群二维码占位"
+        width="220"
+        height="220"
+        loading="lazy"
+      />
+    </div>
+  </div>
+</section>
+
+<style>
+  .subscribe {
+    border-top: 1px solid var(--line);
+  }
+
+  .subscribe-grid {
+    display: grid;
+    gap: 2rem;
+    align-items: start;
+  }
+
+  @media (min-width: 800px) {
+    .subscribe-grid {
+      grid-template-columns: 1.4fr auto;
+      gap: 3rem;
+    }
+  }
+
+  .sub-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin: 1.5rem 0 1rem;
+  }
+
+  input[type='email'] {
+    flex: 1 1 14rem;
+    min-width: 12rem;
+    padding: 0.85rem 1rem;
+    border-radius: 0.55rem;
+    border: 1px solid var(--line);
+    background: var(--bg-elevated);
+    color: var(--fg);
+    font: inherit;
+  }
+
+  input[type='email']:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .form-note {
+    flex-basis: 100%;
+    color: var(--accent);
+    margin: 0.25rem 0 0;
+    font-size: 0.92rem;
+  }
+
+  .community {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 0;
+  }
+
+  .qr-slot img {
+    width: 11rem;
+    height: 11rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--line);
+    background: var(--bg-elevated);
+    object-fit: cover;
+  }
+</style>
+
+{
+  !action && (
+    <script>
+      const form = document.getElementById('local-subscribe');
+      const note = document.getElementById('sub-note');
+      form?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const data = new FormData(form);
+        const email = String(data.get('email') || '').trim();
+        if (!email) return;
+        try {
+          const key = 'meolaunch-subscribe';
+          const prev = JSON.parse(localStorage.getItem(key) || '[]');
+          if (!prev.includes(email)) prev.push(email);
+          localStorage.setItem(key, JSON.stringify(prev));
+        } catch {
+          /* ignore */
+        }
+        if (note) note.hidden = false;
+        form.reset();
+      });
+    </script>
+  )
+}

@@ -1,0 +1,71 @@
+---
+import '../styles/global.css';
+import { site } from '../content/copy';
+import { withBase } from '../lib/paths';
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const {
+  title = `${site.name} — ${site.tagline}`,
+  description = site.description,
+  ogImage = '/og.jpg',
+} = Astro.props;
+
+const siteUrl = import.meta.env.PUBLIC_SITE_URL || site.url;
+const canonical = new URL(Astro.url.pathname, Astro.site ?? siteUrl).href;
+const ogAbsolute = new URL(withBase(ogImage), Astro.site ?? 'http://www.meofind.top').href;
+---
+
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <meta name="theme-color" content="#eef3f9" />
+    <link rel="icon" type="image/png" href={withBase('/favicon.png')} />
+    <link rel="apple-touch-icon" href={withBase('/apple-touch-icon.png')} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content={site.name} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogAbsolute} />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogAbsolute} />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="wrap">
+        <a class="brand-mark" href={withBase('/')}>{site.name}</a>
+        <nav class="nav-links" aria-label="主导航">
+          <a href={withBase('/#features')}>能力</a>
+          <a href={withBase('/#install')}>安装</a>
+          <a href={withBase('/changelog/')}>更新</a>
+          <a href={site.github} rel="noopener noreferrer" target="_blank">GitHub</a>
+        </nav>
+      </div>
+    </header>
+    <main class="page-main">
+      <slot />
+    </main>
+  </body>
+</html>

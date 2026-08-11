@@ -1,0 +1,198 @@
+---
+import { hero, site } from '../content/copy';
+import { withBase } from '../lib/paths';
+
+const downloadUrl =
+  import.meta.env.PUBLIC_DOWNLOAD_URL || site.downloadFallback;
+const notarized = import.meta.env.PUBLIC_NOTARIZED === 'true';
+const trust = notarized ? hero.trustReady : hero.trustSoon;
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero-visual" aria-hidden="true">
+    <div class="hero-grid"></div>
+    <div class="hero-glow"></div>
+  </div>
+
+  <div class="wrap hero-layout">
+    <div class="hero-copy">
+      <div class="brand-row">
+        <img class="brand-icon" src={withBase('/media/app-icon.png')} alt="" width="56" height="56" />
+        <p class="hero-brand">{hero.brand}</p>
+      </div>
+      <h1 id="hero-title">{hero.title}</h1>
+      <p class="hero-support">{hero.support}</p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href={downloadUrl}>{hero.ctaPrimary}</a>
+        <a
+          class="btn btn-ghost"
+          href={site.github}
+          rel="noopener noreferrer"
+          target="_blank">{hero.ctaSecondary}</a>
+      </div>
+      <p class="hero-trust">{trust}</p>
+    </div>
+
+    <div class="hero-stage">
+      <img
+        class="hero-product"
+        src={withBase('/media/hero-product.jpg')}
+        alt="meoLaunch 全屏应用网格示意"
+        width="1280"
+        height="800"
+      />
+      <img
+        class="hero-float"
+        src={withBase('/media/hotcorner.png')}
+        alt=""
+        width="480"
+        height="320"
+      />
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    min-height: 100svh;
+    display: grid;
+    align-items: center;
+    overflow: hidden;
+    padding: 7rem 0 3.5rem;
+  }
+
+  .hero-visual {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .hero-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(21, 32, 51, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(21, 32, 51, 0.045) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 90% 80% at 60% 40%, #000 25%, transparent 78%);
+  }
+
+  .hero-glow {
+    position: absolute;
+    width: min(70vw, 42rem);
+    height: min(70vw, 42rem);
+    right: -4%;
+    top: 4%;
+    background: radial-gradient(circle, rgba(47, 111, 237, 0.2), transparent 68%);
+    filter: blur(6px);
+  }
+
+  .hero-layout {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    gap: 2.5rem;
+    align-items: center;
+  }
+
+  @media (min-width: 960px) {
+    .hero-layout {
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
+      gap: 2rem;
+    }
+  }
+
+  .brand-row {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    margin-bottom: 0.75rem;
+    animation: rise-in 0.8s var(--ease) both;
+  }
+
+  .brand-icon {
+    width: 3.25rem;
+    height: 3.25rem;
+    border-radius: 0.85rem;
+    box-shadow: var(--shadow);
+  }
+
+  .hero-brand {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(2rem, 4.5vw, 3.1rem);
+    letter-spacing: -0.045em;
+    margin: 0;
+    color: var(--fg);
+  }
+
+  #hero-title {
+    font-size: clamp(1.55rem, 3.2vw, 2.25rem);
+    max-width: 16ch;
+    margin-bottom: 1rem;
+    animation: rise-in 0.85s var(--ease) 0.08s both;
+  }
+
+  .hero-support {
+    color: var(--muted);
+    font-size: 1.08rem;
+    max-width: 34rem;
+    margin-bottom: 1.75rem;
+    animation: rise-in 0.85s var(--ease) 0.16s both;
+  }
+
+  .hero-cta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    animation: rise-in 0.85s var(--ease) 0.24s both;
+  }
+
+  .hero-trust {
+    color: var(--metal);
+    font-size: 0.88rem;
+    margin: 0;
+    animation: rise-in 0.85s var(--ease) 0.3s both;
+  }
+
+  .hero-stage {
+    position: relative;
+    animation: fade-in 1s var(--ease) both;
+  }
+
+  .hero-product {
+    width: 100%;
+    border-radius: 1.1rem;
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    object-fit: cover;
+    aspect-ratio: 16 / 10;
+    background: var(--bg-elevated);
+  }
+
+  .hero-float {
+    position: absolute;
+    width: min(42%, 15rem);
+    right: -4%;
+    bottom: -8%;
+    border-radius: 0.85rem;
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
+    background: #fff;
+  }
+
+  @media (max-width: 959px) {
+    .hero {
+      padding-top: 6.5rem;
+      padding-bottom: 4rem;
+    }
+
+    .hero-float {
+      width: min(48%, 11rem);
+      bottom: -6%;
+      right: 4%;
+    }
+  }
+</style>
