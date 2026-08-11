@@ -4,6 +4,8 @@
 
 > English: *Bring back Launchpad—and go beyond. App grid + Taskbar. Native. Tiny memory.*
 
+![meoLaunch — Launchpad 网格 + Taskbar](./assets/meolaunch-hero.jpg)
+
 新版 macOS 拿掉了 Launchpad，找应用又回到 Dock 翻、Spotlight 搜、文件夹挖。meoLaunch 把熟悉的全屏应用网格**找回来**，并在同进程里加上轻量 **Taskbar**（每屏底栏、窗口切换 / 钉住），用一份极低常驻内存同时覆盖「启动」与「切换」。
 
 真·原生：C 核心 + AppKit，不背 Electron、不背 WebView。
