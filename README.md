@@ -87,8 +87,10 @@ INSTALL_DIR="$HOME/Applications" ./Scripts/release_install.sh  # 装到用户 Ap
 
 产出：
 
-- `dist/MeoLaunch-<version>.dmg` — 打开后把 `MeoLaunch.app` 拖到 `Applications`
-- `dist/MeoLaunch-<version>.zip` — 解压后拖到应用程序文件夹
+- `dist/MeoLaunch-<version>.dmg` — 含 `MeoLaunch.app` + **「一键安装并授权.command」**
+- `dist/MeoLaunch-<version>.zip` — 仅应用包（解压后拖到应用程序文件夹）
+
+**无 Developer ID 时推荐用户流程：** 打开 DMG → 双击「一键安装并授权」（若被拦截则右键 → 打开）→ 输入本机管理员密码 → 自动安装到「应用程序」、清除隔离标记，并尝试授权辅助功能。
 
 ```bash
 ./Scripts/package.sh --no-build   # 复用已有 build/MeoLaunch.app
@@ -109,7 +111,7 @@ xcodegen generate
 xcodebuild -scheme MeoLaunch -configuration Debug
 ```
 
-首次使用热角：系统设置 → 隐私与安全性 → **辅助功能**，勾选 meoLaunch。
+若一键授权未能写入 TCC（较新 macOS 常见）：系统设置 → 隐私与安全性 → **辅助功能**，勾选 MeoLaunch。
 
 ---
 

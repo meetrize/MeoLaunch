@@ -27,8 +27,11 @@ for arg in "$@"; do
 Usage: $0 [--no-build] [--keep-stage]
 
   Builds MeoLaunch.app, ad-hoc (or Developer ID) signs it, then creates:
-    dist/MeoLaunch-<version>.dmg   — drag the app onto Applications
-    dist/MeoLaunch-<version>.zip   — alternate archive
+    dist/MeoLaunch-<version>.dmg   — app + 「一键安装并授权.command」
+    dist/MeoLaunch-<version>.zip   — alternate archive (app only)
+
+  DMG includes a double-click helper that prompts for the admin password,
+  installs to /Applications, clears quarantine, and tries Accessibility grant.
 
 Environment:
   CODESIGN_IDENTITY   codesign identity (default: ad-hoc "-")
@@ -85,17 +88,31 @@ else
 fi
 ln -s /Applications "$STAGE/Applications"
 
+# One-click install + authorize (double-click → admin password dialog)
+INSTALL_CMD="一键安装并授权.command"
+cp "$ROOT/Scripts/dmg_install_authorize.command" "$STAGE/$INSTALL_CMD"
+chmod +x "$STAGE/$INSTALL_CMD"
+# Finder sometimes needs executable + no quarantine on the helper itself
+xattr -cr "$STAGE/$INSTALL_CMD" 2>/dev/null || true
+
 # Optional drop hint for Finder (plain text; opens fine on any locale)
 cat > "$STAGE/Install.txt" <<EOF
 MeoLaunch ${VERSION}
 ====================
 
-Drag MeoLaunch.app onto the Applications folder to install.
+推荐（无 Developer ID 签名时）：
+  1. 若双击「${INSTALL_CMD}」被拦截：右键 → 打开 → 仍要打开
+  2. 按提示输入本机管理员密码
+  3. 自动安装到应用程序、清除隔离标记，并尝试授权辅助功能
 
-将 MeoLaunch.app 拖到 Applications 文件夹即可安装。
+也可手动：将 MeoLaunch.app 拖到 Applications，再右键打开。
 
-After first launch, grant Accessibility if you use the hot corner:
-首次启动后，如需使用触发角，请在「系统设置 → 隐私与安全性 → 辅助功能」中允许 MeoLaunch。
+Recommended (no Developer ID):
+  1. If “${INSTALL_CMD}” is blocked: right-click → Open → Open
+  2. Enter your Mac admin password
+  3. Installs to Applications, clears quarantine, tries Accessibility grant
+
+Or drag MeoLaunch.app to Applications, then right-click → Open.
 
 Hotkey: ⌥Space
 EOF
