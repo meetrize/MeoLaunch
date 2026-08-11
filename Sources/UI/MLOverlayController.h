@@ -27,5 +27,7 @@
 - (BOOL)isVisible;
 /** P2: apply overlay icon LRU cap from prefs. */
 - (void)setIconCacheMaxEntries:(NSUInteger)maxEntries;
+/** Idle / memory-pressure: purge rebuildable overlay caches when not visible. */
+- (void)reclaimIdleCachesIfHidden;
 
 @end

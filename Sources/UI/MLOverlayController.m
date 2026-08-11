@@ -1383,6 +1383,18 @@ static void MLLogMemory(NSString *tag) {
     return self.visible;
 }
 
+- (void)reclaimIdleCachesIfHidden {
+    if (self.visible || self.animating) {
+        return;
+    }
+    [self cancelDelayedIconPurge];
+    [self.iconCache purge];
+    [self releaseFilterBuffer];
+    if (self.gridView) {
+        [self.gridView clearFolderCompositeCache];
+    }
+}
+
 - (void)setIconCacheMaxEntries:(NSUInteger)maxEntries {
     if (maxEntries < 32) {
         maxEntries = 32;

@@ -568,26 +568,28 @@ const MLPollOptions MLPollOptionsFast =
     return [self.windowCensus computeTokenSkippingSoftHidden:self.softState.softHiddenWindowIDs];
 }
 - (void)censusTick {
-    if (!self.running) {
-        return;
-    }
-    NSTimeInterval now = [NSDate date].timeIntervalSinceReferenceDate;
-    if (self.censusBoostUntil > 0 && now >= self.censusBoostUntil) {
-        self.censusBoostUntil = 0;
-        [self rescheduleCensusTimer];
-    }
+    @autoreleasepool {
+        if (!self.running) {
+            return;
+        }
+        NSTimeInterval now = [NSDate date].timeIntervalSinceReferenceDate;
+        if (self.censusBoostUntil > 0 && now >= self.censusBoostUntil) {
+            self.censusBoostUntil = 0;
+            [self rescheduleCensusTimer];
+        }
 
-    [self.windowCensus refreshWindowLists];
-    NSString *token = [self computeWindowCensusToken];
-    if ([token isEqualToString:self.lastCensusToken ?: @""]) {
-        return;
+        [self.windowCensus refreshWindowLists];
+        NSString *token = [self computeWindowCensusToken];
+        if ([token isEqualToString:self.lastCensusToken ?: @""]) {
+            return;
+        }
+        self.lastCensusToken = token;
+        /* Burst to 12Hz for ~2s after CG sees a structural change. */
+        self.censusBoostUntil = now + 2.0;
+        [self rescheduleCensusTimer];
+        /* CG already saw the change — refresh taskbar without waiting for AX. */
+        [self pollWindowsWithOptions:MLPollOptionsFast];
     }
-    self.lastCensusToken = token;
-    /* Burst to 12Hz for ~2s after CG sees a structural change. */
-    self.censusBoostUntil = now + 2.0;
-    [self rescheduleCensusTimer];
-    /* CG already saw the change — refresh taskbar without waiting for AX. */
-    [self pollWindowsWithOptions:MLPollOptionsFast];
 }
 - (void)rescheduleCensusTimer {
     if (!self.running) {
@@ -604,7 +606,9 @@ const MLPollOptions MLPollOptionsFast =
     self.censusTimer = [NSTimer scheduledTimerWithTimeInterval:interval
                                                         repeats:YES
                                                           block:^(__unused NSTimer *timer) {
-                                                              [weakSelf censusTick];
+                                                              @autoreleasepool {
+                                                                  [weakSelf censusTick];
+                                                              }
                                                           }];
     [[NSRunLoop mainRunLoop] addTimer:self.censusTimer forMode:NSRunLoopCommonModes];
 }
@@ -644,8 +648,10 @@ const MLPollOptions MLPollOptionsFast =
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:interval
                                                      repeats:YES
                                                        block:^(__unused NSTimer *timer) {
-                                                           [weakSelf syncAXWindowObservers];
-                                                           [weakSelf pollWindows];
+                                                           @autoreleasepool {
+                                                               [weakSelf syncAXWindowObservers];
+                                                               [weakSelf pollWindows];
+                                                           }
                                                        }];
     [[NSRunLoop mainRunLoop] addTimer:self.pollTimer forMode:NSRunLoopCommonModes];
 }
@@ -665,8 +671,10 @@ const MLPollOptions MLPollOptionsFast =
     self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:seconds
                                                      repeats:YES
                                                        block:^(__unused NSTimer *timer) {
-                                                           [weakSelf syncAXWindowObservers];
-                                                           [weakSelf pollWindows];
+                                                           @autoreleasepool {
+                                                               [weakSelf syncAXWindowObservers];
+                                                               [weakSelf pollWindows];
+                                                           }
                                                        }];
     [[NSRunLoop mainRunLoop] addTimer:self.pollTimer forMode:NSRunLoopCommonModes];
 }

@@ -26,6 +26,11 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 - (void)overlayWillShow;
 - (void)overlayDidHide;
 
+/** Idle reclaim: drop display-name strings only (icons stay warm). */
+- (void)clearDisplayNameCacheForIdleReclaim;
+/** Memory pressure: purge icon LRU + display names (reload on next paint). */
+- (void)purgeRebuildableCachesForMemoryPressure;
+
 @end
 
 #import "MLTaskbarController+Categories.h"

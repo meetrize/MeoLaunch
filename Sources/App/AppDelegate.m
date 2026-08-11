@@ -7,6 +7,7 @@
 #import "MLHotCornerMonitor.h"
 #import "MLHotKeyManager.h"
 #import "MLLayoutStore.h"
+#import "MLIdleMemoryReclaimer.h"
 #import "MLMemoryStatusController.h"
 #import "MLOverlayController.h"
 #import "MLPrefsWindow.h"
@@ -42,6 +43,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLIconCache *taskbarIcons;
 @property (nonatomic, strong) MLTaskbarController *taskbar;
 @property (nonatomic, strong) MLMemoryStatusController *memoryStatus;
+@property (nonatomic, strong) MLIdleMemoryReclaimer *idleMemoryReclaimer;
 @property (nonatomic, strong) MLAppScanWatcher *appScanWatcher;
 @property (nonatomic, assign) MLAppIndex appIndex;
 @property (nonatomic, strong) NSTimer *rescanDebounceTimer;
@@ -119,8 +121,31 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         [self.taskbar start];
     }
     [self applyMemoryStatusFromConfig];
+    [self setupIdleMemoryReclaimer];
 
     NSLog(@"[MeoLaunch] ready — layout + configurable scan roots + taskbar");
+}
+
+- (void)setupIdleMemoryReclaimer {
+    self.idleMemoryReclaimer = [[MLIdleMemoryReclaimer alloc] init];
+    __weak typeof(self) weakSelf = self;
+    self.idleMemoryReclaimer.isOverlayVisible = ^BOOL {
+        __strong typeof(weakSelf) self = weakSelf;
+        return self && [self.overlay isVisible];
+    };
+    self.idleMemoryReclaimer.performReclaim = ^(BOOL underMemoryPressure) {
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) {
+            return;
+        }
+        [self.overlay reclaimIdleCachesIfHidden];
+        if (underMemoryPressure) {
+            [self.taskbar purgeRebuildableCachesForMemoryPressure];
+        } else {
+            [self.taskbar clearDisplayNameCacheForIdleReclaim];
+        }
+    };
+    [self.idleMemoryReclaimer start];
 }
 
 - (void)layoutDidChange:(NSNotification *)note {
@@ -331,6 +356,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.scanRefreshTimer = nil;
     [self.appScanWatcher stop];
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [self.idleMemoryReclaimer stop];
+    self.idleMemoryReclaimer = nil;
     [self.memoryStatus stop];
     [self.taskbar stop];
     [self.hotKey unregisterAll];

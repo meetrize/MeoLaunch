@@ -150,6 +150,13 @@
     [self.iconCache purge];
     [self.displayNameCache removeAllObjects];
 }
+- (void)clearDisplayNameCacheForIdleReclaim {
+    [self.displayNameCache removeAllObjects];
+}
+- (void)purgeRebuildableCachesForMemoryPressure {
+    [self.iconCache purge];
+    [self.displayNameCache removeAllObjects];
+}
 - (void)pinsDidChange:(NSNotification *)note {
     (void)note;
     if (self.itemsFrozenForDesktopReveal) {
