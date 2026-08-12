@@ -1,12 +1,15 @@
 # meoLaunch
 
-**恢复 Launchpad，超越 Launchpad——一款 App，两种能力，极致内存。**
+**恢复 Launchpad，超越 Launchpad——一款 App，两种能力，极致内存。免费。**
 
-> English: *Bring back Launchpad—and go beyond. App grid + Taskbar. Native. Tiny memory.*
+> English: *Bring back Launchpad—and go beyond. App grid + Taskbar. Native. Tiny memory. Free.*
 
 ![meoLaunch — Launchpad 网格 + Taskbar](./assets/meolaunch-hero.jpg)
 
 新版 macOS 拿掉了 Launchpad，找应用又回到 Dock 翻、Spotlight 搜、文件夹挖。meoLaunch 把熟悉的全屏应用网格**找回来**，并在同进程里加上轻量 **Taskbar**（每屏底栏、窗口切换 / 钉住），用一份极低常驻内存同时覆盖「启动」与「切换」。
+
+**核心能力免费**：全屏网格、搜索、热角、Taskbar、极省内存——下载即用，无订阅门槛。  
+**安装包小于 2 MB**（Universal DMG / ZIP），秒下秒装。
 
 真·原生：C 核心 + AppKit，不背 Electron、不背 WebView。
 
@@ -22,16 +25,18 @@
 | 窗口切换 | 主要靠 Dock / Mission Control | **同 App 内置 Taskbar**（每屏一条） |
 | 技术栈 | — | **原生 AppKit**（非 Electron） |
 | 常驻内存 | 多工具叠加易膨胀 | **一份进程扛两种功能**，目标 ≤ 15–25 MB（未打开网格时） |
+| 安装包 | Electron 动辄几十～上百 MB | **小于 2 MB**（Universal） |
+| 价格 | 同类常订阅 / 买断叠加 | **核心能力免费**（网格 / 搜索 / 热角 / Taskbar） |
 | 唤起 | — | **热角 + 搜索即开**；底栏随时切换窗口 |
 | 体感 | — | 设计目标：热角 → 首帧 ≤ 80–120 ms |
 
-**一句话差异化：** 恢复 Launchpad 不够——还要**更好用**；再加 Taskbar——**一个应用两种功能**，内存仍压到极致。
+**一句话差异化：** 恢复 Launchpad 不够——还要**更好用**；再加 Taskbar——**一个应用两种功能**，内存仍压到极致；**核心免费**，安装包**小于 2 MB**。
 
 **三点卖点：**
 
 1. **恢复并超越** — 全屏网格、实时搜索、热角唤起；比当年 Launchpad 更干净、更快。
 2. **一 App 双能力** — Launchpad 式启动器 + 轻量 Taskbar（按屏显示窗口、图标+标题、钉住），不必再装第二套常驻软件。
-3. **极致内存** — C 核心 + AppKit；网格图标按需加载，任务栏独立小图标 cache，一份常驻吃下两种场景。
+3. **极省内存 · 安装包小于 2 MB · 核心免费** — C 核心 + AppKit；一份常驻吃下两种场景；秒下秒装，网格 / 搜索 / 热角 / Taskbar 免费可用。
 
 ---
 

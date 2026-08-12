@@ -22,6 +22,13 @@ import { withBase } from '../lib/paths';
           <span class="unit">{proof.latencyUnit}</span>
         </p>
       </div>
+      <div class="metric">
+        <p class="metric-label">{proof.packageLabel}</p>
+        <p class="metric-value">
+          <span class="num">{proof.packageValue}</span>
+          <span class="unit">{proof.packageUnit}</span>
+        </p>
+      </div>
     </div>
 
     <div class="proof-media">
@@ -96,7 +103,7 @@ import { withBase } from '../lib/paths';
 
   .metrics {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 16rem));
+    grid-template-columns: repeat(3, minmax(0, 16rem));
     gap: 1.5rem;
     margin: 2rem 0 2.5rem;
   }
@@ -133,6 +140,10 @@ import { withBase } from '../lib/paths';
 
   .metrics.is-visible .metric:nth-child(2) .metric-value {
     transition-delay: 0.12s;
+  }
+
+  .metrics.is-visible .metric:nth-child(3) .metric-value {
+    transition-delay: 0.24s;
   }
 
   .num {
@@ -239,7 +250,7 @@ import { withBase } from '../lib/paths';
     color: var(--fg);
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 900px) {
     .metrics {
       grid-template-columns: 1fr;
     }
