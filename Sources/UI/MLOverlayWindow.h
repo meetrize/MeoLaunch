@@ -16,4 +16,10 @@
 /** Re-apply transparent chrome (safe to call often while editing). */
 - (void)ml_restyleFieldEditor;
 
+/** Search / folder title that should host (and clip) the field editor. */
+- (void)ml_setHostSearchField:(NSTextField *)field titleField:(NSTextField *)titleField;
+
+/** Fit field editor / focus clip inside the active host (in-place; never reparent out of AppKit clip). */
+- (void)ml_pinFieldEditorToHostField;
+
 @end

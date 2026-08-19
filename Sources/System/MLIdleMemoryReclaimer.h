@@ -6,6 +6,8 @@ NS_ASSUME_NONNULL_BEGIN
  * Periodic idle + system memory-pressure reclaim.
  * Only frees rebuildable caches and asks libmalloc to return free pages —
  * does not stop the taskbar monitor or clear soft-min / peek state.
+ *
+ * Also emits an hourly diagnostics heartbeat (Z0) when `collectHeartbeat` is set.
  */
 @interface MLIdleMemoryReclaimer : NSObject
 
@@ -18,8 +20,20 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @property (nonatomic, copy, nullable) void (^performReclaim)(BOOL underMemoryPressure);
 
+/**
+ * Optional diagnostics payload for hourly heartbeat.
+ * Return a short status string (e.g. counts); footprint is logged by the reclaimer.
+ */
+@property (nonatomic, copy, nullable) NSString * _Nullable (^collectHeartbeat)(void);
+
+/** Heartbeat interval seconds (default 3600). Values &lt; 60 clamped to 60 except in tests via setter. */
+@property (nonatomic, assign) NSTimeInterval heartbeatIntervalSeconds;
+
 - (void)start;
 - (void)stop;
+
+/** Fire heartbeat once (for tests / manual verify). */
+- (void)emitHeartbeatNow;
 
 @end
 

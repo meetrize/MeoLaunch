@@ -139,11 +139,28 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
             return;
         }
         [self.overlay reclaimIdleCachesIfHidden];
+        [self.overlay destroyWarmOverlayIfNeededForce:underMemoryPressure];
+        [self.runningApps reclaimStaleSoftStateAndCachesUnderPressure:underMemoryPressure];
         if (underMemoryPressure) {
             [self.taskbar purgeRebuildableCachesForMemoryPressure];
         } else {
             [self.taskbar clearDisplayNameCacheForIdleReclaim];
         }
+    };
+    self.idleMemoryReclaimer.collectHeartbeat = ^NSString * {
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) {
+            return nil;
+        }
+        NSString *residence = [self.overlay overlayResidenceState] ?: @"cold";
+        NSUInteger lastSeen = self.runningApps ? self.runningApps.lastSeenWindowCount : 0;
+        NSUInteger soft = self.runningApps ? self.runningApps.softHiddenCount : 0;
+        NSUInteger ax = self.runningApps ? self.runningApps.axWatchCount : 0;
+        return [NSString stringWithFormat:@"overlay=%@ lastSeen=%lu soft=%lu axWatch=%lu",
+                residence,
+                (unsigned long)lastSeen,
+                (unsigned long)soft,
+                (unsigned long)ax];
     };
     [self.idleMemoryReclaimer start];
 }
@@ -476,11 +493,13 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 - (void)overlayControllerWillShow:(MLOverlayController *)controller {
     (void)controller;
+    [self.runningApps setOverlayVisible:YES];
     [self.taskbar overlayWillShow];
 }
 
 - (void)overlayControllerDidHide:(MLOverlayController *)controller {
     (void)controller;
+    [self.runningApps setOverlayVisible:NO];
     [self.taskbar overlayDidHide];
 }
 
@@ -523,15 +542,28 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 #pragma mark - MLHotCornerMonitorDelegate
 
+- (void)hotCornerMonitor:(MLHotCornerMonitor *)monitor proximityActive:(BOOL)active {
+    (void)monitor;
+    [self.runningApps setHotCornerProximityActive:active];
+}
+
 - (void)hotCornerMonitorDidTrigger:(MLHotCornerMonitor *)monitor {
     (void)monitor;
     if ([self.overlay isVisible]) {
         [self.overlay hide];
         return;
     }
-    [self scheduleRescan];
-    [self.overlay reloadWithAppIndex:&_appIndex];
-    [self.overlay showImmediate];
+    /* Critical path only — rescan/deferred chrome on next turn (Z3). */
+    [self.overlay showCritical];
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self || ![self.overlay isVisible]) {
+            return;
+        }
+        [self.overlay showDeferredChrome];
+        [self scheduleRescan];
+    });
 }
 
 #pragma mark - MLHotKeyManagerDelegate
@@ -539,7 +571,21 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 - (void)hotKeyManagerDidFire:(MLHotKeyManager *)manager {
     (void)manager;
     NSLog(@"[MeoLaunch] hotkey toggle (%@)", [MLHotKeyDisplay displayStringFromConfig:self.config]);
-    [self toggleOverlay];
+    /* Carbon handler already bounced to main. Same show path as hot corner. */
+    if ([self.overlay isVisible]) {
+        [self.overlay hide];
+        return;
+    }
+    [self.overlay showCritical];
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self || ![self.overlay isVisible]) {
+            return;
+        }
+        [self.overlay showDeferredChrome];
+        [self scheduleRescan];
+    });
 }
 
 @end

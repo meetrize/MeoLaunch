@@ -930,6 +930,7 @@
     }
 
     [self pruneClosedCachedWindows:aliveIDs onScreenIDs:onScreenIDs];
+    [self trimLastSeenWindowsIfNeeded];
 
     NSArray<MLTaskbarWindowInfo *> *deduped = [self dedupeWindows:windows];
 

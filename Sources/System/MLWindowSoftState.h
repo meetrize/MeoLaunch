@@ -56,6 +56,9 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod) {
 /** Window truly gone (closed / process quit). */
 - (void)removeClosedWindowID:(CGWindowID)windowID;
 
+/** Drop all soft records for a terminated process. */
+- (void)removeAllForPID:(pid_t)pid;
+
 - (void)removeAll;
 
 @end

@@ -152,6 +152,25 @@ NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoft
     [self notify];
 }
 
+- (void)removeAllForPID:(pid_t)pid {
+    if (pid <= 0 || self.byID.count == 0) {
+        return;
+    }
+    NSArray<NSNumber *> *keys = self.byID.allKeys;
+    BOOL changed = NO;
+    for (NSNumber *key in keys) {
+        MLWindowSoftRecord *r = self.byID[key];
+        if (r.pid == pid) {
+            [self.byID removeObjectForKey:key];
+            changed = YES;
+        }
+    }
+    if (changed) {
+        MLDebugLog(@"[Taskbar] soft removeAllForPID pid=%d", (int)pid);
+        [self notify];
+    }
+}
+
 - (void)removeAll {
     if (self.byID.count == 0) {
         return;

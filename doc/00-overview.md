@@ -21,6 +21,8 @@
 | [12-memory-perf.md](./12-memory-perf.md) | 内存与响应优化扫描 / P0–P2 |
 | [13-menubar-memory.md](./13-menubar-memory.md) | 菜单栏系统剩余内存显示方案 |
 | [14-growth-6m.md](./14-growth-6m.md) | 半年增长与变现计划（开源/内容/出海/Pro） |
+| [15-hotcorner-zero-latency-memory.md](./15-hotcorner-zero-latency-memory.md) | 触发角零延迟 + 长时间低内存方案 |
+| [15-plan.md](./15-plan.md) | **当前自动化队列**：Z0–Z8 任务卡 |
 
 ## 产品定位
 

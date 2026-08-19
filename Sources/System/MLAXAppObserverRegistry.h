@@ -21,6 +21,8 @@
 
 @property (nonatomic, weak) id<MLAXAppObserverRegistryDelegate> delegate;
 @property (nonatomic, assign, getter=isActive) BOOL active;
+/** Number of live per-PID AX observers (diagnostics). */
+@property (nonatomic, assign, readonly) NSUInteger watchCount;
 
 - (void)registerNotificationsOnWindow:(AXUIElementRef)win;
 - (void)installWatchForPID:(pid_t)pid;

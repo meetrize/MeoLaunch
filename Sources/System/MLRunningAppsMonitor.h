@@ -8,6 +8,8 @@
 enum {
     MLTaskbarTitleMaxChars = 40,
     MLTaskbarMaxWindowEntries = 24,
+    /** Hard cap for lastSeenWindows (Z5); soft-hidden entries are never trimmed. */
+    MLLastSeenWindowsMax = 256,
 };
 
 FOUNDATION_EXPORT NSNotificationName const MLRunningAppsDidChangeNotification;
@@ -48,6 +50,17 @@ FOUNDATION_EXPORT NSString *const MLRunningAppsFrontWindowIDKey;
 /** Shared CGWindowList cache (census tick + taskbar visibility). */
 @property (nonatomic, strong, readonly) MLWindowCensus *windowCensus;
 
+/**
+ * When YES (mouse near hot corner), census drops to ~1Hz and focus poll stops
+ * so the main thread can serve showCritical promptly.
+ */
+- (void)setHotCornerProximityActive:(BOOL)active;
+
+/**
+ * When YES (Launchpad overlay visible), census/full poll slow down (Z7).
+ */
+- (void)setOverlayVisible:(BOOL)visible;
+
 - (void)start;
 - (void)stop;
 /** Apply poll interval; recreates timer if already running. */
@@ -66,6 +79,14 @@ FOUNDATION_EXPORT NSString *const MLRunningAppsFrontWindowIDKey;
 
 - (void)markSoftMinimizedWindowID:(CGWindowID)windowID;
 - (BOOL)isSoftMinimizedWindowID:(CGWindowID)windowID;
+
+/** Diagnostics for hourly memory heartbeat (Z0). */
+@property (nonatomic, assign, readonly) NSUInteger lastSeenWindowCount;
+@property (nonatomic, assign, readonly) NSUInteger softHiddenCount;
+@property (nonatomic, assign, readonly) NSUInteger axWatchCount;
+
+/** Idle/pressure reclaim helpers (Z6). */
+- (void)reclaimStaleSoftStateAndCachesUnderPressure:(BOOL)underPressure;
 
 /**
  * Persist user-chosen taskbar window order into last-seen state (and live snapshot

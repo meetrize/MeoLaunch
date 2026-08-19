@@ -1,6 +1,7 @@
 # 12 — 内存与响应优化建议（全项目扫描）
 
-> 状态：建议稿；**P0 / P1 已实施**（见 [12-p0-plan.md](./12-p0-plan.md)、[12-p1-plan.md](./12-p1-plan.md)）。基于 2026-07-31 对 `Sources/` + `doc/` 的架构扫描。  
+> 状态：建议稿；**P0 / P1 / P2 / P3 已实施**。后续触发角零延迟 + 长时间低内存见 **[15-hotcorner-zero-latency-memory.md](./15-hotcorner-zero-latency-memory.md)** / **[15-plan.md](./15-plan.md)**（Z0–Z8）。  
+> 基于 2026-07-31 对 `Sources/` + `doc/` 的架构扫描；15 方案补 Warm 窗与 lastSeen 硬顶（2026-08-18）。  
 > 关联预算：[02-architecture.md](./02-architecture.md) §6、[10-taskbar.md](./10-taskbar.md) §7。
 
 ## 0. 结论先看

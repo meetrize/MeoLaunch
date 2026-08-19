@@ -168,10 +168,127 @@ const MLPollOptions MLPollOptionsFast =
 - (void)appDidTerminate:(NSNotification *)note {
     NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
     if (app.processIdentifier > 0) {
-        [self.pidPathMap removeObjectForKey:@(app.processIdentifier)];
-        [self.axRegistry removeWatchForPID:app.processIdentifier];
+        pid_t pid = app.processIdentifier;
+        [self.pidPathMap removeObjectForKey:@(pid)];
+        [self.axRegistry removeWatchForPID:pid];
+        [self removeLastSeenAndSoftForPID:pid];
     }
     [self scheduleStructuralFastPoll];
+}
+
+- (void)removeLastSeenAndSoftForPID:(pid_t)pid {
+    if (pid <= 0) {
+        return;
+    }
+    [self.softState removeAllForPID:pid];
+    NSArray<NSNumber *> *keys = self.lastSeenWindows.allKeys;
+    for (NSNumber *key in keys) {
+        MLTaskbarWindowInfo *w = self.lastSeenWindows[key];
+        if (w.pid == pid) {
+            [self.lastSeenWindows removeObjectForKey:key];
+        }
+    }
+}
+
+- (void)trimLastSeenWindowsIfNeeded {
+    NSUInteger max = MLLastSeenWindowsMax;
+    if (self.lastSeenWindows.count <= max) {
+        return;
+    }
+    /* Evict oldest seenOrder first; never touch soft-hidden. */
+    NSMutableArray<NSNumber *> *candidates = [NSMutableArray array];
+    for (NSNumber *key in self.lastSeenWindows.allKeys) {
+        if ([self.softState isSoftHiddenWindowID:(CGWindowID)key.unsignedIntValue]) {
+            continue;
+        }
+        [candidates addObject:key];
+    }
+    [candidates sortUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) {
+        NSUInteger oa = self.lastSeenWindows[a].seenOrder;
+        NSUInteger ob = self.lastSeenWindows[b].seenOrder;
+        if (oa < ob) {
+            return NSOrderedAscending;
+        }
+        if (oa > ob) {
+            return NSOrderedDescending;
+        }
+        return NSOrderedSame;
+    }];
+    NSUInteger need = self.lastSeenWindows.count - max;
+    NSUInteger removed = 0;
+    for (NSNumber *key in candidates) {
+        if (removed >= need) {
+            break;
+        }
+        [self.lastSeenWindows removeObjectForKey:key];
+        removed++;
+    }
+}
+
+- (void)trimLastSeenWindowsForMemoryPressure {
+    /* Aim for half the hard cap under pressure. */
+    NSUInteger target = MLLastSeenWindowsMax / 2;
+    if (target < 64) {
+        target = 64;
+    }
+    if (self.lastSeenWindows.count <= target) {
+        return;
+    }
+    NSMutableArray<NSNumber *> *candidates = [NSMutableArray array];
+    for (NSNumber *key in self.lastSeenWindows.allKeys) {
+        if ([self.softState isSoftHiddenWindowID:(CGWindowID)key.unsignedIntValue]) {
+            continue;
+        }
+        [candidates addObject:key];
+    }
+    [candidates sortUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) {
+        NSUInteger oa = self.lastSeenWindows[a].seenOrder;
+        NSUInteger ob = self.lastSeenWindows[b].seenOrder;
+        if (oa < ob) {
+            return NSOrderedAscending;
+        }
+        if (oa > ob) {
+            return NSOrderedDescending;
+        }
+        return NSOrderedSame;
+    }];
+    NSUInteger need = self.lastSeenWindows.count - target;
+    NSUInteger removed = 0;
+    for (NSNumber *key in candidates) {
+        if (removed >= need) {
+            break;
+        }
+        [self.lastSeenWindows removeObjectForKey:key];
+        removed++;
+    }
+}
+
+- (void)auditSoftStateForDeadPIDs {
+    NSArray<MLWindowSoftRecord *> *recs = [self.softState allRecords];
+    for (MLWindowSoftRecord *r in recs) {
+        if (r.pid <= 0) {
+            continue;
+        }
+        if (!self.pidPathMap[@(r.pid)]) {
+            [self.softState removeAllForPID:r.pid];
+            NSArray<NSNumber *> *keys = self.lastSeenWindows.allKeys;
+            for (NSNumber *key in keys) {
+                MLTaskbarWindowInfo *w = self.lastSeenWindows[key];
+                if (w.pid == r.pid) {
+                    [self.lastSeenWindows removeObjectForKey:key];
+                }
+            }
+        }
+    }
+}
+
+- (void)reclaimStaleSoftStateAndCachesUnderPressure:(BOOL)underPressure {
+    [self auditSoftStateForDeadPIDs];
+    if (underPressure) {
+        [self trimLastSeenWindowsForMemoryPressure];
+    } else {
+        [self trimLastSeenWindowsIfNeeded];
+    }
 }
 - (void)syncAXWindowObservers {
     [self.axRegistry syncWatchesForPIDs:[NSSet setWithArray:self.pidPathMap.allKeys]];
@@ -364,6 +481,11 @@ const MLPollOptions MLPollOptionsFast =
 }
 - (void)updateFocusPollTimer {
     if (!self.running) {
+        [self.focusPollTimer invalidate];
+        self.focusPollTimer = nil;
+        return;
+    }
+    if (self.hotCornerProximityActive || self.overlayVisibleThrottle) {
         [self.focusPollTimer invalidate];
         self.focusPollTimer = nil;
         return;
@@ -597,7 +719,13 @@ const MLPollOptions MLPollOptionsFast =
     }
     NSTimeInterval now = [NSDate date].timeIntervalSinceReferenceDate;
     BOOL boost = (self.censusBoostUntil > now);
-    NSTimeInterval interval = boost ? (1.0 / 12.0) : (1.0 / 4.0);
+    NSTimeInterval interval;
+    if (self.hotCornerProximityActive || self.overlayVisibleThrottle) {
+        /* Yield main thread near hot corner / while overlay open (Z4/Z7). */
+        interval = 1.0;
+    } else {
+        interval = boost ? (1.0 / 12.0) : (1.0 / 4.0);
+    }
     if (self.censusTimer && fabs(self.censusTimer.timeInterval - interval) < 0.001) {
         return;
     }
@@ -611,6 +739,46 @@ const MLPollOptions MLPollOptionsFast =
                                                               }
                                                           }];
     [[NSRunLoop mainRunLoop] addTimer:self.censusTimer forMode:NSRunLoopCommonModes];
+}
+
+- (void)setHotCornerProximityActive:(BOOL)active {
+    if (_hotCornerProximityActive == active) {
+        return;
+    }
+    _hotCornerProximityActive = active;
+    if (!self.running) {
+        return;
+    }
+    [self rescheduleCensusTimer];
+    [self updateFocusPollTimer];
+}
+
+- (void)setOverlayVisible:(BOOL)visible {
+    if (_overlayVisibleThrottle == visible) {
+        return;
+    }
+    _overlayVisibleThrottle = visible;
+    if (!self.running) {
+        return;
+    }
+    [self rescheduleCensusTimer];
+    [self updateFocusPollTimer];
+    /* Slow full poll while overlay is up; restore config interval when hiding. */
+    if (visible) {
+        [self.pollTimer invalidate];
+        __weak typeof(self) weakSelf = self;
+        self.pollTimer = [NSTimer scheduledTimerWithTimeInterval:3.0
+                                                         repeats:YES
+                                                           block:^(__unused NSTimer *timer) {
+                                                               @autoreleasepool {
+                                                                   [weakSelf syncAXWindowObservers];
+                                                                   [weakSelf pollWindows];
+                                                               }
+                                                           }];
+        [[NSRunLoop mainRunLoop] addTimer:self.pollTimer forMode:NSRunLoopCommonModes];
+    } else {
+        [self applyWindowPollInterval:self.windowPollInterval];
+    }
 }
 - (void)start {
     if (self.running) {
@@ -866,6 +1034,18 @@ const MLPollOptions MLPollOptionsFast =
 }
 - (BOOL)isSoftMinimizedWindowID:(CGWindowID)windowID {
     return [self.softState isSoftHiddenWindowID:windowID];
+}
+
+- (NSUInteger)lastSeenWindowCount {
+    return self.lastSeenWindows.count;
+}
+
+- (NSUInteger)softHiddenCount {
+    return self.softState.softHiddenWindowIDs.count;
+}
+
+- (NSUInteger)axWatchCount {
+    return self.axRegistry.watchCount;
 }
 
 - (void)applySeenOrderByWindowID:(NSDictionary<NSNumber *, NSNumber *> *)orderByWid {

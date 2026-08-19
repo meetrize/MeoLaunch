@@ -45,6 +45,8 @@ FOUNDATION_EXPORT const MLPollOptions MLPollOptionsFast;
 @property (nonatomic, strong) NSTimer *focusPollTimer;
 @property (nonatomic, assign) CGWindowID lastPublishedFocusedWID;
 @property (nonatomic, assign) pid_t lastPublishedFocusedPID;
+@property (nonatomic, assign) BOOL hotCornerProximityActive;
+@property (nonatomic, assign) BOOL overlayVisibleThrottle;
 
 - (NSString *)truncateTitle:(NSString *)title;
 - (BOOL)shouldTrackApplication:(NSRunningApplication *)app;
@@ -54,6 +56,12 @@ FOUNDATION_EXPORT const MLPollOptions MLPollOptionsFast;
 - (NSString *)fingerprintForPaths:(NSArray<NSString *> *)paths windows:(NSArray<MLTaskbarWindowInfo *> *)windows;
 - (NSString *)computeWindowCensusToken;
 - (void)updateFocusPollTimer;
+- (void)trimLastSeenWindowsIfNeeded;
+- (void)removeLastSeenAndSoftForPID:(pid_t)pid;
+/** Drop soft records whose pid is no longer running (Z6). */
+- (void)auditSoftStateForDeadPIDs;
+/** Pressure: trim lastSeen toward a lower water mark (keeps soft-hidden). */
+- (void)trimLastSeenWindowsForMemoryPressure;
 @end
 
 @interface MLRunningAppsMonitor (SnapshotBuilder)

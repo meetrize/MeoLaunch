@@ -1,5 +1,7 @@
 #import "MLHotCornerMonitor.h"
 
+#import "MLDebugLog.h"
+
 #import <ApplicationServices/ApplicationServices.h>
 
 @interface MLHotCornerMonitor ()
@@ -8,6 +10,7 @@
 @property (nonatomic, assign) BOOL wasInside;
 @property (nonatomic, strong) NSDate *enteredAt;
 @property (nonatomic, assign) BOOL armed; /* after fire, wait until leave */
+@property (nonatomic, assign) BOOL proximityActive;
 @end
 
 @implementation MLHotCornerMonitor
@@ -21,6 +24,7 @@
         _delayMs = 0;
         _wasInside = NO;
         _armed = YES;
+        _proximityActive = NO;
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(screensChanged:)
                                                      name:NSApplicationDidChangeScreenParametersNotification
@@ -165,12 +169,17 @@
 }
 
 - (BOOL)pointInConfiguredHotCorner:(NSPoint)p onScreen:(NSScreen *)screen {
+    return [self point:p insideHotCornerOnScreen:screen sizeOverride:0];
+}
+
+/** sizeOverride>0 uses that pt size; else configured sizePt (with mins). */
+- (BOOL)point:(NSPoint)p insideHotCornerOnScreen:(NSScreen *)screen sizeOverride:(CGFloat)sizeOverride {
     if (!screen || self.position == MLHotCornerPositionOff) {
         return NO;
     }
 
-    CGFloat size = self.sizePt > 0 ? self.sizePt : 12.0;
-    if (size < 8.0) {
+    CGFloat size = sizeOverride > 0 ? sizeOverride : (self.sizePt > 0 ? self.sizePt : 12.0);
+    if (sizeOverride <= 0 && size < 8.0) {
         size = 8.0;
     }
     /* Outward slop so the absolute outer pixel / menu-bar edge always counts */
@@ -200,6 +209,17 @@
     }
 }
 
+- (void)setProximityActive:(BOOL)active {
+    if (_proximityActive == active) {
+        return;
+    }
+    _proximityActive = active;
+    id<MLHotCornerMonitorDelegate> del = self.delegate;
+    if ([del respondsToSelector:@selector(hotCornerMonitor:proximityActive:)]) {
+        [del hotCornerMonitor:self proximityActive:active];
+    }
+}
+
 - (void)tick {
     if (!self.enabled || self.position == MLHotCornerPositionOff) {
         return;
@@ -207,6 +227,9 @@
 
     NSPoint p = [NSEvent mouseLocation];
     NSScreen *screen = [self screenForHotCornerAtPoint:p];
+    BOOL near = [self point:p insideHotCornerOnScreen:screen sizeOverride:80.0];
+    [self setProximityActive:near];
+
     BOOL inside = [self pointInConfiguredHotCorner:p onScreen:screen];
 
     if (!inside) {
@@ -233,7 +256,7 @@
     }
 
     self.armed = NO;
-    NSLog(@"[MeoLaunch] HotCorner triggered at (%.1f, %.1f)", p.x, p.y);
+    MLDebugLog(@"[MeoLaunch] HotCorner triggered at (%.1f, %.1f)", p.x, p.y);
     [self.delegate hotCornerMonitorDidTrigger:self];
 }
 

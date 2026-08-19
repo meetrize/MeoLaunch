@@ -1,0 +1,35 @@
+---
+description: 触发角零延迟+低内存 Z-Plan 全自动开发（15-plan）
+globs:
+  - Sources/**
+  - Scripts/**
+  - doc/15*.md
+  - doc/07-agent-playbook.md
+alwaysApply: true
+---
+
+# MeoLaunch Z-Plan（触发角 / 内存）
+
+当仓库存在未完成的 `doc/15-plan.md` 任务卡时，**优先**执行该 Plan，而不是历史 M/T 里程碑。
+
+## 触发语
+
+用户说「继续」「继续自动化」「全自动开发」「做 Z 计划」「按 15-plan」等 → 立刻读 `doc/15-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+
+## 全自动协议
+
+1. 读 `doc/15-hotcorner-zero-latency-memory.md` 理解目标（若尚未读过）。
+2. **一次一卡**实现；跑该卡验收（至少 `./Scripts/build.sh`）。
+3. 把该卡 Status 改为 `done` 并写备注。
+4. **同一会话继续下一张 pending**，直到：
+   - 全部 `done`，或
+   - 验收失败需用户决策，或
+   - 用户打断。
+5. 遵守 peek 不变量：`.cursor/rules/taskbar-peek-invariants.mdc`。
+6. 不引入第三方库；不改 `doc/00`–`doc/06` 正文（`00-overview` 索引表可以加链接）。
+7. 非用户明确要求不要 git commit / push。
+
+## 目标摘要
+
+- 触发角 → 首像素 ≤1 帧（Warm 窗 + showCritical）。
+- 长时间 Idle 稳态内存，消除只增不减的 lastSeen/soft 泄漏与默认 hide-destroy 碎片。

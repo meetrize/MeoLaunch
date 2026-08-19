@@ -208,4 +208,8 @@ static void MLAXRegistryCallback(AXObserverRef observer,
     }
 }
 
+- (NSUInteger)watchCount {
+    return self.watchByPid.count;
+}
+
 @end

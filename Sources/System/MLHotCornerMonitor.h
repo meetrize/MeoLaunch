@@ -6,6 +6,9 @@
 
 @protocol MLHotCornerMonitorDelegate <NSObject>
 - (void)hotCornerMonitorDidTrigger:(MLHotCornerMonitor *)monitor;
+@optional
+/** Mouse entered/left the ~80pt strip around the configured corner (for main-thread yield). */
+- (void)hotCornerMonitor:(MLHotCornerMonitor *)monitor proximityActive:(BOOL)active;
 @end
 
 @interface MLHotCornerMonitor : NSObject

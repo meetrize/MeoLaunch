@@ -2,7 +2,15 @@
 
 > 用户说「继续自动化」时：读取下方 **Status**，执行第一个 `pending` 任务卡，验收通过后标 `done`，再停下等待下一次指令（除非用户要求连做多卡）。
 
-## Status
+## 当前活跃队列（优先）
+
+历史 M/T 卡均已 **done**。新的自动化请走：
+
+- 方案：[15-hotcorner-zero-latency-memory.md](./15-hotcorner-zero-latency-memory.md)
+- **任务卡真源**：[15-plan.md](./15-plan.md)（Z0–Z8；允许同一会话连做）
+- Cursor 规则：`.cursor/rules/hotcorner-memory-z-plan.mdc`
+
+## Status（历史里程碑，已完成）
 
 | ID | 状态 | 备注 |
 |----|------|------|

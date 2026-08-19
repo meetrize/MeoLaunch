@@ -62,6 +62,7 @@ LIBS=(
   -framework QuartzCore
   -framework ServiceManagement
   -framework CoreServices
+  -framework CoreGraphics
 )
 
 COMMON_FLAGS=(-mmacosx-version-min="$MIN_MACOS" "${INC[@]}")
