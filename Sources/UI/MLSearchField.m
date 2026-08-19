@@ -1,6 +1,8 @@
 #import "MLSearchField.h"
 #import "MLGhostPanelProbe.h"
 
+#import <objc/message.h>
+
 static const CGFloat kMLSearchLeftInset = 18.0;
 static const CGFloat kMLSearchRightInset = 44.0;
 static const CGFloat kMLSettingsButtonSize = 28.0;
@@ -49,8 +51,9 @@ static const CGFloat kMLSettingsButtonSize = 28.0;
         if ([tv respondsToSelector:@selector(setInlinePredictionType:)]) {
             [(id)tv setInlinePredictionType:(NSInteger)1];
         }
-        if ([tv respondsToSelector:@selector(setWritingToolsBehavior:)]) {
-            [(id)tv setWritingToolsBehavior:0];
+        SEL writingToolsSel = NSSelectorFromString(@"setWritingToolsBehavior:");
+        if ([tv respondsToSelector:writingToolsSel]) {
+            ((void (*)(id, SEL, NSInteger))objc_msgSend)(tv, writingToolsSel, 0);
         }
         if ([tv respondsToSelector:@selector(setContentType:)]) {
             [(id)tv setContentType:@"org.meolaunch.search"];

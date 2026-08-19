@@ -2,6 +2,8 @@
 #import "MLGhostPanelProbe.h"
 #import "MLSearchField.h"
 
+#import <objc/message.h>
+
 /**
  * AppKit's default field editor intermittently paints an opaque control-background
  * (light gray rounded rect) under the search bar on a clear key window.
@@ -47,9 +49,10 @@
         /* NSTextInputTraitTypeNo = 1 */
         [(id)self setInlinePredictionType:(NSInteger)1];
     }
-    if ([self respondsToSelector:@selector(setWritingToolsBehavior:)]) {
-        /* NSWritingToolsBehaviorNone = 0 */
-        [(id)self setWritingToolsBehavior:0];
+    /* Writing Tools is macOS 15+; call via msgSend so older SDKs still compile. */
+    SEL writingToolsSel = NSSelectorFromString(@"setWritingToolsBehavior:");
+    if ([self respondsToSelector:writingToolsSel]) {
+        ((void (*)(id, SEL, NSInteger))objc_msgSend)(self, writingToolsSel, 0);
     }
     if ([self respondsToSelector:@selector(setAllowsCharacterPickerTouchBarItem:)]) {
         [(id)self setAllowsCharacterPickerTouchBarItem:NO];
