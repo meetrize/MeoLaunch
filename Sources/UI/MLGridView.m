@@ -750,10 +750,27 @@ enum { MLFolderCompositeMaxEntries = 16 };
 #pragma mark - Drawing
 
 - (void)drawSelectionHaloInIconRect:(NSRect)iconRect {
-    /* Same corner language as folder plates: radius = side * 0.22, proportional pad. */
-    CGFloat pad = NSWidth(iconRect) * 0.08;
-    NSRect halo = NSInsetRect(iconRect, -pad, -pad);
-    [self drawFolderPlateInRect:halo fillAlpha:0.16 showStroke:YES softGlow:NO];
+    /*
+     * Subtle selection wash: a few concentric fills with quadratic falloff.
+     * Avoids the hard double-plate from softGlow + plate, keeps halo tiny.
+     */
+    const NSInteger steps = 4;
+    CGFloat maxPad = NSWidth(iconRect) * 0.035;
+    CGFloat peakAlpha = 0.14;
+    for (NSInteger i = steps; i >= 0; i--) {
+        CGFloat t = (CGFloat)i / (CGFloat)steps; /* 1 = outer, 0 = icon-sized */
+        CGFloat pad = maxPad * t;
+        CGFloat falloff = 1.0 - t;
+        CGFloat alpha = peakAlpha * falloff * falloff;
+        if (alpha < 0.008) {
+            continue;
+        }
+        NSRect r = NSInsetRect(iconRect, -pad, -pad);
+        CGFloat radius = NSWidth(r) * 0.22;
+        NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:r xRadius:radius yRadius:radius];
+        [[[NSColor whiteColor] colorWithAlphaComponent:alpha] setFill];
+        [path fill];
+    }
 }
 
 /** Single-surface folder plate: proportional corners, at most one stroke, optional soft glow (fill only). */
