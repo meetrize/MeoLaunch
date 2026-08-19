@@ -66,8 +66,8 @@
 @property (nonatomic, assign) NSUInteger chromeScrubGeneration;
 @end
 
-/** Idle park → cold destroy (Z1). */
-static const NSTimeInterval kMLOverlayWarmIdleDestroySeconds = 15.0 * 60.0;
+/** Idle park → cold destroy (M1.1: 3 min slim warm). */
+static const NSTimeInterval kMLOverlayWarmIdleDestroySeconds = 3.0 * 60.0;
 
 /** Lets clicks fall through to the dismiss catcher below. */
 @interface MLPassthroughTintView : NSView
@@ -374,22 +374,74 @@ static void MLLogMemory(NSString *tag) {
     if (opacity < 0.0) opacity = 0.0;
     if (opacity > 1.0) opacity = 1.0;
 
-    self.blurView.hidden = !blur;
-    self.tintView.hidden = NO;
+    if (self.blurView) {
+        self.blurView.hidden = !blur;
+    }
+    if (self.tintView) {
+        self.tintView.hidden = NO;
+    }
 
     if (blur) {
         self.window.backgroundColor = [NSColor clearColor];
-        self.tintView.layer.backgroundColor =
-            [[NSColor blackColor] colorWithAlphaComponent:opacity].CGColor;
+        if (self.tintView.layer) {
+            self.tintView.layer.backgroundColor =
+                [[NSColor blackColor] colorWithAlphaComponent:opacity].CGColor;
+        }
         /* Only keep the expensive material live while overlay is showing. */
-        self.blurView.state = self.visible ? NSVisualEffectStateActive
-                                          : NSVisualEffectStateInactive;
+        if (self.blurView) {
+            self.blurView.state = self.visible ? NSVisualEffectStateActive
+                                              : NSVisualEffectStateInactive;
+        }
     } else {
         self.window.backgroundColor =
             [[NSColor blackColor] colorWithAlphaComponent:opacity];
-        self.tintView.layer.backgroundColor = [NSColor clearColor].CGColor;
-        self.blurView.state = NSVisualEffectStateInactive;
+        if (self.tintView.layer) {
+            self.tintView.layer.backgroundColor = [NSColor clearColor].CGColor;
+        }
+        if (self.blurView) {
+            self.blurView.state = NSVisualEffectStateInactive;
+        }
     }
+}
+
+/** Warm park: drop VisualEffect entirely (Inactive still retains material cost). */
+- (void)stripWarmBlurView {
+    NSVisualEffectView *blur = self.blurView;
+    if (!blur) {
+        return;
+    }
+    blur.state = NSVisualEffectStateInactive;
+    [blur removeFromSuperview];
+    self.blurView = nil;
+    MLLogMemory(@"hide-strip-blur");
+}
+
+/** Recreate fullscreen blur under existing warm chrome (contentView bottom). */
+- (void)ensureBlurViewAttached {
+    if (!self.window || self.blurView) {
+        return;
+    }
+    if (!self.config.overlayBlur) {
+        return;
+    }
+    NSView *content = self.window.contentView;
+    if (!content) {
+        return;
+    }
+    NSVisualEffectView *blur = [[NSVisualEffectView alloc] initWithFrame:content.bounds];
+    blur.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    blur.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    blur.material = NSVisualEffectMaterialFullScreenUI;
+    blur.state = NSVisualEffectStateActive;
+    blur.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    blur.identifier = @"ml.blur";
+    NSView *first = content.subviews.firstObject;
+    if (first) {
+        [content addSubview:blur positioned:NSWindowBelow relativeTo:first];
+    } else {
+        [content addSubview:blur];
+    }
+    self.blurView = blur;
 }
 
 /** Drop fullscreen Overlay window + icon bitmaps (Cold path / pressure / idle timeout).
@@ -1408,7 +1460,7 @@ static void MLLogMemory(NSString *tag) {
     self.iconPurgeGeneration += 1;
     NSUInteger gen = self.iconPurgeGeneration;
     __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30.0 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
                        __strong typeof(weakSelf) self = weakSelf;
                        if (!self || self.iconPurgeGeneration != gen) {
@@ -1419,7 +1471,7 @@ static void MLLogMemory(NSString *tag) {
                        }
                        [self.iconCache purge];
                        MLLogMemory(@"delayed-purge");
-                       NSLog(@"[MeoLaunch] Overlay icon cache purged (30s idle)");
+                       NSLog(@"[MeoLaunch] Overlay icon cache purged (5s idle)");
                    });
 }
 
@@ -1452,6 +1504,7 @@ static void MLLogMemory(NSString *tag) {
 
     BOOL warmReuse = (self.window != nil);
     [self ensureWindow];
+    [self ensureBlurViewAttached];
     if (warmReuse) {
         NSLog(@"[MeoLaunch] Overlay warm-reuse");
     }
@@ -1640,10 +1693,8 @@ static void MLLogMemory(NSString *tag) {
         [w endEditingFor:nil];
     }
 
-    /* Drop expensive blur material while parked; keep view hierarchy. */
-    if (self.blurView) {
-        self.blurView.state = NSVisualEffectStateInactive;
-    }
+    /* Drop VisualEffect while parked — keep NSWindow + light chrome for warm-reuse. */
+    [self stripWarmBlurView];
 
     self.visible = NO;
     self.animating = NO;

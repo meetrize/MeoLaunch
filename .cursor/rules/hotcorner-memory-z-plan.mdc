@@ -10,7 +10,9 @@ alwaysApply: true
 
 # MeoLaunch Z-Plan（触发角 / 内存）
 
-当仓库存在未完成的 `doc/15-plan.md` 任务卡时，**优先**执行该 Plan，而不是历史 M/T 里程碑。
+当仓库存在未完成的 `doc/16-plan.md` 任务卡时，**优先**执行 16-plan（Slim Warm），不要再跑已全部 done 的 15-plan。
+
+当 16-plan 全部 done、且仍有未完成的 `doc/15-plan.md` 任务卡时，再执行 15-plan；否则不要回到历史 M/T 里程碑抢队列。
 
 ## 触发语
 

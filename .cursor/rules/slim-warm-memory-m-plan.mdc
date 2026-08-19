@@ -1,0 +1,33 @@
+---
+description: Slim Warm Memory M-Plan 全自动开发（16-plan）
+globs:
+  - Sources/**
+  - Scripts/**
+  - doc/16*.md
+  - doc/15*.md
+alwaysApply: true
+---
+
+# MeoLaunch M-Plan（Slim Warm Memory）
+
+当仓库存在未完成的 `doc/16-plan.md` 任务卡时，**优先**执行该 Plan（高于已全部 done 的 15-plan）。
+
+## 触发语
+
+用户说「继续」「继续自动化」「全自动开发」「做 M 计划」「按 16-plan」「Slim Warm」等 → 立刻读 `doc/16-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+
+## 全自动协议
+
+1. 读 `doc/16-slim-warm-memory.md` 理解目标（若尚未读过）。
+2. **一次一卡**实现；跑该卡验收（至少 `./Scripts/build.sh`）。
+3. 把该卡 Status 改为 `done` 并写备注。
+4. **同一会话继续下一张 pending**，直到全部 `done`、验收失败需决策、或用户打断。
+5. 遵守 peek 不变量：`.cursor/rules/taskbar-peek-invariants.mdc`。
+6. 不引入第三方库；不改 `doc/00`–`doc/06` 正文（`00-overview` 索引表可以加链接）。
+7. 非用户明确要求不要 git commit / push。
+
+## 目标摘要
+
+- hide 卸 `NSVisualEffectView`，保留 Warm `NSWindow`。
+- 图标 delayed purge 5s；Warm→Cold 3 分钟。
+- 热区仍 `showCritical` + warm-reuse。
