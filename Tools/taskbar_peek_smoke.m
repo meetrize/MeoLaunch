@@ -238,6 +238,28 @@ static void test_peekFrameAuthority(void) {
     Assert(bar.mode == MLTaskbarBarModeNormal, "orphan peek mode cleared when unfrozen");
 }
 
+static void test_canArmUserPeekRejectsMenuBarStrip(void) {
+    NSScreen *screen = NSScreen.mainScreen;
+    if (!screen) {
+        return;
+    }
+    MLTaskbarController *tb = FreshController();
+    tb.desktopRevealArmTime = 1.0;
+    NSPoint pt = NSMakePoint(NSMidX(screen.frame), NSMaxY(screen.visibleFrame) + 4.0);
+    if (pt.y > NSMaxY(screen.frame)) {
+        pt.y = NSMaxY(screen.frame) - 1.0;
+    }
+    Assert(![tb canArmUserDesktopPeekAtCocoaPoint:pt],
+           "system menu bar strip click must not arm peek");
+    Assert(![tb cocoaPointIsExposedDesktop:pt],
+           "menu bar strip is not exposed desktop");
+
+    /* Just below menu bar — top edge / title-bar band must not peek either. */
+    NSPoint edgePt = NSMakePoint(NSMidX(screen.frame), NSMaxY(screen.visibleFrame) - 4.0);
+    Assert(![tb canArmUserDesktopPeekAtCocoaPoint:edgePt],
+           "top edge below menu bar must not arm peek");
+}
+
 static void test_canArmUserPeekRequiresExposedDesktop(void) {
     MLTaskbarController *tb = FreshController();
     tb.desktopRevealArmTime = 1.0;
@@ -439,6 +461,7 @@ int main(int argc, const char *argv[]) {
         test_peekOffsetConstant();
         test_shouldFreezeBlockedForPassive();
         test_peekFrameAuthority();
+        test_canArmUserPeekRejectsMenuBarStrip();
         test_canArmUserPeekRequiresExposedDesktop();
         test_userArmedPeekDoesNotUnfreezeOnCoverAlone();
         test_userArmedPeekNeverAutoUnfreezes();

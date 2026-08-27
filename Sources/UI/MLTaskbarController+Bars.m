@@ -682,6 +682,51 @@
     }
     return NO;
 }
+
+/** Screen for a Cocoa point; tolerates ±slop at the display top edge (edge clicks). */
+- (NSScreen *)screenForCocoaPoint:(NSPoint)cocoaPoint topEdgeSlop:(CGFloat)topSlop {
+    for (NSScreen *screen in NSScreen.screens) {
+        if (NSPointInRect(cocoaPoint, screen.frame)) {
+            return screen;
+        }
+    }
+    if (topSlop <= 0) {
+        return nil;
+    }
+    for (NSScreen *screen in NSScreen.screens) {
+        NSRect frame = screen.frame;
+        if (cocoaPoint.x < NSMinX(frame) - 1.0 || cocoaPoint.x > NSMaxX(frame) + 1.0) {
+            continue;
+        }
+        if (cocoaPoint.y >= NSMaxY(frame) - topSlop && cocoaPoint.y <= NSMaxY(frame) + topSlop) {
+            return screen;
+        }
+    }
+    return nil;
+}
+
+/**
+ * Top exclusion band: menu bar / notch, plus a few pt below for edge clicks and
+ * secondary displays that have no menu-bar inset.
+ */
+- (BOOL)cocoaPointIsInSystemMenuBarStrip:(NSPoint)cocoaPoint {
+    static const CGFloat kTopEdgeSlop = 10.0;
+    NSScreen *screen = [self screenForCocoaPoint:cocoaPoint topEdgeSlop:kTopEdgeSlop];
+    if (!screen) {
+        return NO;
+    }
+    CGFloat topInset = NSMaxY(screen.frame) - NSMaxY(screen.visibleFrame);
+    CGFloat excludeBottomY;
+    if (topInset >= 2.0) {
+        /* Menu-bar display: bar + slop below (resize edge / coordinate jitter). */
+        excludeBottomY = NSMaxY(screen.visibleFrame) - kTopEdgeSlop;
+    } else {
+        /* No menu bar on this display — block only the topmost edge band. */
+        excludeBottomY = NSMaxY(screen.frame) - kTopEdgeSlop;
+    }
+    return cocoaPoint.y >= excludeBottomY - 0.5;
+}
+
 - (BOOL)cocoaPointIsExposedDesktop:(NSPoint)cocoaPoint {
     return [self cocoaPointIsExposedDesktop:cocoaPoint refreshIfStale:YES];
 }
@@ -689,6 +734,9 @@
 - (BOOL)cocoaPointIsExposedDesktop:(NSPoint)cocoaPoint refreshIfStale:(BOOL)refreshIfStale {
     /* Taskbar sits above the desktop — never treat chip clicks as desktop peek. */
     if ([self cocoaPointHitsOwnTaskbar:cocoaPoint]) {
+        return NO;
+    }
+    if ([self cocoaPointIsInSystemMenuBarStrip:cocoaPoint]) {
         return NO;
     }
 
@@ -844,6 +892,9 @@
  */
 - (BOOL)canArmUserDesktopPeekAtCocoaPoint:(NSPoint)cocoaPoint {
     if ([self cocoaPointHitsOwnTaskbar:cocoaPoint]) {
+        return NO;
+    }
+    if ([self cocoaPointIsInSystemMenuBarStrip:cocoaPoint]) {
         return NO;
     }
     if ([self cocoaPointHitsForeignAppWindowViaAX:cocoaPoint]) {
