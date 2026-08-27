@@ -219,6 +219,211 @@ static void test_shouldFreezeBlockedForPassive(void) {
     Assert(![tb shouldFreezeForDesktopReveal], "passive minimize-all must not auto-freeze");
 }
 
+static void test_peekFrameAuthority(void) {
+    MLTaskbarController *tb = FreshController();
+    Assert(![tb taskbarRequiresPeekFramePresentation], "unfrozen → no peek frame");
+    tb.itemsFrozenForDesktopReveal = YES;
+    Assert([tb taskbarRequiresPeekFramePresentation], "frozen → peek frame required");
+
+    tb.itemsFrozenForDesktopReveal = NO;
+    tb.desktopPeekUserArmed = YES;
+    Assert([tb taskbarRequiresPeekFramePresentation], "user armed → peek frame required");
+
+    MLTaskbarScreenBar *bar = Bar(@1, @[ WindowChip(10, NO) ]);
+    bar.mode = MLTaskbarBarModePeek;
+    tb.bars = [NSMutableArray arrayWithObject:bar];
+    tb.itemsFrozenForDesktopReveal = NO;
+    tb.desktopPeekUserArmed = NO;
+    [tb reconcileOrphanPeekFramesAnimated:NO];
+    Assert(bar.mode == MLTaskbarBarModeNormal, "orphan peek mode cleared when unfrozen");
+}
+
+static void test_canArmUserPeekRequiresExposedDesktop(void) {
+    MLTaskbarController *tb = FreshController();
+    tb.desktopRevealArmTime = 1.0;
+    tb.bars = [NSMutableArray arrayWithObject:Bar(@1, @[ WindowChip(10, YES) ])];
+    SetSnapshot(tb, @[]);
+    NSPoint pt = NSMakePoint(400, 400);
+    BOOL onDesktop = [tb cocoaPointIsExposedDesktop:pt];
+    BOOL canArm = [tb canArmUserDesktopPeekAtCocoaPoint:pt];
+    Assert(canArm == onDesktop,
+           "canArm must follow exposed-desktop hit-test (no liveOnScreen bypass)");
+}
+
+static void test_userArmedPeekDoesNotUnfreezeOnCoverAlone(void) {
+    MLTaskbarController *tb = FreshController();
+    tb.itemsFrozenForDesktopReveal = YES;
+    tb.desktopPeekUserArmed = YES;
+    tb.desktopRevealArmTime = 1.0;
+    SetSnapshot(tb, @[]);
+    Assert(![tb shouldUnfreezeDesktopReveal],
+           "user-armed peek stays frozen while no on-screen live window");
+}
+
+static void test_userArmedPeekNeverAutoUnfreezes(void) {
+    MLTaskbarController *tb = FreshController();
+    tb.itemsFrozenForDesktopReveal = YES;
+    tb.desktopPeekUserArmed = YES;
+    tb.desktopRevealArmTime = 1.0;
+    CGRect on = OnScreenBoundsForAnyDisplay();
+    SetSnapshot(tb, @[ WindowInfo(10, 4242, NO, on) ]);
+    Assert(![tb shouldUnfreezeDesktopReveal],
+           "user-armed peek never auto-unfreezes from live/cover census");
+}
+
+static void PumpMainRunLoopBriefly(void) {
+    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
+}
+
+static MLTaskbarScreenBar *BarWithWindow(MLTaskbarController *tb, NSScreen *screen) {
+    NSNumber *sid = [MLTaskbarController screenIDForScreen:screen];
+    MLTaskbarScreenBar *bar = Bar(sid, @[ WindowChip(10, YES) ]);
+    NSRect home = [tb normalFrameForScreen:screen height:(CGFloat)MLTaskbarBarHeight];
+    NSWindow *w = [[NSWindow alloc] initWithContentRect:home
+                                              styleMask:NSWindowStyleMaskBorderless
+                                                backing:NSBackingStoreBuffered
+                                                  defer:NO];
+    w.releasedWhenClosed = NO;
+    [w orderFrontRegardless];
+    bar.window = w;
+    bar.barView.frame = w.contentView.bounds;
+    RetainForProcessLifetime(w);
+    return bar;
+}
+
+/** Regression: user desktop peek enter → one downward frame commit per bar, refresh idempotent. */
+static void test_userDesktopPeekEnterSingleApply(void) {
+    NSScreen *screen = NSScreen.mainScreen;
+    if (!screen) {
+        fprintf(stderr, "SKIP: no NSScreen for desktop peek apply test\n");
+        return;
+    }
+
+    MLTaskbarController *tb = FreshController();
+    tb.started = YES;
+    tb.enabled = YES;
+    tb.desktopRevealArmTime = 1.0;
+    tb.bars = [NSMutableArray arrayWithObject:BarWithWindow(tb, screen)];
+
+    /* Same sequence as handleDesktopPeekClick after hit-test passes. */
+    tb.desktopPeekClickInProgress = YES;
+    tb.desktopPeekUserArmed = YES;
+    tb.peekFrameDownApplyCount = 0;
+    [tb freezeDesktopRevealApplyingPresentation:NO];
+    if (!tb.itemsFrozenForDesktopReveal) {
+        tb.itemsFrozenForDesktopReveal = YES;
+        tb.desktopRevealScreenIDs = [NSSet setWithObject:tb.bars.firstObject.screenID];
+    }
+    [tb applyPeekFramesIfDrifted];
+
+    NSInteger afterEnter = tb.peekFrameDownApplyCount;
+    Assert(afterEnter == 1, "user peek enter must commit peek down exactly once per bar");
+
+    MLTaskbarScreenBar *bar = tb.bars.firstObject;
+    Assert([tb barWindowIsAtPeekOffset:bar], "bar must rest at peek offset after enter");
+
+    [tb refreshFullscreenVisibility];
+    [tb applyBarVisibility];
+    Assert(tb.peekFrameDownApplyCount == afterEnter,
+           "sync refresh must not peek down again");
+
+    PumpMainRunLoopBriefly();
+    tb.desktopPeekClickInProgress = NO;
+    [tb refreshFullscreenVisibility];
+    [tb applyBarVisibility];
+    [tb applyPeekFramesIfDrifted];
+    Assert(tb.peekFrameDownApplyCount == afterEnter,
+           "post-enter refresh/drift must not peek down again");
+}
+
+/** Re-entrant freeze/refresh during click must not double-apply peek down. */
+static void test_reentrantFreezeDuringClickNoDoubleApply(void) {
+    NSScreen *screen = NSScreen.mainScreen;
+    if (!screen) {
+        fprintf(stderr, "SKIP: no NSScreen for reentrant peek test\n");
+        return;
+    }
+
+    MLTaskbarController *tb = FreshController();
+    tb.started = YES;
+    tb.enabled = YES;
+    tb.desktopRevealArmTime = 1.0;
+    tb.bars = [NSMutableArray arrayWithObject:BarWithWindow(tb, screen)];
+
+    tb.desktopPeekClickInProgress = YES;
+    tb.desktopPeekUserArmed = YES;
+    tb.peekFrameDownApplyCount = 0;
+    [tb freezeDesktopRevealApplyingPresentation:NO];
+    [tb applyPeekFramesIfDrifted];
+    /* Simulate runningDidChange / refresh firing mid-click. */
+    [tb freezeDesktopReveal];
+    [tb refreshFullscreenVisibility];
+    [tb applyBarVisibility];
+    [tb applyPeekFramesIfDrifted];
+
+    Assert(tb.peekFrameDownApplyCount == 1,
+           "re-entrant freeze during click must not peek down twice");
+}
+
+/** Simulates old bug: refresh after enter must not unfreeze then re-peek (down-up-down). */
+static void test_userPeekEnterThenRefreshStaysDown(void) {
+    NSScreen *screen = NSScreen.mainScreen;
+    if (!screen) {
+        fprintf(stderr, "SKIP: no NSScreen for peek refresh bounce test\n");
+        return;
+    }
+
+    MLTaskbarController *tb = FreshController();
+    tb.started = YES;
+    tb.enabled = YES;
+    tb.desktopRevealArmTime = 1.0;
+    tb.bars = [NSMutableArray arrayWithObject:BarWithWindow(tb, screen)];
+    CGRect on = OnScreenBoundsForAnyDisplay();
+    SetSnapshot(tb, @[ WindowInfo(10, 4242, NO, on) ]);
+
+    tb.desktopPeekUserArmed = YES;
+    tb.itemsFrozenForDesktopReveal = YES;
+    tb.desktopRevealScreenIDs = [NSSet setWithObject:tb.bars.firstObject.screenID];
+    tb.peekFrameDownApplyCount = 0;
+    [tb applyPeekFramesIfDrifted];
+
+    Assert(![tb shouldUnfreezeDesktopReveal],
+           "live window snapshot must not auto-unfreeze user peek");
+    NSInteger afterApply = tb.peekFrameDownApplyCount;
+    Assert(afterApply == 1, "initial peek apply");
+
+    [tb refreshFullscreenVisibility];
+    Assert(tb.peekFrameDownApplyCount == afterApply,
+           "refresh must not unfreeze/re-peek (down-up-down)");
+    Assert([tb barWindowIsAtPeekOffset:tb.bars.firstObject],
+           "bar stays at peek offset after refresh");
+}
+
+static void test_unfreezeRestoresNormalFrame(void) {
+    NSScreen *screen = NSScreen.mainScreen;
+    if (!screen) {
+        fprintf(stderr, "SKIP: no NSScreen for unfreeze restore test\n");
+        return;
+    }
+
+    MLTaskbarController *tb = FreshController();
+    tb.started = YES;
+    tb.enabled = YES;
+    tb.desktopRevealArmTime = 1.0;
+    MLTaskbarScreenBar *bar = BarWithWindow(tb, screen);
+    tb.bars = [NSMutableArray arrayWithObject:bar];
+    tb.desktopPeekUserArmed = YES;
+    tb.itemsFrozenForDesktopReveal = YES;
+    tb.desktopRevealScreenIDs = [NSSet setWithObject:bar.screenID];
+    [tb applyPeekFramesIfDrifted];
+    Assert([tb barWindowIsAtPeekOffset:bar], "pre-unfreeze at peek offset");
+
+    [tb unfreezeDesktopRevealAndRefresh];
+    Assert(![tb barWindowIsAtPeekOffset:bar], "unfreeze restores normal Y");
+    Assert(bar.mode == MLTaskbarBarModeNormal, "unfreeze sets normal mode");
+    Assert(bar.window.isVisible, "taskbar stays visible after peek exit");
+}
+
 int main(int argc, const char *argv[]) {
     (void)argc;
     (void)argv;
@@ -233,9 +438,17 @@ int main(int argc, const char *argv[]) {
         test_softHiddenExcludedFromLiveCount();
         test_peekOffsetConstant();
         test_shouldFreezeBlockedForPassive();
+        test_peekFrameAuthority();
+        test_canArmUserPeekRequiresExposedDesktop();
+        test_userArmedPeekDoesNotUnfreezeOnCoverAlone();
+        test_userArmedPeekNeverAutoUnfreezes();
+        test_userDesktopPeekEnterSingleApply();
+        test_reentrantFreezeDuringClickNoDoubleApply();
+        test_userPeekEnterThenRefreshStaysDown();
+        test_unfreezeRestoresNormalFrame();
 
         if (g_failures == 0) {
-            printf("taskbar_peek_smoke OK (%d assertions)\n", 10);
+            printf("taskbar_peek_smoke OK (%d assertions)\n", 18);
             return 0;
         }
         fprintf(stderr, "taskbar_peek_smoke FAILED (%d failures)\n", g_failures);

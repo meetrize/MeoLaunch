@@ -12,6 +12,8 @@
 @property (nonatomic, strong) NSWindow *window;
 @property (nonatomic, strong) MLTaskbarView *barView;
 @property (nonatomic, assign) MLTaskbarBarMode mode;
+/** Bumped on every peek frame apply/cancel — stale animators must not win. */
+@property (nonatomic, assign) NSUInteger peekPresentationGeneration;
 /** Latest computed chips; painted only via commit (not on every monitor tick). */
 @property (nonatomic, strong) NSArray<MLTaskbarItem *> *pendingItems;
 

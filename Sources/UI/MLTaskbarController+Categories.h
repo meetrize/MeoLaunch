@@ -69,6 +69,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSInteger)frozenWindowChipTotal;
 - (BOOL)shouldUnfreezeDesktopReveal;
 - (void)freezeDesktopReveal;
+- (void)freezeDesktopRevealApplyingPresentation:(BOOL)applyPresentation;
+- (void)applyPeekFramesIfDrifted;
+- (BOOL)isInPeekExitSettlePeriod;
+- (void)flushAllTaskbarWindows;
 - (void)unfreezeDesktopRevealAndRefresh;
 - (NSInteger)liveNonMinimizedWindowCount;
 - (NSInteger)liveOnScreenNonMinimizedWindowCount;
@@ -81,6 +85,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSInteger)totalWindowChipsOnBars;
 - (BOOL)looksLikeDesktopReveal;
 - (BOOL)shouldFreezeForDesktopReveal;
+- (BOOL)taskbarRequiresPeekFramePresentation;
+- (NSScreen *)screenForBar:(MLTaskbarScreenBar *)bar;
+- (BOOL)barWindowIsAtPeekOffset:(MLTaskbarScreenBar *)bar;
+- (void)applyAuthoritativePeekFrameForBar:(MLTaskbarScreenBar *)bar animated:(BOOL)animated;
+- (void)reconcileOrphanPeekFramesAnimated:(BOOL)animated;
 - (void)applyPeekPresentationForBar:(MLTaskbarScreenBar *)bar
                             peeking:(BOOL)peeking
                            animated:(BOOL)animated;
@@ -106,6 +115,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)applyBarVisibility;
 - (BOOL)cocoaPointHitsOwnTaskbar:(NSPoint)cocoaPoint;
 - (BOOL)cocoaPointIsExposedDesktop:(NSPoint)cocoaPoint;
+- (BOOL)cocoaPointIsExposedDesktop:(NSPoint)cocoaPoint refreshIfStale:(BOOL)refreshIfStale;
+- (BOOL)canArmUserDesktopPeekAtCocoaPoint:(NSPoint)cocoaPoint;
 
 @end
 

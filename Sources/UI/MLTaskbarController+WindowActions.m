@@ -587,6 +587,9 @@
     if (item.pid > 0 || item.path.length > 0) {
         BOOL softRestore = [self isItemSoftHiddenOrMinimized:item];
         if (softRestore) {
+            if (self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed) {
+                [self unfreezeDesktopRevealAndRefresh];
+            }
             /* Minimized / soft-hidden → restore geometry + activate. */
             [self activateApplicationForItem:item];
             [self raiseAndFocusWindowForItem:item];

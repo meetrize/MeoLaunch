@@ -43,6 +43,10 @@
 @property (nonatomic, assign) BOOL started;
 @property (nonatomic, assign) BOOL fullscreenCheckPending;
 @property (nonatomic, assign) NSUInteger startupVisibilityGeneration;
+/** Blocks re-entrant peek frame apply while handleDesktopPeekClick finishes. */
+@property (nonatomic, assign) BOOL desktopPeekClickInProgress;
+/** Test hook: counts downward peek frame commits (smoke / regression). */
+@property (nonatomic, assign) NSInteger peekFrameDownApplyCount;
 
 /** Non-nil while a chip drag session is active (blocks peek-sensitive commits). */
 @property (nonatomic, assign) BOOL chipDragActive;

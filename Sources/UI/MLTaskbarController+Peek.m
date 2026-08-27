@@ -160,6 +160,21 @@
     if (!self.itemsFrozenForDesktopReveal) {
         return NO;
     }
+
+    /*
+     * User-armed peek: exit only when a real window is back on-screen (chip restore),
+     * or via second desktop click (handleDesktopPeekClick → unfreeze directly).
+     * Must run before isDesktopRevealArmed — startup arm time must not bounce peek.
+     */
+    /*
+     * User-armed peek exits ONLY via second desktop click (handleDesktopPeekClick)
+     * or chip restore (activateOrLaunchItem → unfreeze). Never auto-unfreeze from
+     * cover/live census — that caused down → up → down on desktop click.
+     */
+    if (self.desktopPeekUserArmed) {
+        return NO;
+    }
+
     if (![self isDesktopRevealArmed]) {
         return YES;
     }
@@ -167,21 +182,6 @@
     NSInteger onScreen = 0;
     NSInteger all = 0;
     [self measureDesktopRevealWithCenterCover:&cover onScreen:&onScreen all:&all];
-
-    /*
-     * User-armed peek (click desktop after minimize-all): leave only when real
-     * windows cover the desktop again — not merely because chips stay minimized.
-     */
-    if (self.desktopPeekUserArmed) {
-        if (cover >= 0.18) {
-            return YES;
-        }
-        NSInteger liveOn = [self liveOnScreenNonMinimizedWindowCount];
-        if (liveOn >= 1 && cover >= 0.10) {
-            return YES;
-        }
-        return NO;
-    }
 
     /* Minimize-only empty desktop (no Show Desktop evidence) — leave peek. */
     if ([self shouldIgnoreDesktopRevealBecauseAllMinimized]) {
@@ -213,10 +213,15 @@
 }
 
 - (void)freezeDesktopReveal {
+    [self freezeDesktopRevealApplyingPresentation:YES];
+}
+
+- (void)freezeDesktopRevealApplyingPresentation:(BOOL)applyPresentation {
     if (self.itemsFrozenForDesktopReveal) {
         [self restoreFrozenItemsOntoBars];
-        /* Always re-assert half-down — auto Show Desktop peek used to skip this. */
-        [self applyUserArmedPeekPresentationAnimated:YES];
+        if (applyPresentation && !self.desktopPeekClickInProgress) {
+            [self applyPeekFramesIfDrifted];
+        }
         return;
     }
     if (![self isDesktopRevealArmed]) {
@@ -260,40 +265,46 @@
     MLDebugLog(@"[Taskbar] desktop reveal FREEZE baseline=%ld chips=%ld userArmed=%d",
           (long)self.freezeLiveBaseline, (long)[self frozenWindowChipTotal],
           (int)self.desktopPeekUserArmed);
-    /* Every freeze must slide the bar — do not rely on applyBarVisibility alone. */
-    [self applyUserArmedPeekPresentationAnimated:YES];
+    if (applyPresentation && !self.desktopPeekClickInProgress) {
+        [self applyPeekFramesIfDrifted];
+    }
 }
 
 - (void)unfreezeDesktopRevealAndRefresh {
-    BOOL hadPeek = self.itemsFrozenForDesktopReveal || self.desktopRevealScreenIDs.count > 0;
-    for (MLTaskbarScreenBar *bar in self.bars) {
-        if (bar.mode == MLTaskbarBarModePeek) {
-            hadPeek = YES;
-            break;
+    BOOL needsRestore = self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed ||
+                        self.desktopRevealScreenIDs.count > 0;
+    if (!needsRestore) {
+        for (MLTaskbarScreenBar *bar in self.bars) {
+            if (bar.mode == MLTaskbarBarModePeek || [self barWindowIsAtPeekOffset:bar]) {
+                needsRestore = YES;
+                break;
+            }
         }
     }
-    if (!hadPeek) {
+    if (!needsRestore) {
         return;
     }
 
+    BOOL userPeekExit = self.desktopPeekUserArmed;
     NSSet<NSNumber *> *wasReveal = [self.desktopRevealScreenIDs copy] ?: [NSSet set];
     self.itemsFrozenForDesktopReveal = NO;
     self.desktopRevealScreenIDs = [NSSet set];
     self.desktopPeekUserArmed = NO;
+    self.desktopPeekClickInProgress = NO;
     self.freezeLiveBaseline = 0;
     /* Keep frozenItems until first successful commit so a partial live list cannot paint. */
     NSDictionary<NSNumber *, NSArray<MLTaskbarItem *> *> *hold =
         [self.frozenItemsByScreenID copy] ?: @{};
     [self.frozenItemsByScreenID removeAllObjects];
 
-    for (NSNumber *sid in wasReveal) {
-        [self.fullscreenHideStreaks removeObjectForKey:sid];
-    }
-    if (wasReveal.count > 0) {
-        NSMutableSet<NSNumber *> *fs = [self.fullscreenScreenIDs mutableCopy] ?: [NSMutableSet set];
-        [fs minusSet:wasReveal];
-        self.fullscreenScreenIDs = fs;
-    }
+    /*
+     * Peek exit: show every taskbar at normal Y — do not let fullscreen heuristics
+     * orderOut/orderFront bars during settle (hide-flash-hide).
+     */
+    [self.fullscreenHideStreaks removeAllObjects];
+    self.fullscreenScreenIDs = [NSSet set];
+    (void)wasReveal;
+    (void)userPeekExit;
 
     NSDictionary<NSNumber *, NSScreen *> *screensByID = [self screensByID];
     for (MLTaskbarScreenBar *bar in self.bars) {
@@ -302,28 +313,23 @@
             continue;
         }
         bar.mode = MLTaskbarBarModeNormal;
-        CGFloat height = [self barHeightForBar:bar];
-        NSRect home = [self normalFrameForScreen:screen height:height];
-        /* Cancel peek slide, then snap home — avoids stuck half-down bar. */
         [self applyPeekPresentationForBar:bar peeking:NO animated:NO];
-        [bar.window setFrame:home display:YES];
         bar.barView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         bar.barView.frame = bar.window.contentView.bounds;
-        /* Hold last peek composition until settle commit — no incremental chip morph. */
         NSArray<MLTaskbarItem *> *kept = hold[bar.screenID];
         if (kept.count > 0) {
             bar.barView.items = kept;
             bar.pendingItems = kept;
         }
-        [bar.window orderFrontRegardless];
+    }
+    MLFlushTaskbarWindows(self.bars);
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (bar.window) {
+            [bar.window orderFrontRegardless];
+        }
     }
 
     self.stickyDisplayUntil = [NSDate date].timeIntervalSinceReferenceDate + 1.25;
-    /*
-     * Do NOT rebuild from live bounds here — Show Desktop / peek still parks windows
-     * off-screen and would dump every chip onto one taskbar. Keep frozen composition
-     * as pending; after settle, rebuild with chipScreenAffinityByWid.
-     */
     [self cancelItemsCommitTimer];
     __weak typeof(self) weakSelf = self;
     self.itemsCommitTimer = [NSTimer scheduledTimerWithTimeInterval:MLTaskbarExitSettleDelay
@@ -343,6 +349,17 @@
     [[NSRunLoop mainRunLoop] addTimer:self.itemsCommitTimer forMode:NSRunLoopCommonModes];
     [self updateStableLiveCensus];
     MLDebugLog(@"[Taskbar] desktop reveal UNFREEZE + settle commit");
+}
+
+- (BOOL)isInPeekExitSettlePeriod {
+    if (self.stickyDisplayUntil <= 0) {
+        return NO;
+    }
+    return [NSDate date].timeIntervalSinceReferenceDate < self.stickyDisplayUntil;
+}
+
+- (void)flushAllTaskbarWindows {
+    MLFlushTaskbarWindows(self.bars);
 }
 
 - (NSInteger)liveNonMinimizedWindowCount {
@@ -710,56 +727,186 @@
     return NO;
 }
 
+#pragma mark - Peek frame authority
+
+/** Single source of truth: frozen reveal or user just armed via desktop click. */
+- (BOOL)taskbarRequiresPeekFramePresentation {
+    return self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed;
+}
+
+- (NSScreen *)screenForBar:(MLTaskbarScreenBar *)bar {
+    if (!bar.screenID) {
+        return bar.window.screen ?: NSScreen.mainScreen;
+    }
+    for (NSScreen *s in NSScreen.screens) {
+        if ([[[self class] screenIDForScreen:s] isEqualToNumber:bar.screenID]) {
+            return s;
+        }
+    }
+    return bar.window.screen ?: NSScreen.mainScreen;
+}
+
+- (NSRect)peekTargetFrameForBar:(MLTaskbarScreenBar *)bar peeking:(BOOL)peeking {
+    NSScreen *screen = [self screenForBar:bar];
+    if (!screen) {
+        return bar.window.frame;
+    }
+    CGFloat height = [self barHeightForBar:bar];
+    NSRect home = [self normalFrameForScreen:screen height:height];
+    if (!peeking) {
+        return home;
+    }
+    home.origin.y -= (CGFloat)MLTaskbarPeekOffset;
+    return home;
+}
+
+- (BOOL)barWindowIsAtPeekOffset:(MLTaskbarScreenBar *)bar {
+    if (!bar.window) {
+        return NO;
+    }
+    NSRect target = [self peekTargetFrameForBar:bar peeking:YES];
+    return fabs(NSMinY(bar.window.frame) - NSMinY(target)) < 0.5;
+}
+
+- (void)cancelPeekFrameAnimationsForBar:(MLTaskbarScreenBar *)bar {
+    if (!bar.window) {
+        return;
+    }
+    bar.peekPresentationGeneration += 1;
+    NSRect frame = bar.window.frame;
+    [bar.window setFrame:frame display:YES];
+    if (bar.barView) {
+        bar.barView.frame = bar.window.contentView.bounds;
+    }
+}
+
+/**
+ * Apply the frame that matches itemsFrozenForDesktopReveal — never bar.mode alone.
+ */
+- (void)applyAuthoritativePeekFrameForBar:(MLTaskbarScreenBar *)bar animated:(BOOL)animated {
+    if (!bar.window || !bar.barView) {
+        return;
+    }
+    BOOL shouldPeek = [self taskbarRequiresPeekFramePresentation];
+    if (shouldPeek) {
+        bar.mode = MLTaskbarBarModePeek;
+    } else if (bar.mode == MLTaskbarBarModePeek) {
+        bar.mode = MLTaskbarBarModeNormal;
+    }
+    [self applyPeekPresentationForBar:bar peeking:shouldPeek animated:animated];
+}
+
+/** Snap any bar that is visually peeking while not frozen (stale animator / mode drift). */
+- (void)reconcileOrphanPeekFramesAnimated:(BOOL)animated {
+    if ([self taskbarRequiresPeekFramePresentation]) {
+        return;
+    }
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (bar.mode == MLTaskbarBarModePeek) {
+            bar.mode = MLTaskbarBarModeNormal;
+        }
+        if (!bar.window || bar.mode == MLTaskbarBarModeHidden) {
+            continue;
+        }
+        if ([self barWindowIsAtPeekOffset:bar]) {
+            [self applyPeekPresentationForBar:bar peeking:NO animated:animated];
+        }
+    }
+}
+
 - (void)applyPeekPresentationForBar:(MLTaskbarScreenBar *)bar
                             peeking:(BOOL)peeking
                            animated:(BOOL)animated {
     if (!bar.window || !bar.barView) {
         return;
     }
-    NSScreen *screen = nil;
-    for (NSScreen *s in NSScreen.screens) {
-        if ([[[self class] screenIDForScreen:s] isEqualToNumber:bar.screenID]) {
-            screen = s;
-            break;
-        }
-    }
-    if (!screen) {
-        screen = bar.window.screen ?: NSScreen.mainScreen;
-    }
+    NSScreen *screen = [self screenForBar:bar];
     if (!screen) {
         return;
     }
 
-    CGFloat height = [self barHeightForBar:bar];
-    NSRect home = [self normalFrameForScreen:screen height:height];
-    NSRect target = home;
-    if (peeking) {
-        /* Cocoa Y grows up — subtract to slide the bar down toward the screen edge. */
-        target.origin.y -= (CGFloat)MLTaskbarPeekOffset;
-    }
-
+    NSRect target = [self peekTargetFrameForBar:bar peeking:peeking];
     bar.barView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
-    /* Kill any in-flight animator so enter/exit cannot fight each other. */
-    [bar.window setFrame:bar.window.frame display:NO];
+    if (fabs(NSMinY(bar.window.frame) - NSMinY(target)) < 0.5 &&
+        fabs(NSWidth(bar.window.frame) - NSWidth(target)) < 0.5 &&
+        fabs(NSHeight(bar.window.frame) - NSHeight(target)) < 0.5) {
+        bar.barView.frame = bar.window.contentView.bounds;
+        return;
+    }
 
-    if (animated && bar.window.isVisible &&
-        fabs(NSMinY(bar.window.frame) - NSMinY(target)) > 0.5) {
+    NSUInteger generation = 0;
+    BOOL shouldAnimate = animated && bar.window.isVisible &&
+                         fabs(NSMinY(bar.window.frame) - NSMinY(target)) > 0.5;
+    if (shouldAnimate) {
+        [self cancelPeekFrameAnimationsForBar:bar];
+        generation = bar.peekPresentationGeneration;
+        __weak typeof(self) weakSelf = self;
+        __weak MLTaskbarScreenBar *weakBar = bar;
         [NSAnimationContext runAnimationGroup:^(NSAnimationContext *context) {
             context.duration = 0.18;
             [[bar.window animator] setFrame:target display:YES];
         } completionHandler:^{
-            if ((peeking && bar.mode != MLTaskbarBarModePeek) ||
-                (!peeking && bar.mode == MLTaskbarBarModePeek)) {
+            __strong typeof(weakSelf) self = weakSelf;
+            MLTaskbarScreenBar *strongBar = weakBar;
+            if (!self || !strongBar || strongBar.peekPresentationGeneration != generation) {
                 return;
             }
-            [bar.window setFrame:target display:YES];
-            bar.barView.frame = bar.window.contentView.bounds;
+            BOOL shouldPeek = [self taskbarRequiresPeekFramePresentation];
+            if (shouldPeek != peeking) {
+                [self applyAuthoritativePeekFrameForBar:strongBar animated:NO];
+                return;
+            }
+            [strongBar.window setFrame:target display:YES];
+            strongBar.barView.frame = strongBar.window.contentView.bounds;
         }];
     } else {
-        [bar.window setFrame:target display:YES];
+        bar.peekPresentationGeneration += 1;
+        CGFloat beforeY = NSMinY(bar.window.frame);
+        [bar.window setFrame:target display:NO];
         bar.barView.frame = bar.window.contentView.bounds;
+        if (peeking && (beforeY - NSMinY(target)) > 0.5) {
+            self.peekFrameDownApplyCount += 1;
+        }
     }
+}
+
+static void MLFlushTaskbarWindows(NSArray<MLTaskbarScreenBar *> *bars) {
+    for (MLTaskbarScreenBar *bar in bars) {
+        if (bar.window) {
+            [bar.window displayIfNeeded];
+        }
+    }
+}
+
+/** Move bars to peek Y only when not already there — safe to call repeatedly. */
+- (void)applyPeekFramesIfDrifted {
+    if (![self taskbarRequiresPeekFramePresentation]) {
+        return;
+    }
+    NSDictionary<NSNumber *, NSScreen *> *screensByID = [self screensByID];
+    BOOL moved = NO;
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        NSScreen *screen = screensByID[bar.screenID];
+        if (!screen || !bar.window) {
+            continue;
+        }
+        bar.mode = MLTaskbarBarModePeek;
+        if ([self barWindowIsAtPeekOffset:bar]) {
+            continue;
+        }
+        [self applyPeekPresentationForBar:bar peeking:YES animated:NO];
+        moved = YES;
+    }
+    if (moved) {
+        MLFlushTaskbarWindows(self.bars);
+        for (MLTaskbarScreenBar *bar in self.bars) {
+            if (bar.window) {
+                [bar.window orderFrontRegardless];
+            }
+        }
+    }
+    [self updateVisibilitySafetyTimer];
 }
 
 /**
@@ -767,19 +914,17 @@
  * must not be gated by minimize-all ignore heuristics.
  */
 - (void)applyUserArmedPeekPresentationAnimated:(BOOL)animated {
-    NSDictionary<NSNumber *, NSScreen *> *screensByID = [self screensByID];
-    for (MLTaskbarScreenBar *bar in self.bars) {
-        NSScreen *screen = screensByID[bar.screenID];
-        if (!screen || !bar.window) {
-            continue;
-        }
-        MLTaskbarBarMode previous = bar.mode;
-        bar.mode = MLTaskbarBarModePeek;
-        BOOL animate = animated && (previous != MLTaskbarBarModePeek);
-        [self applyPeekPresentationForBar:bar peeking:YES animated:animate];
-        [bar.window orderFrontRegardless];
+    (void)animated;
+    if (![self taskbarRequiresPeekFramePresentation]) {
+        [self reconcileOrphanPeekFramesAnimated:NO];
+        return;
     }
-    [self updateVisibilitySafetyTimer];
+    [self applyPeekFramesIfDrifted];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (bar.window && bar.window.isVisible) {
+            [bar.window orderFrontRegardless];
+        }
+    }
 }
 - (void)handleDesktopPeekClickAtCocoaPoint:(NSPoint)cocoaPoint {
     if (!self.started || !self.enabled) {
@@ -790,9 +935,6 @@
     }
     /* Chip / bar clicks restore windows — never arm or toggle peek. */
     if ([self cocoaPointHitsOwnTaskbar:cocoaPoint]) {
-        return;
-    }
-    if (![self cocoaPointIsExposedDesktop:cocoaPoint]) {
         return;
     }
 
@@ -806,29 +948,24 @@
         return;
     }
 
-    /*
-     * Only arm from desktop click when nothing live remains on-screen.
-     * Zero window chips (all closed) is fine — user click still half-drops the bar.
-     * Show Desktop with visible windows uses parked-window / chip-freeze detection.
-     */
-    if ([self liveOnScreenNonMinimizedWindowCount] >= 1) {
+    if (![self canArmUserDesktopPeekAtCocoaPoint:cocoaPoint]) {
         return;
     }
 
-    /* Arm FIRST so freeze/ignore gates cannot treat this as passive minimize-all. */
+    /*
+     * Arm + snap down IMMEDIATELY (before freeze bookkeeping). Stale CG/live census
+     * used to reject the click and defer peek ~0.45s to the visibility timer.
+     */
+    self.desktopPeekClickInProgress = YES;
     self.desktopPeekUserArmed = YES;
+
     MLDebugLog(@"[Taskbar] desktop click armed peek — force half-down (chips=%ld)",
           (long)[self totalWindowChipsOnBars]);
     if (!self.itemsFrozenForDesktopReveal) {
-        [self freezeDesktopReveal];
+        [self freezeDesktopRevealApplyingPresentation:NO];
     }
-    /*
-     * Always re-assert the slide. freezeDesktopReveal may no-op if already frozen,
-     * and applyBarVisibility historically un-peeked minimize-all before the arm flag
-     * was respected — never leave user peek without the Y offset.
-     */
     if (!self.itemsFrozenForDesktopReveal) {
-        /* freeze was blocked — still force freeze state + slide for user click. */
+        /* freeze was blocked — still force freeze state for user click. */
         [self cancelItemsCommitTimer];
         [self.frozenItemsByScreenID removeAllObjects];
         for (MLTaskbarScreenBar *bar in self.bars) {
@@ -849,7 +986,12 @@
         self.desktopRevealScreenIDs = all;
         self.fullscreenScreenIDs = [NSSet set];
     }
-    [self applyUserArmedPeekPresentationAnimated:YES];
+    /* Single downward commit — after all peek state is latched. */
+    [self applyPeekFramesIfDrifted];
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        weakSelf.desktopPeekClickInProgress = NO;
+    });
 }
 
 @end

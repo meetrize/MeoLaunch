@@ -1,5 +1,6 @@
 #import "MLTaskbarController+Private.h"
 
+#import "MLAXWindowHelper.h"
 #import "MLDebugLog.h"
 #import "MLMinimizeInterceptor.h"
 #import "MLRunningAppsMonitor.h"
@@ -499,19 +500,22 @@
     if (!self.started) {
         return;
     }
+    if (self.desktopPeekClickInProgress) {
+        return;
+    }
 
     /* Startup grace: never peek; clear any stuck offset and learn live census. */
     if (![self isDesktopRevealArmed]) {
         BOOL stuckPeek = self.itemsFrozenForDesktopReveal || self.desktopRevealScreenIDs.count > 0;
         if (!stuckPeek) {
             for (MLTaskbarScreenBar *b in self.bars) {
-                if (b.mode == MLTaskbarBarModePeek || NSMinY(b.barView.frame) < -0.5) {
+                if (b.mode == MLTaskbarBarModePeek || [self barWindowIsAtPeekOffset:b]) {
                     stuckPeek = YES;
                     break;
                 }
             }
         }
-        if (stuckPeek) {
+        if (stuckPeek && !self.desktopPeekUserArmed) {
             [self unfreezeDesktopRevealAndRefresh];
         }
         [self updateStableLiveCensus];
@@ -539,7 +543,7 @@
 
     [self updateStableLiveCensus];
 
-    if ([self shouldFreezeForDesktopReveal]) {
+    if (!self.itemsFrozenForDesktopReveal && [self shouldFreezeForDesktopReveal]) {
         [self freezeDesktopReveal];
     }
 
@@ -558,7 +562,11 @@
         }
         self.desktopRevealScreenIDs = all;
         self.fullscreenScreenIDs = [NSSet set];
-        [self applyBarVisibility];
+        /* User/auto peek: drift correction only — never fall through to normal frames. */
+        if (!self.desktopPeekClickInProgress) {
+            [self applyPeekFramesIfDrifted];
+        }
+        [self updateVisibilitySafetyTimer];
         return;
     }
 
@@ -588,6 +596,9 @@
     if (!self.started || !self.enabled) {
         return;
     }
+    if (self.desktopPeekClickInProgress) {
+        return;
+    }
 
     /*
      * Hard stop: passive minimize-all / all-closed must never keep peek presentation.
@@ -604,17 +615,24 @@
     }
     if (anyPeek &&
         !self.desktopPeekUserArmed &&
+        !self.itemsFrozenForDesktopReveal &&
         [self shouldIgnoreDesktopRevealBecauseAllMinimized]) {
         [self unfreezeDesktopRevealAndRefresh];
         [self updateVisibilitySafetyTimer];
         return;
     }
 
-    /* User-armed OR auto Show Desktop peek: keep forcing the half-down frame. */
-    if (self.itemsFrozenForDesktopReveal) {
-        [self applyUserArmedPeekPresentationAnimated:NO];
+    /* User-armed OR auto Show Desktop peek: correct drift only (not during desktop click). */
+    if (self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed) {
+        if (!self.desktopPeekClickInProgress) {
+            [self applyPeekFramesIfDrifted];
+        }
         return;
     }
+
+    [self reconcileOrphanPeekFramesAnimated:NO];
+
+    BOOL holdAllBarsVisible = [self isInPeekExitSettlePeriod];
 
     NSDictionary<NSNumber *, NSScreen *> *screensByID = [self screensByID];
     NSSet<NSNumber *> *fs = self.fullscreenScreenIDs ?: [NSSet set];
@@ -626,18 +644,15 @@
             continue;
         }
 
-        MLTaskbarBarMode previous = bar.mode;
-
         /* Peek screens must never be treated as fullscreen-hidden in the same pass. */
-        if ([reveal containsObject:bar.screenID] || self.itemsFrozenForDesktopReveal) {
+        if ([reveal containsObject:bar.screenID] && self.itemsFrozenForDesktopReveal) {
             bar.mode = MLTaskbarBarModePeek;
-            BOOL animate = (previous != MLTaskbarBarModePeek);
-            [self applyPeekPresentationForBar:bar peeking:YES animated:animate];
+            [self applyPeekPresentationForBar:bar peeking:YES animated:NO];
             [bar.window orderFrontRegardless];
             continue;
         }
 
-        if ([fs containsObject:bar.screenID]) {
+        if ([fs containsObject:bar.screenID] && !holdAllBarsVisible) {
             bar.mode = MLTaskbarBarModeHidden;
             [self applyPeekPresentationForBar:bar peeking:NO animated:NO];
             [bar.window orderOut:nil];
@@ -645,10 +660,15 @@
         }
 
         bar.mode = MLTaskbarBarModeNormal;
-        [self applyPeekPresentationForBar:bar peeking:NO animated:(previous == MLTaskbarBarModePeek)];
+        [self applyPeekPresentationForBar:bar peeking:NO animated:NO];
         [bar.window orderFrontRegardless];
     }
 
+    if (holdAllBarsVisible) {
+        [self flushAllTaskbarWindows];
+    }
+
+    [self reconcileOrphanPeekFramesAnimated:NO];
     [self updateVisibilitySafetyTimer];
 }
 - (BOOL)cocoaPointHitsOwnTaskbar:(NSPoint)cocoaPoint {
@@ -663,6 +683,10 @@
     return NO;
 }
 - (BOOL)cocoaPointIsExposedDesktop:(NSPoint)cocoaPoint {
+    return [self cocoaPointIsExposedDesktop:cocoaPoint refreshIfStale:YES];
+}
+
+- (BOOL)cocoaPointIsExposedDesktop:(NSPoint)cocoaPoint refreshIfStale:(BOOL)refreshIfStale {
     /* Taskbar sits above the desktop — never treat chip clicks as desktop peek. */
     if ([self cocoaPointHitsOwnTaskbar:cocoaPoint]) {
         return NO;
@@ -671,9 +695,10 @@
     pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
     NSRect main = NSScreen.mainScreen.frame;
     CGPoint q = CGPointMake(cocoaPoint.x, NSMaxY(main) - cocoaPoint.y);
-    CFArrayRef list = [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
+    CFArrayRef list =
+        [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:refreshIfStale];
     if (!list) {
-        return YES;
+        return NO;
     }
 
     BOOL hitApp = NO;
@@ -710,7 +735,7 @@
         if (layerRef) {
             CFNumberGetValue(layerRef, kCFNumberIntType, &layer);
         }
-        if (layer != 0) {
+        if (layer < 0 || layer > 25) {
             continue;
         }
         CFNumberRef alphaRef = CFDictionaryGetValue(info, kCGWindowAlpha);
@@ -726,10 +751,16 @@
         if (!boundsDict || !CGRectMakeWithDictionaryRepresentation(boundsDict, &boundsQ)) {
             continue;
         }
-        if (!CGRectContainsPoint(boundsQ, q)) {
+        static const CGFloat kDesktopHitSlop = 8.0;
+        CGRect hitBounds = CGRectInset(boundsQ, -kDesktopHitSlop, -kDesktopHitSlop);
+        if (!CGRectContainsPoint(hitBounds, q)) {
             continue;
         }
-        if (boundsQ.size.width < 60.0 || boundsQ.size.height < 40.0) {
+        BOOL sizeOK = boundsQ.size.width >= 60.0 && boundsQ.size.height >= 40.0;
+        if (!sizeOK) {
+            sizeOK = boundsQ.size.width >= 80.0 && boundsQ.size.height >= 12.0;
+        }
+        if (!sizeOK) {
             continue;
         }
 
@@ -762,6 +793,66 @@
         break;
     }
     return hitFinderDesktop || !hitApp;
+}
+
+/**
+ * AX hit-test: click landed on a regular app window (title bar, border, client area).
+ * Finder surfaces are left to CG (desktop wallpaper vs folder window).
+ */
+- (BOOL)cocoaPointHitsForeignAppWindowViaAX:(NSPoint)cocoaPoint {
+    if (!AXIsProcessTrusted()) {
+        return NO;
+    }
+    AXUIElementRef systemWide = AXUIElementCreateSystemWide();
+    if (!systemWide) {
+        return NO;
+    }
+    CGPoint axPt =
+        [MLScreenGeometry axPositionFromCocoaRect:NSMakeRect(cocoaPoint.x, cocoaPoint.y, 1, 1)];
+    AXUIElementRef under = NULL;
+    AXError err =
+        AXUIElementCopyElementAtPosition(systemWide, (float)axPt.x, (float)axPt.y, &under);
+    CFRelease(systemWide);
+    if (err != kAXErrorSuccess || !under) {
+        return NO;
+    }
+    AXUIElementRef win = [MLAXWindowHelper copyWindowElementFromElement:under];
+    CFRelease(under);
+    if (!win) {
+        return NO;
+    }
+    pid_t pid = 0;
+    AXUIElementGetPid(win, &pid);
+    CFRelease(win);
+    if (pid <= 0) {
+        return NO;
+    }
+    pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
+    if (pid == selfPid) {
+        return YES;
+    }
+    NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+    if ([app.bundleIdentifier isEqualToString:@"com.apple.finder"]) {
+        return NO;
+    }
+    return YES;
+}
+
+/**
+ * User desktop peek arms only on exposed desktop (wallpaper). Never trust click
+ * coordinates alone — window borders/title bars must not peek. Cache first, refresh once.
+ */
+- (BOOL)canArmUserDesktopPeekAtCocoaPoint:(NSPoint)cocoaPoint {
+    if ([self cocoaPointHitsOwnTaskbar:cocoaPoint]) {
+        return NO;
+    }
+    if ([self cocoaPointHitsForeignAppWindowViaAX:cocoaPoint]) {
+        return NO;
+    }
+    if ([self cocoaPointIsExposedDesktop:cocoaPoint refreshIfStale:NO]) {
+        return YES;
+    }
+    return [self cocoaPointIsExposedDesktop:cocoaPoint refreshIfStale:YES];
 }
 
 @end

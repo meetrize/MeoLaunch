@@ -167,7 +167,7 @@
 - (void)runningDidChange:(NSNotification *)note {
     (void)note;
     [self applyActiveHighlightImmediate];
-    if ([self shouldFreezeForDesktopReveal]) {
+    if (!self.itemsFrozenForDesktopReveal && [self shouldFreezeForDesktopReveal]) {
         [self freezeDesktopReveal];
     }
     [self refreshFullscreenVisibility];
@@ -186,7 +186,7 @@
 - (void)frontAppDidChange:(NSNotification *)note {
     (void)note;
     [self applyActiveHighlightImmediate];
-    if ([self shouldFreezeForDesktopReveal]) {
+    if (!self.itemsFrozenForDesktopReveal && [self shouldFreezeForDesktopReveal]) {
         [self freezeDesktopReveal];
     }
     [self refreshFullscreenVisibility];
@@ -208,7 +208,8 @@
                        if (!self) {
                            return;
                        }
-                       if ([self shouldFreezeForDesktopReveal]) {
+                       if (!self.itemsFrozenForDesktopReveal &&
+                           [self shouldFreezeForDesktopReveal]) {
                            [self freezeDesktopReveal];
                        }
                        [self refreshFullscreenVisibility];
