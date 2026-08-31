@@ -29,8 +29,9 @@ ask() {
 
 ask 1 "All minimized → bar stays normal (no Y offset / half-down peek)."
 ask 2 "All windows closed → bar stays normal (no auto peek)."
-ask 3 "All closed → click desktop → bar slides ~half down; click desktop again → restore."
-ask 4 "All minimized → click desktop → bar slides ~half down; click desktop again → full restore."
+ask 3 "All closed → click empty desktop → bar slides ~half down; click empty desktop again → restore."
+ask 3b "Click a Finder desktop icon → bar does NOT slide down or toggle peek."
+ask 4 "All minimized → click empty desktop → bar slides ~half down; click empty desktop again → full restore."
 ask 5 "All minimized → click chip to restore → no peek flash."
 ask 6 "Multi-screen: windows on screen 2 → Show Desktop / peek → chips stay on screen 2 bar."
 ask 7 "Exit peek → chips return to same screens (no cross-screen hop during settle)."

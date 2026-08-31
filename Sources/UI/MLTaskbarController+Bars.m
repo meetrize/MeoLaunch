@@ -887,6 +887,104 @@
 }
 
 /**
+ * AX hit-test: click landed on a Finder desktop icon (or its label), not empty wallpaper.
+ * CG treats the whole Finder desktop surface as exposed wallpaper — icons must be filtered
+ * via Accessibility so selecting/opening an icon does not arm or toggle peek.
+ */
+- (BOOL)cocoaPointHitsFinderDesktopIconViaAX:(NSPoint)cocoaPoint {
+    if (!AXIsProcessTrusted()) {
+        return NO;
+    }
+    AXUIElementRef systemWide = AXUIElementCreateSystemWide();
+    if (!systemWide) {
+        return NO;
+    }
+    CGPoint axPt =
+        [MLScreenGeometry axPositionFromCocoaRect:NSMakeRect(cocoaPoint.x, cocoaPoint.y, 1, 1)];
+    AXUIElementRef under = NULL;
+    AXError err =
+        AXUIElementCopyElementAtPosition(systemWide, (float)axPt.x, (float)axPt.y, &under);
+    CFRelease(systemWide);
+    if (err != kAXErrorSuccess || !under) {
+        return NO;
+    }
+
+    pid_t pid = 0;
+    AXUIElementGetPid(under, &pid);
+    if (pid <= 0) {
+        CFRelease(under);
+        return NO;
+    }
+    NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+    if (![app.bundleIdentifier isEqualToString:@"com.apple.finder"]) {
+        CFRelease(under);
+        return NO;
+    }
+
+    NSString *role = nil;
+    [MLAXWindowHelper copyStringAttribute:kAXRoleAttribute fromElement:under into:&role];
+
+    /* Empty wallpaper / desktop container — large list/scroll/window, not an icon. */
+    if ([role isEqualToString:(__bridge NSString *)kAXWindowRole] ||
+        [role isEqualToString:(__bridge NSString *)kAXListRole] ||
+        [role isEqualToString:(__bridge NSString *)kAXScrollAreaRole] ||
+        [role isEqualToString:(__bridge NSString *)kAXApplicationRole]) {
+        CFRelease(under);
+        return NO;
+    }
+
+    CGSize size = CGSizeZero;
+    CFTypeRef sizeRef = NULL;
+    if (AXUIElementCopyAttributeValue(under, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess &&
+        sizeRef) {
+        AXValueGetValue((AXValueRef)sizeRef, kAXValueTypeCGSize, &size);
+        CFRelease(sizeRef);
+    }
+
+    NSScreen *screen =
+        [MLScreenGeometry screenForCocoaRect:NSMakeRect(cocoaPoint.x, cocoaPoint.y, 1, 1)];
+    if (!screen) {
+        screen = NSScreen.mainScreen;
+    }
+    NSRect sf = screen.frame;
+    CGFloat cover = 0;
+    if (NSWidth(sf) > 1.0 && NSHeight(sf) > 1.0 && size.width > 0 && size.height > 0) {
+        cover = (size.width * size.height) / (NSWidth(sf) * NSHeight(sf));
+    }
+    /* Near-full-screen Finder surface under the cursor → wallpaper / icon view, not a tile. */
+    if (cover >= 0.12) {
+        CFRelease(under);
+        return NO;
+    }
+
+    NSString *title = nil;
+    NSString *desc = nil;
+    [MLAXWindowHelper copyStringAttribute:kAXTitleAttribute fromElement:under into:&title];
+    [MLAXWindowHelper copyStringAttribute:kAXDescriptionAttribute fromElement:under into:&desc];
+    BOOL hasName = (title.length > 0) || (desc.length > 0);
+
+    /*
+     * Desktop icons: AXImage (tile), AXButton, AXGroup (tile+label), or AXStaticText (label).
+     * Require a name and an icon-scale frame so random chrome is not mistaken for a tile.
+     */
+    BOOL iconRole =
+        [role isEqualToString:(__bridge NSString *)kAXImageRole] ||
+        [role isEqualToString:(__bridge NSString *)kAXButtonRole] ||
+        [role isEqualToString:(__bridge NSString *)kAXGroupRole] ||
+        [role isEqualToString:(__bridge NSString *)kAXStaticTextRole];
+    CGFloat maxSide = MAX(size.width, size.height);
+    CGFloat minSide = MIN(size.width, size.height);
+    BOOL iconSized = maxSide > 0 && maxSide <= 280.0 && minSide >= 6.0;
+
+    CFRelease(under);
+    if (iconRole && iconSized && (hasName || [role isEqualToString:(__bridge NSString *)kAXImageRole])) {
+        return YES;
+    }
+    /* Named Finder chip of icon scale (future / variant roles). */
+    return hasName && iconSized;
+}
+
+/**
  * User desktop peek arms only on exposed desktop (wallpaper). Never trust click
  * coordinates alone — window borders/title bars must not peek. Cache first, refresh once.
  */
@@ -898,6 +996,10 @@
         return NO;
     }
     if ([self cocoaPointHitsForeignAppWindowViaAX:cocoaPoint]) {
+        return NO;
+    }
+    /* Wallpaper only — desktop icons open/select without moving the bar. */
+    if ([self cocoaPointHitsFinderDesktopIconViaAX:cocoaPoint]) {
         return NO;
     }
     if ([self cocoaPointIsExposedDesktop:cocoaPoint refreshIfStale:NO]) {

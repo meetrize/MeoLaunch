@@ -38,6 +38,7 @@ These were fixed repeatedly. **Any peek / minimize / multi-screen change must pr
 ## 3. Desktop click hit-testing
 
 - Clicks on **our taskbar** (`cocoaPointHitsOwnTaskbar`) never arm/toggle peek (restoring a chip must not flash peek).
+- Clicks on **Finder desktop icons** (`cocoaPointHitsFinderDesktopIconViaAX`) never arm or toggle peek — only empty wallpaper.
 - Do **not** “look through” `selfPid` windows to Finder wallpaper behind the bar.
 
 ## 4. Restore-from-minimize must not flash peek
@@ -69,8 +70,9 @@ These were fixed repeatedly. **Any peek / minimize / multi-screen change must pr
 
 1. All minimized → bar does not move.
 2. All windows closed → bar does not move (no auto peek).
-3. All windows closed → click desktop → bar slides down ~half; click again → restore.
-4. All minimized → click desktop → bar slides down ~half; click desktop again → full restore.
+3. All windows closed → click empty desktop → bar slides down ~half; click empty desktop again → restore.
+3b. Click Finder desktop icon → bar does **not** slide / toggle peek.
+4. All minimized → click empty desktop → bar slides down ~half; click empty desktop again → full restore.
 5. All minimized → click chip restore → **no** peek flash.
 6. Multi-screen with windows on screen 2 → enter peek / Show Desktop → chips **stay** on screen 2’s bar.
 7. Exit peek → chips return to the same screens; no hop during settle.

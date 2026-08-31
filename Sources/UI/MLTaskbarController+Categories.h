@@ -116,6 +116,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)cocoaPointHitsOwnTaskbar:(NSPoint)cocoaPoint;
 - (BOOL)cocoaPointIsExposedDesktop:(NSPoint)cocoaPoint;
 - (BOOL)cocoaPointIsExposedDesktop:(NSPoint)cocoaPoint refreshIfStale:(BOOL)refreshIfStale;
+- (BOOL)cocoaPointHitsFinderDesktopIconViaAX:(NSPoint)cocoaPoint;
 - (BOOL)canArmUserDesktopPeekAtCocoaPoint:(NSPoint)cocoaPoint;
 
 @end

@@ -940,9 +940,12 @@ static void MLFlushTaskbarWindows(NSArray<MLTaskbarScreenBar *> *bars) {
 
     /*
      * Toggle: second click on exposed desktop exits user-armed peek and restores
-     * the bar to its normal (full) position.
+     * the bar to its normal (full) position. Desktop icon clicks must not toggle.
      */
     if (self.desktopPeekUserArmed && self.itemsFrozenForDesktopReveal) {
+        if ([self cocoaPointHitsFinderDesktopIconViaAX:cocoaPoint]) {
+            return;
+        }
         MLDebugLog(@"[Taskbar] desktop click exits user-armed peek");
         [self unfreezeDesktopRevealAndRefresh];
         return;
