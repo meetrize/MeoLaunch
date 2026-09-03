@@ -40,8 +40,13 @@
 - (BOOL)isOverlayWindowWarm;
 /** P2: apply overlay icon LRU cap from prefs. */
 - (void)setIconCacheMaxEntries:(NSUInteger)maxEntries;
-/** Idle / memory-pressure: purge rebuildable overlay caches when not visible. */
-- (void)reclaimIdleCachesIfHidden;
+/**
+ * Idle / memory-pressure reclaim while overlay is hidden.
+ * underPressure=YES → purge icon RAM (+ filter/folder caches).
+ * underPressure=NO → light trim only (filter/folder); keep icon RAM for fast re-show.
+ * Disk thumbnails are never cleared here.
+ */
+- (void)reclaimIdleCachesIfHiddenUnderPressure:(BOOL)underPressure;
 /**
  * Cold-destroy a parked warm window.
  * force=YES (memory pressure) always destroys if warm;

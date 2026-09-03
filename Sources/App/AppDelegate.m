@@ -138,7 +138,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         if (!self) {
             return;
         }
-        [self.overlay reclaimIdleCachesIfHidden];
+        [self.overlay reclaimIdleCachesIfHiddenUnderPressure:underMemoryPressure];
         [self.overlay destroyWarmOverlayIfNeededForce:underMemoryPressure];
         [self.runningApps reclaimStaleSoftStateAndCachesUnderPressure:underMemoryPressure];
         if (underMemoryPressure) {

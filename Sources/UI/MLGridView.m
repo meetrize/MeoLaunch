@@ -25,6 +25,7 @@
     NSTimeInterval _edgeEnterTime;
     NSMutableDictionary<NSString *, NSImage *> *_folderCompositeCache;
     NSMutableArray<NSString *> *_folderCompositeLRU;
+    BOOL _iconRedrawScheduled;
 }
 
 enum { MLFolderCompositeMaxEntries = 16 };
@@ -678,6 +679,31 @@ enum { MLFolderCompositeMaxEntries = 16 };
 
 #pragma mark - Prefetch
 
+- (void)syncIconCachePointSize {
+    if (!self.iconCache) {
+        return;
+    }
+    MLCellFrame cell;
+    ml_grid_cell_frame(&self->_gridConfig,
+                       (float)NSWidth(self.bounds),
+                       (float)NSHeight(self.bounds),
+                       0,
+                       &cell);
+    CGFloat size = cell.icon_s;
+    if (size < 16.0) {
+        size = 64.0;
+    }
+    CGFloat prev = self.iconCache.iconPointSize;
+    if (fabs(prev - size) < 0.5) {
+        return;
+    }
+    self.iconCache.iconPointSize = size;
+    /* Different raster size → drop RAM; disk keys include point size. */
+    if (prev > 0 && fabs(prev - size) >= 1.0 && self.iconCache.cachedCount > 0) {
+        [self.iconCache purge];
+    }
+}
+
 - (void)requestIconForPath:(NSString *)path {
     if (!path.length || !self.iconCache) {
         return;
@@ -689,8 +715,25 @@ enum { MLFolderCompositeMaxEntries = 16 };
     [self.iconCache loadIconForPath:path onLoaded:^(NSString *loadedPath, NSImage *image) {
         (void)loadedPath;
         (void)image;
-        [weakSelf setNeedsDisplay:YES];
+        [weakSelf scheduleIconRedraw];
     }];
+}
+
+/** One display pass per runloop when many icons arrive together. */
+- (void)scheduleIconRedraw {
+    if (_iconRedrawScheduled) {
+        return;
+    }
+    _iconRedrawScheduled = YES;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        __strong typeof(weakSelf) self = weakSelf;
+        if (!self) {
+            return;
+        }
+        self->_iconRedrawScheduled = NO;
+        [self setNeedsDisplay:YES];
+    });
 }
 
 - (void)prefetchIconsForPage:(NSInteger)page {
@@ -744,6 +787,7 @@ enum { MLFolderCompositeMaxEntries = 16 };
 
 - (void)prefetchVisibleIcons {
     /* P1: current page only — neighbor pages load on flip (lower Active peak). */
+    [self syncIconCachePointSize];
     [self prefetchIconsForPage:self.currentPage];
 }
 

@@ -68,6 +68,11 @@
 
 /** Idle park → cold destroy (M1.1: 3 min slim warm). */
 static const NSTimeInterval kMLOverlayWarmIdleDestroySeconds = 3.0 * 60.0;
+/**
+ * RAM icon purge while window stays warm — aligned with Warm→Cold so frequent
+ * re-opens keep Hot icons; disk thumbnails remain after this fires.
+ */
+static const NSTimeInterval kMLOverlayIconRAMPurgeSeconds = 3.0 * 60.0;
 
 /** Lets clicks fall through to the dismiss catcher below. */
 @interface MLPassthroughTintView : NSView
@@ -118,6 +123,8 @@ static void MLLogMemory(NSString *tag) {
         _animating = NO;
         _iconCache = [[MLIconCache alloc] init];
         _iconCache.maxEntries = 128;
+        _iconCache.diskCacheEnabled = YES;
+        _iconCache.diskCacheMaxEntries = 256;
         _appIndex = NULL;
         _filterIndices = NULL;
         _filterCapacity = 0;
@@ -1460,7 +1467,8 @@ static void MLLogMemory(NSString *tag) {
     self.iconPurgeGeneration += 1;
     NSUInteger gen = self.iconPurgeGeneration;
     __weak typeof(self) weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 (int64_t)(kMLOverlayIconRAMPurgeSeconds * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
                        __strong typeof(weakSelf) self = weakSelf;
                        if (!self || self.iconPurgeGeneration != gen) {
@@ -1469,9 +1477,11 @@ static void MLLogMemory(NSString *tag) {
                        if (self.visible || self.animating) {
                            return;
                        }
+                       /* RAM only — disk thumbnails stay for fast cold reopen. */
                        [self.iconCache purge];
                        MLLogMemory(@"delayed-purge");
-                       NSLog(@"[MeoLaunch] Overlay icon cache purged (5s idle)");
+                       NSLog(@"[MeoLaunch] Overlay icon RAM purged (%.0fs idle; disk kept)",
+                             kMLOverlayIconRAMPurgeSeconds);
                    });
 }
 
@@ -1562,6 +1572,16 @@ static void MLLogMemory(NSString *tag) {
     /* Cheap: Esc / outside-click must work even if deferred chrome is one turn late. */
     [self installEscapeMonitor];
     [self installOutsideClickMonitors];
+
+    /*
+     * After first pixel: size the grid correctly, then kick page-0 icon loads.
+     * Waiting for showDeferredChrome adds a full runloop of Workspace latency;
+     * wrong bounds here would also cache the wrong icon_s and purge later.
+     */
+    if (self.gridView) {
+        [self layoutChrome];
+        [self applyFilterWithQuery:@""];
+    }
 
     MLLogMemory(@"show-critical");
     [MLGhostPanelProbe attachOverlayWindow:self.window searchField:self.searchField];
@@ -1780,16 +1800,20 @@ static void MLLogMemory(NSString *tag) {
     return !self.visible && self.window != nil;
 }
 
-- (void)reclaimIdleCachesIfHidden {
+- (void)reclaimIdleCachesIfHiddenUnderPressure:(BOOL)underPressure {
     if (self.visible || self.animating) {
         return;
     }
-    [self cancelDelayedIconPurge];
-    [self.iconCache purge];
     [self releaseFilterBuffer];
     if (self.gridView) {
         [self.gridView clearFolderCompositeCache];
     }
+    if (!underPressure) {
+        return;
+    }
+    [self cancelDelayedIconPurge];
+    [self.iconCache purge];
+    MLLogMemory(@"pressure-icon-purge");
 }
 
 - (void)destroyWarmOverlayIfNeededForce:(BOOL)force {
