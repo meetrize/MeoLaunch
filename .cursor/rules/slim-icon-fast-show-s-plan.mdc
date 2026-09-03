@@ -1,0 +1,33 @@
+---
+description: Slim Icon Fast Show S-Plan 全自动开发（17-plan）
+globs:
+  - Sources/**
+  - Scripts/**
+  - doc/17*.md
+  - doc/16*.md
+alwaysApply: true
+---
+
+# MeoLaunch S-Plan（Slim Icon + Fast Show）
+
+当仓库存在未完成的 `doc/17-plan.md` 任务卡时，**优先**执行该 Plan（高于已全部 done 的 16/15-plan）。
+
+## 触发语
+
+用户说「继续」「继续自动化」「全自动开发」「做 S 计划」「按 17-plan」「Slim Icon」等 → 立刻读 `doc/17-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+
+## 全自动协议
+
+1. 读 `doc/17-slim-icon-fast-show.md` 理解目标（若尚未读过）。
+2. **一次一卡**实现；跑该卡验收（至少 `./Scripts/build.sh`）。
+3. 把该卡 Status 改为 `done` 并写备注。
+4. **同一会话继续下一张 pending**，直到全部 `done`、验收失败需决策、或用户打断。
+5. 遵守 peek 不变量：`.cursor/rules/taskbar-peek-invariants.mdc`。
+6. 不引入第三方库；不改 `doc/00`–`doc/06` 正文（`00-overview` 索引表可以加链接）。
+7. 非用户明确要求不要 git commit / push。
+
+## 目标摘要
+
+- **S0**：`iconForFile` 后栅格化为单层小图；禁止多分辨率原图进 RAM / TIFF。
+- Hot 仅当前页（+可选邻页）；磁盘 Slim PNG；Active ≤120MB。
+- 热区 ≤1 帧窗；翻页尽快出图标。

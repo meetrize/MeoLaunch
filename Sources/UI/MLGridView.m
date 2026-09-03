@@ -786,9 +786,14 @@ enum { MLFolderCompositeMaxEntries = 16 };
 }
 
 - (void)prefetchVisibleIcons {
-    /* P1: current page only — neighbor pages load on flip (lower Active peak). */
+    /* S1: current page + next page (~+3MB Slim) for faster flips. */
     [self syncIconCachePointSize];
-    [self prefetchIconsForPage:self.currentPage];
+    NSInteger page = self.currentPage;
+    [self prefetchIconsForPage:page];
+    NSInteger pages = [self pageCount];
+    if (page + 1 < pages) {
+        [self prefetchIconsForPage:page + 1];
+    }
 }
 
 #pragma mark - Drawing

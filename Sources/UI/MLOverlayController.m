@@ -69,10 +69,10 @@
 /** Idle park → cold destroy (M1.1: 3 min slim warm). */
 static const NSTimeInterval kMLOverlayWarmIdleDestroySeconds = 3.0 * 60.0;
 /**
- * RAM icon purge while window stays warm — aligned with Warm→Cold so frequent
- * re-opens keep Hot icons; disk thumbnails remain after this fires.
+ * L0 Hot RAM purge while window stays warm (S1: 45s).
+ * L1 disk thumbnails remain for fast reopen.
  */
-static const NSTimeInterval kMLOverlayIconRAMPurgeSeconds = 3.0 * 60.0;
+static const NSTimeInterval kMLOverlayIconRAMPurgeSeconds = 45.0;
 
 /** Lets clicks fall through to the dismiss catcher below. */
 @interface MLPassthroughTintView : NSView
@@ -102,7 +102,7 @@ static const CGFloat kMLChromeGhostMinArea = 1200.0;
 
 @implementation MLOverlayController
 
-static void MLLogMemory(NSString *tag) {
+static void MLLogMemory(NSString *tag, NSUInteger iconCount) {
     task_vm_info_data_t info;
     mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
     kern_return_t kr = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count);
@@ -110,7 +110,8 @@ static void MLLogMemory(NSString *tag) {
         return;
     }
     double mb = (double)info.phys_footprint / (1024.0 * 1024.0);
-    NSLog(@"[MeoLaunch] mem %@ phys_footprint=%.1fMB", tag, mb);
+    NSLog(@"[MeoLaunch] mem %@ phys_footprint=%.1fMB icons=%lu",
+          tag, mb, (unsigned long)iconCount);
 }
 
 - (instancetype)initWithConfigStore:(MLConfigStore *)config
@@ -122,7 +123,8 @@ static void MLLogMemory(NSString *tag) {
         _visible = NO;
         _animating = NO;
         _iconCache = [[MLIconCache alloc] init];
-        _iconCache.maxEntries = 128;
+        /* S1: ~page×2 Slim icons (current + neighbor); prefs may raise. */
+        _iconCache.maxEntries = 64;
         _iconCache.diskCacheEnabled = YES;
         _iconCache.diskCacheMaxEntries = 256;
         _appIndex = NULL;
@@ -420,7 +422,7 @@ static void MLLogMemory(NSString *tag) {
     blur.state = NSVisualEffectStateInactive;
     [blur removeFromSuperview];
     self.blurView = nil;
-    MLLogMemory(@"hide-strip-blur");
+    MLLogMemory(@"hide-strip-blur", self.iconCache.cachedCount);
 }
 
 /** Recreate fullscreen blur under existing warm chrome (contentView bottom). */
@@ -516,14 +518,15 @@ static void MLLogMemory(NSString *tag) {
         @autoreleasepool {
             malloc_zone_pressure_relief(NULL, 0);
         }
-        MLLogMemory(@"hide-relieved");
+        NSUInteger icons = weakSelf.iconCache.cachedCount;
+        MLLogMemory(@"hide-relieved", icons);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
                            if (!weakSelf || weakSelf.visible) {
                                return;
                            }
                            malloc_zone_pressure_relief(NULL, 0);
-                           MLLogMemory(@"hide-relieved+0.5s");
+                           MLLogMemory(@"hide-relieved+0.5s", weakSelf.iconCache.cachedCount);
                        });
     });
 }
@@ -1479,7 +1482,7 @@ static void MLLogMemory(NSString *tag) {
                        }
                        /* RAM only — disk thumbnails stay for fast cold reopen. */
                        [self.iconCache purge];
-                       MLLogMemory(@"delayed-purge");
+                       MLLogMemory(@"delayed-purge", self.iconCache.cachedCount);
                        NSLog(@"[MeoLaunch] Overlay icon RAM purged (%.0fs idle; disk kept)",
                              kMLOverlayIconRAMPurgeSeconds);
                    });
@@ -1574,16 +1577,15 @@ static void MLLogMemory(NSString *tag) {
     [self installOutsideClickMonitors];
 
     /*
-     * After first pixel: size the grid correctly, then kick page-0 icon loads.
-     * Waiting for showDeferredChrome adds a full runloop of Workspace latency;
-     * wrong bounds here would also cache the wrong icon_s and purge later.
+     * S2: After first pixel — size grid + kick page-0 (+neighbor) Slim loads
+     * this turn. Do not defer icon prefetch to showDeferredChrome.
      */
     if (self.gridView) {
         [self layoutChrome];
         [self applyFilterWithQuery:@""];
     }
 
-    MLLogMemory(@"show-critical");
+    MLLogMemory(@"show-critical", self.iconCache.cachedCount);
     [MLGhostPanelProbe attachOverlayWindow:self.window searchField:self.searchField];
     [MLGhostPanelProbe noteEvent:warmReuse ? @"showCritical-warm" : @"showCritical-cold"];
     [MLGhostPanelProbe dumpSnapshot:warmReuse ? @"showCritical-warm" : @"showCritical-cold"];
@@ -1623,7 +1625,7 @@ static void MLLogMemory(NSString *tag) {
                    });
 
     NSScreen *screen = [self preferredScreen];
-    MLLogMemory(@"show");
+    MLLogMemory(@"show", self.iconCache.cachedCount);
     NSLog(@"[MeoLaunch] Overlay shown on %@ (%zu apps, pages=%ld, search=%@)",
           screen.localizedName ?: @"screen",
           self.appIndex ? self.appIndex->count : 0,
@@ -1737,7 +1739,7 @@ static void MLLogMemory(NSString *tag) {
         [self.gridView clearFolderCompositeCache];
     }
     [self scheduleDelayedIconPurge];
-    MLLogMemory(@"hide-warm");
+    MLLogMemory(@"hide-warm", self.iconCache.cachedCount);
     NSLog(@"[MeoLaunch] Overlay hidden (warm park)");
     [MLGhostPanelProbe noteEvent:@"hide-warm"];
 }
@@ -1813,7 +1815,7 @@ static void MLLogMemory(NSString *tag) {
     }
     [self cancelDelayedIconPurge];
     [self.iconCache purge];
-    MLLogMemory(@"pressure-icon-purge");
+    MLLogMemory(@"pressure-icon-purge", self.iconCache.cachedCount);
 }
 
 - (void)destroyWarmOverlayIfNeededForce:(BOOL)force {
@@ -1835,7 +1837,7 @@ static void MLLogMemory(NSString *tag) {
     NSLog(@"[MeoLaunch] Overlay cold-destroy (force=%d)", force ? 1 : 0);
     [self destroyOverlayWindow];
     self.lastParkedAt = nil;
-    MLLogMemory(@"hide-destroyed");
+    MLLogMemory(@"hide-destroyed", self.iconCache.cachedCount);
 }
 
 - (void)setIconCacheMaxEntries:(NSUInteger)maxEntries {

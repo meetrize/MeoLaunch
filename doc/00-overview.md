@@ -25,6 +25,8 @@
 | [15-plan.md](./15-plan.md) | Z0–Z8 任务卡（已完成） |
 | [16-slim-warm-memory.md](./16-slim-warm-memory.md) | Slim Warm：hide 卸 blur + 更快 reclaim |
 | [16-plan.md](./16-plan.md) | M1.2 / M1.3 / M1.1 任务卡（已完成） |
+| [17-slim-icon-fast-show.md](./17-slim-icon-fast-show.md) | Slim Icon：控 Active 内存 + 热区/翻页快显 |
+| [17-plan.md](./17-plan.md) | S0–S3 任务卡（已完成） |
 
 ## 产品定位
 

@@ -2,7 +2,8 @@
 
 #import <CommonCrypto/CommonDigest.h>
 
-static const NSUInteger kMLIconLoadConcurrency = 12;
+static const NSUInteger kMLIconLoadConcurrency = 10;
+static const NSInteger kMLIconPixelCap = 512;
 
 @interface MLIconCache ()
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSImage *> *cache;
@@ -47,6 +48,34 @@ static const NSUInteger kMLIconLoadConcurrency = 12;
     return self.iconPointSize > 0 ? self.iconPointSize : 128.0;
 }
 
+- (CGFloat)effectiveBackingScale {
+    CGFloat scale = 0;
+    NSArray<NSScreen *> *screens = [NSScreen screens];
+    for (NSScreen *s in screens) {
+        if (s.backingScaleFactor > scale) {
+            scale = s.backingScaleFactor;
+        }
+    }
+    if (scale < 1.0) {
+        scale = [NSScreen mainScreen].backingScaleFactor;
+    }
+    if (scale < 1.0) {
+        scale = 2.0;
+    }
+    return scale;
+}
+
+- (NSInteger)pixelEdgeForPointSize:(CGFloat)pointSize scale:(CGFloat)scale {
+    NSInteger px = (NSInteger)ceil(pointSize * scale);
+    if (px < 16) {
+        px = 16;
+    }
+    if (px > kMLIconPixelCap) {
+        px = kMLIconPixelCap;
+    }
+    return px;
+}
+
 - (void)touchKey:(NSString *)path {
     [self.lru removeObject:path];
     [self.lru addObject:path];
@@ -71,6 +100,75 @@ static const NSUInteger kMLIconLoadConcurrency = 12;
         }
         return img;
     }
+}
+
+#pragma mark - Slim rasterize
+
+/**
+ * Draw Workspace (or any) icon into a single bitmap at display pixel size.
+ * Drop multi-resolution representations — those were the ~GB Active spike.
+ */
+- (NSImage *)slimImageFromSource:(NSImage *)source
+                       pointSize:(CGFloat)pointSize
+                           scale:(CGFloat)scale {
+    if (!source || pointSize < 1.0) {
+        return nil;
+    }
+    NSInteger px = [self pixelEdgeForPointSize:pointSize scale:scale];
+
+    NSBitmapImageRep *rep =
+        [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                pixelsWide:px
+                                                pixelsHigh:px
+                                             bitsPerSample:8
+                                           samplesPerPixel:4
+                                                  hasAlpha:YES
+                                                  isPlanar:NO
+                                            colorSpaceName:NSDeviceRGBColorSpace
+                                               bytesPerRow:0
+                                              bitsPerPixel:0];
+    if (!rep) {
+        return nil;
+    }
+    rep.size = NSMakeSize(pointSize, pointSize);
+
+    NSGraphicsContext *ctx = [NSGraphicsContext graphicsContextWithBitmapImageRep:rep];
+    if (!ctx) {
+        return nil;
+    }
+    /*
+     * Bitmap context user space is rep.size (points), not pixelsWide.
+     * Drawing with px×px on 2x clips to ~1/4 of the icon (bottom-left).
+     */
+    NSRect dst = NSMakeRect(0, 0, pointSize, pointSize);
+    [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext:ctx];
+    ctx.imageInterpolation = NSImageInterpolationHigh;
+    [[NSColor clearColor] set];
+    NSRectFill(dst);
+    [source drawInRect:dst
+              fromRect:NSZeroRect
+             operation:NSCompositingOperationSourceOver
+              fraction:1.0
+        respectFlipped:YES
+                 hints:@{ NSImageHintInterpolation : @(NSImageInterpolationHigh) }];
+    [NSGraphicsContext restoreGraphicsState];
+
+    NSImage *slim = [[NSImage alloc] initWithSize:NSMakeSize(pointSize, pointSize)];
+    [slim addRepresentation:rep];
+    return slim;
+}
+
+- (NSBitmapImageRep *)bitmapRepFromSlimImage:(NSImage *)image {
+    if (!image) {
+        return nil;
+    }
+    for (NSImageRep *r in image.representations) {
+        if ([r isKindOfClass:[NSBitmapImageRep class]]) {
+            return (NSBitmapImageRep *)r;
+        }
+    }
+    return nil;
 }
 
 #pragma mark - Disk
@@ -120,7 +218,7 @@ static const NSUInteger kMLIconLoadConcurrency = 12;
     self.diskHasEntries = (files.count > 0);
 }
 
-- (NSString *)diskFileNameForPath:(NSString *)path pointSize:(CGFloat)pointSize {
+- (NSString *)diskFileNameForPath:(NSString *)path pixelEdge:(NSInteger)pixelEdge {
     const char *c = path.UTF8String ?: "";
     unsigned char digest[CC_SHA256_DIGEST_LENGTH];
     CC_SHA256((const unsigned char *)c, (CC_LONG)strlen(c), digest);
@@ -128,44 +226,46 @@ static const NSUInteger kMLIconLoadConcurrency = 12;
     for (int i = 0; i < 8; i++) {
         [hex appendFormat:@"%02x", digest[i]];
     }
-    int sz = (int)lround(pointSize);
-    return [NSString stringWithFormat:@"%@_%d.png", hex, sz];
+    /* v2: point-space rasterize (v1 wrongly drew px×px and clipped). */
+    return [NSString stringWithFormat:@"%@_%ldpx_v2.png", hex, (long)pixelEdge];
 }
 
-- (NSURL *)diskURLForPath:(NSString *)path pointSize:(CGFloat)pointSize {
+- (NSURL *)diskURLForPath:(NSString *)path pixelEdge:(NSInteger)pixelEdge {
     NSURL *dir = [self ensureDiskCacheDirectory];
     if (!dir) {
         return nil;
     }
-    return [dir URLByAppendingPathComponent:[self diskFileNameForPath:path pointSize:pointSize]
+    return [dir URLByAppendingPathComponent:[self diskFileNameForPath:path pixelEdge:pixelEdge]
                                 isDirectory:NO];
 }
 
-- (NSImage *)loadImageFromDiskURL:(NSURL *)url pointSize:(CGFloat)pointSize {
+- (NSImage *)loadSlimImageFromDiskURL:(NSURL *)url pointSize:(CGFloat)pointSize {
     if (!url) {
         return nil;
     }
-    /* Cheap miss: avoid decoding work when file absent. */
     if (![[NSFileManager defaultManager] fileExistsAtPath:url.path]) {
         return nil;
     }
-    NSImage *img = [[NSImage alloc] initWithContentsOfURL:url];
-    if (!img) {
+    NSData *data = [NSData dataWithContentsOfURL:url];
+    if (!data.length) {
         return nil;
     }
-    [img setSize:NSMakeSize(pointSize, pointSize)];
-    return img;
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithData:data];
+    if (!rep) {
+        return nil;
+    }
+    rep.size = NSMakeSize(pointSize, pointSize);
+    NSImage *slim = [[NSImage alloc] initWithSize:NSMakeSize(pointSize, pointSize)];
+    [slim addRepresentation:rep];
+    return slim;
 }
 
-- (void)writeImage:(NSImage *)image toDiskURL:(NSURL *)url {
+/** PNG from the single bitmap rep only — never TIFFRepresentation. */
+- (void)writeSlimImage:(NSImage *)image toDiskURL:(NSURL *)url {
     if (!image || !url) {
         return;
     }
-    NSData *tiff = image.TIFFRepresentation;
-    if (!tiff.length) {
-        return;
-    }
-    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithData:tiff];
+    NSBitmapImageRep *rep = [self bitmapRepFromSlimImage:image];
     if (!rep) {
         return;
     }
@@ -180,19 +280,22 @@ static const NSUInteger kMLIconLoadConcurrency = 12;
     }
 }
 
-- (void)scheduleDiskWrite:(NSImage *)image forPath:(NSString *)path pointSize:(CGFloat)pointSize {
-    if (!self.diskCacheEnabled || !image || path.length == 0) {
+- (void)scheduleDiskWrite:(NSImage *)slimImage
+                  forPath:(NSString *)path
+                pixelEdge:(NSInteger)pixelEdge {
+    if (!self.diskCacheEnabled || !slimImage || path.length == 0) {
         return;
     }
-    NSImage *snapshot = [image copy];
+    /* Slim image is already single-rep; retain for async write (no fat copy). */
+    NSImage *hold = slimImage;
     __weak typeof(self) weakSelf = self;
     dispatch_async(self.diskQueue, ^{
         __strong typeof(weakSelf) self = weakSelf;
         if (!self) {
             return;
         }
-        NSURL *diskURL = [self diskURLForPath:path pointSize:pointSize];
-        [self writeImage:snapshot toDiskURL:diskURL];
+        NSURL *diskURL = [self diskURLForPath:path pixelEdge:pixelEdge];
+        [self writeSlimImage:hold toDiskURL:diskURL];
     });
 }
 
@@ -278,42 +381,46 @@ static const NSUInteger kMLIconLoadConcurrency = 12;
     }
 
     CGFloat pointSize = [self effectiveIconPointSize];
+    CGFloat scale = [self effectiveBackingScale];
+    NSInteger pixelEdge = [self pixelEdgeForPointSize:pointSize scale:scale];
     BOOL useDisk = self.diskCacheEnabled;
     dispatch_semaphore_t sem = self.loadSemaphore;
 
     dispatch_async(self.queue, ^{
         dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
-        NSImage *copy = nil;
+        NSImage *slim = nil;
         BOOL loadedFromWorkspace = NO;
         @autoreleasepool {
             if (useDisk) {
                 [self probeDiskDirectoryIfNeeded];
                 if (self.diskHasEntries) {
-                    NSURL *diskURL = [self diskURLForPath:path pointSize:pointSize];
-                    copy = [self loadImageFromDiskURL:diskURL pointSize:pointSize];
-                    if (copy) {
-                        copy = [copy copy];
-                    }
+                    NSURL *diskURL = [self diskURLForPath:path pixelEdge:pixelEdge];
+                    slim = [self loadSlimImageFromDiskURL:diskURL pointSize:pointSize];
                 }
             }
 
-            if (!copy) {
-                NSImage *icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-                [icon setSize:NSMakeSize(pointSize, pointSize)];
-                copy = [icon copy];
-                loadedFromWorkspace = (copy != nil);
+            if (!slim) {
+                NSImage *workspaceIcon = nil;
+                @autoreleasepool {
+                    workspaceIcon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+                    /* Rasterize inside pool so multi-rep source dies here. */
+                    slim = [self slimImageFromSource:workspaceIcon
+                                           pointSize:pointSize
+                                               scale:scale];
+                    workspaceIcon = nil;
+                }
+                loadedFromWorkspace = (slim != nil);
             }
 
-            [self storeInRAM:copy forPath:path generation:gen];
+            [self storeInRAM:slim forPath:path generation:gen];
         }
         @synchronized (self.inflight) {
             [self.inflight removeObject:path];
         }
-        /* Release slot before any disk encode — first paint must not wait on PNG. */
         dispatch_semaphore_signal(sem);
 
-        if (loadedFromWorkspace && useDisk && copy) {
-            [self scheduleDiskWrite:copy forPath:path pointSize:pointSize];
+        if (loadedFromWorkspace && useDisk && slim) {
+            [self scheduleDiskWrite:slim forPath:path pixelEdge:pixelEdge];
         }
 
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -322,7 +429,7 @@ static const NSUInteger kMLIconLoadConcurrency = 12;
                 cur = self.loadGeneration;
             }
             if (gen == cur) {
-                onLoaded(path, copy);
+                onLoaded(path, slim);
             }
         });
     });

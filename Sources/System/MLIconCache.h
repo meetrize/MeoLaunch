@@ -6,9 +6,9 @@
 @property (nonatomic, assign) CGFloat iconPointSize; /* default 128 */
 
 /**
- * When YES, successful loads also write PNG thumbnails under Caches.
- * RAM purge keeps disk; reopen reads disk before iconForFile.
- * Default NO (Taskbar); Overlay should enable.
+ * When YES, successful loads also write slim PNG thumbnails under Caches
+ * (single bitmap at display pixel size). RAM purge keeps disk; reopen reads
+ * disk before iconForFile. Default NO (Taskbar); Overlay should enable.
  */
 @property (nonatomic, assign) BOOL diskCacheEnabled;
 
