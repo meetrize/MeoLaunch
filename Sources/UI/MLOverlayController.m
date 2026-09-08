@@ -2005,11 +2005,10 @@ doCommandBySelector:(SEL)commandSelector {
     NSRect iconRect = [self.gridView iconRectForVisibleIndex:vis];
     NSImage *icon = [self.gridView iconImageForVisibleIndex:vis];
     if (!icon && path.length) {
-        icon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-        if (icon && !NSIsEmptyRect(iconRect)) {
-            icon = [icon copy];
-            icon.size = iconRect.size;
-        }
+        /* Never keep a multi-rep Workspace icon for the launch anim. */
+        CGFloat pts = NSIsEmptyRect(iconRect) ? self.iconCache.iconPointSize
+                                              : NSWidth(iconRect);
+        icon = [self.iconCache slimIconForPath:path pointSize:pts];
     }
 
     if (NSIsEmptyRect(iconRect) || !icon) {

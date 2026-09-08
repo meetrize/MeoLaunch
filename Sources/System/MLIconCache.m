@@ -215,7 +215,17 @@ static const NSInteger kMLIconPixelCap = 512;
                                       includingPropertiesForKeys:nil
                                                          options:NSDirectoryEnumerationSkipsHiddenFiles
                                                            error:&err];
-    self.diskHasEntries = (files.count > 0);
+    NSUInteger v2Count = 0;
+    for (NSURL *file in files) {
+        NSString *name = file.lastPathComponent ?: @"";
+        if ([name hasSuffix:@"_v2.png"]) {
+            v2Count += 1;
+        } else {
+            /* Drop pre-v2 / fat-TIFF leftovers so probe stays accurate. */
+            [[NSFileManager defaultManager] removeItemAtURL:file error:nil];
+        }
+    }
+    self.diskHasEntries = (v2Count > 0);
 }
 
 - (NSString *)diskFileNameForPath:(NSString *)path pixelEdge:(NSInteger)pixelEdge {
@@ -354,6 +364,44 @@ static const NSInteger kMLIconPixelCap = 512;
 }
 
 #pragma mark - Load
+
+- (NSImage *)slimIconForPath:(NSString *)path pointSize:(CGFloat)pointSize {
+    if (path.length == 0) {
+        return nil;
+    }
+    NSImage *hit = [self cachedIconForPath:path];
+    if (hit) {
+        return hit;
+    }
+    CGFloat pts = pointSize > 0 ? pointSize : [self effectiveIconPointSize];
+    CGFloat scale = [self effectiveBackingScale];
+    NSInteger pixelEdge = [self pixelEdgeForPointSize:pts scale:scale];
+    NSImage *slim = nil;
+    @autoreleasepool {
+        if (self.diskCacheEnabled) {
+            [self probeDiskDirectoryIfNeeded];
+            if (self.diskHasEntries) {
+                NSURL *diskURL = [self diskURLForPath:path pixelEdge:pixelEdge];
+                slim = [self loadSlimImageFromDiskURL:diskURL pointSize:pts];
+            }
+        }
+        if (!slim) {
+            NSImage *workspaceIcon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+            slim = [self slimImageFromSource:workspaceIcon pointSize:pts scale:scale];
+            if (slim && self.diskCacheEnabled) {
+                [self scheduleDiskWrite:slim forPath:path pixelEdge:pixelEdge];
+            }
+        }
+    }
+    if (slim) {
+        NSUInteger gen;
+        @synchronized (self.cache) {
+            gen = self.loadGeneration;
+        }
+        [self storeInRAM:slim forPath:path generation:gen];
+    }
+    return slim;
+}
 
 - (void)loadIconForPath:(NSString *)path onLoaded:(void (^)(NSString *path, NSImage *image))onLoaded {
     if (path.length == 0 || !onLoaded) {

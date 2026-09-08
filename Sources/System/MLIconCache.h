@@ -18,6 +18,13 @@
 /// Returns cached image or nil if not yet loaded.
 - (NSImage *)cachedIconForPath:(NSString *)path;
 
+/**
+ * Synchronously return a Slim icon (cache hit or rasterize once).
+ * Prefer async loadIconForPath for grid fill; use this for rare UI paths
+ * (e.g. launch animation) that must not hold a multi-rep Workspace image.
+ */
+- (NSImage *)slimIconForPath:(NSString *)path pointSize:(CGFloat)pointSize;
+
 /// Load icon on a background queue; invokes onLoaded on the main queue when ready.
 - (void)loadIconForPath:(NSString *)path onLoaded:(void (^)(NSString *path, NSImage *image))onLoaded;
 
