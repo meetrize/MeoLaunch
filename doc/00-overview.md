@@ -31,6 +31,8 @@
 | [18-plan.md](./18-plan.md) | O0–O3 任务卡（已完成） |
 | [19-taskbar-audio-indicator.md](./19-taskbar-audio-indicator.md) | 任务栏声音指示 + 一键静音（14.2+ Process Tap） |
 | [19-plan.md](./19-plan.md) | A0–A4 任务卡（已完成） |
+| [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md) | 任务栏「无窗仍运行」芯片（主屏 RunningNoWindow） |
+| [20-plan.md](./20-plan.md) | N0–N3 任务卡 |
 
 ## 产品定位
 

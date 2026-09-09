@@ -640,6 +640,23 @@
     }
 }
 
+- (void)drawDashedChip:(NSRect)rect
+                  fill:(NSColor *)fill
+                stroke:(NSColor *)stroke
+           strokeWidth:(CGFloat)strokeWidth {
+    CGFloat radius = 8.0;
+    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:rect xRadius:radius yRadius:radius];
+    [fill setFill];
+    [path fill];
+    if (stroke && strokeWidth > 0.0) {
+        [stroke setStroke];
+        path.lineWidth = strokeWidth;
+        CGFloat pattern[] = {3.5, 2.5};
+        [path setLineDash:pattern count:2 phase:0];
+        [path stroke];
+    }
+}
+
 - (void)drawAudioBadgeForItem:(MLTaskbarItem *)item iconRect:(NSRect)iconRect {
     if (!item || item.audioState == MLTaskbarAudioNone) {
         return;
@@ -788,7 +805,14 @@
             [ph fill];
             continue;
         }
-        if (isActive) {
+
+        BOOL noWindow = (item.kind == MLTaskbarItemRunningNoWindow);
+        CGFloat contentFrac = noWindow ? 0.60 : 1.0;
+        if (noWindow) {
+            NSColor *noWinFill = [NSColor colorWithCalibratedRed:1.0 green:1.0 blue:1.0 alpha:0.72];
+            NSColor *noWinStroke = [NSColor colorWithCalibratedRed:0.70 green:0.74 blue:0.80 alpha:0.90];
+            [self drawDashedChip:chip fill:noWinFill stroke:noWinStroke strokeWidth:1.25];
+        } else if (isActive) {
             [self drawRoundedChip:chip
                              fill:chipActiveFill
                            stroke:chipActiveStroke
@@ -814,11 +838,11 @@
             [icon drawInRect:iconRect
                     fromRect:NSZeroRect
                    operation:NSCompositingOperationSourceOver
-                    fraction:1.0
+                    fraction:contentFrac
               respectFlipped:YES
                        hints:nil];
         } else {
-            [[NSColor colorWithCalibratedRed:0.82 green:0.85 blue:0.90 alpha:1.0] setFill];
+            [[NSColor colorWithCalibratedRed:0.82 green:0.85 blue:0.90 alpha:contentFrac] setFill];
             NSBezierPath *ph = [NSBezierPath bezierPathWithRoundedRect:iconRect xRadius:6.0 yRadius:6.0];
             [ph fill];
         }
@@ -829,8 +853,16 @@
                                       NSMaxX(chip) - (NSMaxX(iconRect) + 6.0) - 8.0,
                                       14.0);
         if (titleRect.size.width > 8.0 && item.title.length > 0) {
-            NSDictionary *attrs = isActive ? activeTitleAttrs : titleAttrs;
-            [item.title drawInRect:titleRect withAttributes:attrs];
+            NSDictionary *baseAttrs = (isActive && !noWindow) ? activeTitleAttrs : titleAttrs;
+            if (noWindow) {
+                NSMutableDictionary *muted = [baseAttrs mutableCopy];
+                NSColor *c = titleIdle;
+                muted[NSForegroundColorAttributeName] =
+                    [c colorWithAlphaComponent:0.60];
+                [item.title drawInRect:titleRect withAttributes:muted];
+            } else {
+                [item.title drawInRect:titleRect withAttributes:baseAttrs];
+            }
         }
     }
 }
@@ -863,16 +895,28 @@
                        hints:nil];
         }
     } else {
+        BOOL noWindow = (item.kind == MLTaskbarItemRunningNoWindow);
         NSRect chip = NSMakeRect(0, 3.0, cell.size.width, cell.size.height - 6.0);
         NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:chip xRadius:8.0 yRadius:8.0];
-        [[NSColor colorWithCalibratedRed:1.0 green:1.0 blue:1.0 alpha:0.92] setFill];
-        [path fill];
+        if (noWindow) {
+            [[NSColor colorWithCalibratedRed:1.0 green:1.0 blue:1.0 alpha:0.72] setFill];
+            [path fill];
+            [[NSColor colorWithCalibratedRed:0.70 green:0.74 blue:0.80 alpha:0.90] setStroke];
+            path.lineWidth = 1.25;
+            CGFloat pattern[] = {3.5, 2.5};
+            [path setLineDash:pattern count:2 phase:0];
+            [path stroke];
+        } else {
+            [[NSColor colorWithCalibratedRed:1.0 green:1.0 blue:1.0 alpha:0.92] setFill];
+            [path fill];
+        }
         NSRect iconRect = NSMakeRect(6.0, (cell.size.height - self.iconSize) * 0.5, self.iconSize, self.iconSize);
+        CGFloat frac = noWindow ? 0.60 : 0.92;
         if (icon) {
             [icon drawInRect:iconRect
                     fromRect:NSZeroRect
                    operation:NSCompositingOperationSourceOver
-                    fraction:0.92
+                    fraction:frac
               respectFlipped:YES
                        hints:nil];
         }
@@ -884,7 +928,10 @@
             NSDictionary *attrs = @{
                 NSFontAttributeName : [NSFont systemFontOfSize:11.0 weight:NSFontWeightMedium],
                 NSForegroundColorAttributeName :
-                    [NSColor colorWithCalibratedRed:0.122 green:0.161 blue:0.216 alpha:0.9],
+                    [NSColor colorWithCalibratedRed:0.122
+                                               green:0.161
+                                                blue:0.216
+                                               alpha:noWindow ? 0.55 : 0.9],
             };
             [item.title drawInRect:titleRect withAttributes:attrs];
         }
@@ -981,7 +1028,10 @@
         self.dragSourceIndex = -1;
         return;
     }
-    self.dragTracking = [self allowsDragNow];
+    MLTaskbarItem *hitItem = self.items[(NSUInteger)idx];
+    /* RunningNoWindow: click to activate/open only — no reorder (order is rebuild-derived). */
+    BOOL allowDrag = [self allowsDragNow] && hitItem.kind != MLTaskbarItemRunningNoWindow;
+    self.dragTracking = allowDrag;
     self.dragActive = NO;
     self.dragSourceIndex = idx;
     self.dragStartPoint = p;
@@ -1123,6 +1173,7 @@
     } else if (idx >= 0) {
         MLTaskbarItem *chip = self.items[(NSUInteger)idx];
         flags.hasWindow = (chip.kind == MLTaskbarItemRunningWindow && chip.windowID != 0);
+        flags.canQuitProcess = (chip.kind == MLTaskbarItemRunningNoWindow && chip.pid > 0);
         flags.minimized = chip.minimized;
         flags.pinned = chip.pinned;
         flags.fullscreenSupported = flags.hasWindow;
@@ -1132,9 +1183,10 @@
 
     if (idx >= 0) {
         BOOL winOK = flags.hasWindow && AXIsProcessTrusted();
+        BOOL closeOK = winOK || flags.canQuitProcess;
         [menu addItem:[self menuItemWithTitle:[MLStrings t:@"taskbar.close"]
                                        action:MLTaskbarMenuActionClose
-                                      enabled:winOK]];
+                                      enabled:closeOK]];
         NSString *minTitle = flags.minimized ? [MLStrings t:@"taskbar.restore"]
                                              : [MLStrings t:@"taskbar.minimize"];
         [menu addItem:[self menuItemWithTitle:minTitle

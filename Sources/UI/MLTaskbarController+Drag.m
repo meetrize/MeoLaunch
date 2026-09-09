@@ -454,6 +454,9 @@
     if (!source.barView || !target.barView || !item) {
         return;
     }
+    if (item.kind != MLTaskbarItemRunningWindow) {
+        return;
+    }
 
     BOOL sameBar = (source == target);
     NSInteger winStart = [target.barView zoneStartIndex:MLTaskbarChipZoneWindow];

@@ -462,23 +462,25 @@
  * Keep an off-screen lastSeen window as a minimized chip?
  * - AXMinimized → yes
  * - Still in kAXWindows but not on-screen → yes (MeoFind parks without AXMinimized)
- * - AX empty/unavailable for PID + substantial cached frame → yes (best-effort)
- * Closed WeChat chats typically linger in CG but drop out of AX → rejected when axAlive nonempty.
+ * - AX query failed / unavailable → best-effort keep substantial cached frame
+ * - AX succeeded with empty (or wid absent) → closed; do NOT keep (Activity Monitor, etc.)
+ * Closed WeChat chats linger in CG but drop out of AX → rejected when ax lists siblings.
  */
 - (BOOL)shouldKeepOffscreenCached:(MLTaskbarWindowInfo *)cached
                          windowID:(NSNumber *)widNum
                             axMin:(NSSet<NSNumber *> *)axMin
-                          axAlive:(NSSet<NSNumber *> *)axAlive {
+                          axAlive:(NSSet<NSNumber *> *)axAlive
+                        axQueryOK:(BOOL)axQueryOK {
     if (!widNum) {
         return NO;
     }
     if (axMin && [axMin containsObject:widNum]) {
         return YES;
     }
-    if (axAlive.count > 0 && [axAlive containsObject:widNum]) {
+    if (axAlive && [axAlive containsObject:widNum]) {
         return YES;
     }
-    if (axAlive.count == 0 && cached) {
+    if (!axQueryOK && cached) {
         CGRect b = cached.bounds;
         if (b.size.width >= 100.0 && b.size.height >= 80.0) {
             return YES;
@@ -547,6 +549,7 @@
 
     NSMutableDictionary<NSNumber *, NSSet<NSNumber *> *> *axMinByPid = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSNumber *, NSSet<NSNumber *> *> *axAliveByPid = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *, NSNumber *> *axOKByPid = [NSMutableDictionary dictionary];
 
     for (NSNumber *widNum in self.lastSeenWindows.allKeys) {
         if (windows.count >= cap) {
@@ -587,12 +590,20 @@
             axMin = axMinByPid[pidKey];
         }
         NSSet<NSNumber *> *axAlive = axAliveByPid[pidKey];
+        BOOL axOK = axOKByPid[pidKey] != nil ? axOKByPid[pidKey].boolValue : NO;
         if (!axAlive) {
-            axAlive = [self axAllWindowIDsForPID:cached.pid];
+            BOOL qok = NO;
+            axAlive = [self axAllWindowIDsForPID:cached.pid queryOK:&qok];
             axAliveByPid[pidKey] = axAlive ?: [NSSet set];
+            axOKByPid[pidKey] = @(qok);
             axAlive = axAliveByPid[pidKey];
+            axOK = qok;
         }
-        if (![self shouldKeepOffscreenCached:cached windowID:widNum axMin:axMin axAlive:axAlive]) {
+        if (![self shouldKeepOffscreenCached:cached
+                                    windowID:widNum
+                                       axMin:axMin
+                                     axAlive:axAlive
+                                   axQueryOK:axOK]) {
             continue;
         }
 
@@ -644,8 +655,10 @@
         }
         NSSet<NSNumber *> *axAlive = axAliveByPid[pidKey];
         if (!axAlive) {
-            axAlive = [self axAllWindowIDsForPID:pid];
+            BOOL qok = NO;
+            axAlive = [self axAllWindowIDsForPID:pid queryOK:&qok];
             axAliveByPid[pidKey] = axAlive ?: [NSSet set];
+            axOKByPid[pidKey] = @(qok);
             axAlive = axAliveByPid[pidKey];
         }
         /* New discoveries require AX proof — never invent from CG alone. */
@@ -804,12 +817,23 @@
     }
 }
 - (NSSet<NSNumber *> *)axAllWindowIDsForPID:(pid_t)pid {
+    BOOL ok = NO;
+    return [self axAllWindowIDsForPID:pid queryOK:&ok];
+}
+
+- (NSSet<NSNumber *> *)axAllWindowIDsForPID:(pid_t)pid queryOK:(BOOL *)outOK {
+    if (outOK) {
+        *outOK = NO;
+    }
     if (pid <= 0 || !AXIsProcessTrusted()) {
         return [NSSet set];
     }
     CFArrayRef axWindows = [self axWindowsArrayForPID:pid];
     if (!axWindows) {
         return [NSSet set];
+    }
+    if (outOK) {
+        *outOK = YES;
     }
     NSMutableSet<NSNumber *> *out = [NSMutableSet set];
     CFIndex count = CFArrayGetCount(axWindows);
@@ -850,10 +874,12 @@
 
     NSMutableSet<MLTaskbarWindowInfo *> *drop = [NSMutableSet set];
     for (NSNumber *pidNum in byPid) {
-        NSSet<NSNumber *> *axIDs = [self axAllWindowIDsForPID:(pid_t)pidNum.intValue];
-        if (axIDs.count == 0) {
-            continue; /* AX gave nothing — don't purge */
+        BOOL axOK = NO;
+        NSSet<NSNumber *> *axIDs = [self axAllWindowIDsForPID:(pid_t)pidNum.intValue queryOK:&axOK];
+        if (!axOK) {
+            continue; /* AX failed — don't purge */
         }
+        /* Empty AX list with successful query → all CG-only rows for this pid are ghosts. */
         for (MLTaskbarWindowInfo *w in byPid[pidNum]) {
             if (![axIDs containsObject:@(w.windowID)]) {
                 [drop addObject:w];
@@ -963,6 +989,7 @@
                      onScreenIDs:(NSSet<NSNumber *> *)onScreenIDs {
     NSMutableDictionary<NSNumber *, NSSet<NSNumber *> *> *axMinByPid = [NSMutableDictionary dictionary];
     NSMutableDictionary<NSNumber *, NSSet<NSNumber *> *> *axAliveByPid = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *, NSNumber *> *axOKByPid = [NSMutableDictionary dictionary];
     NSArray<NSNumber *> *keys = self.lastSeenWindows.allKeys;
     for (NSNumber *key in keys) {
         if ([self.softState isSoftHiddenWindowID:(CGWindowID)key.unsignedIntValue]) {
@@ -986,13 +1013,21 @@
             axMin = axMinByPid[pidKey];
         }
         NSSet<NSNumber *> *axAlive = axAliveByPid[pidKey];
+        BOOL axOK = axOKByPid[pidKey] != nil ? axOKByPid[pidKey].boolValue : NO;
         if (!axAlive) {
-            axAlive = [self axAllWindowIDsForPID:cached.pid];
+            BOOL qok = NO;
+            axAlive = [self axAllWindowIDsForPID:cached.pid queryOK:&qok];
             axAliveByPid[pidKey] = axAlive ?: [NSSet set];
+            axOKByPid[pidKey] = @(qok);
             axAlive = axAliveByPid[pidKey];
+            axOK = qok;
         }
         if (stillInCG &&
-            [self shouldKeepOffscreenCached:cached windowID:key axMin:axMin axAlive:axAlive]) {
+            [self shouldKeepOffscreenCached:cached
+                                  windowID:key
+                                     axMin:axMin
+                                   axAlive:axAlive
+                                 axQueryOK:axOK]) {
             continue;
         }
         if (!stillInCG && [axMin containsObject:key]) {

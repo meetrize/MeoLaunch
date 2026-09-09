@@ -69,7 +69,8 @@ MeoLaunch 三项经 `weak id<MLTaskbarAppActions> appActions` 注入（`showAbou
 - 用芯片 `windowID` 找 `AXUIElement`（复用 `copyAXWindowForItem:`）。
 - 优先 `AXUIElementPerformAction(win, kAXCloseAction)`；失败再试关闭按钮 Press。
 - soft-hidden：**先 deminiaturize / alpha=1，再 Close**，避免幽灵 soft 记录。
-- `PinnedOnly` / 无窗：菜单项禁用。
+- `PinnedOnly`：菜单项禁用。
+- `RunningNoWindow`：**启用**；结束该进程（`terminate`，失败则 `forceTerminate`）。
 
 ### 3.2 最小化 / 还原（切换）
 
@@ -78,7 +79,7 @@ MeoLaunch 三项经 `weak id<MLTaskbarAppActions> appActions` 注入（`showAbou
 | soft-hidden 或 `item.minimized` | 还原 | `raiseAndFocusWindowForItem:` |
 | 可见 | 最小化 | `softMinimizeItem:`（与左键/黄钮同管线） |
 
-`PinnedOnly`：禁用。不要另写一套隐藏逻辑。
+`PinnedOnly` / `RunningNoWindow`：禁用。不要另写一套隐藏逻辑。
 
 ### 3.3 全屏
 
@@ -86,7 +87,7 @@ MeoLaunch 三项经 `weak id<MLTaskbarAppActions> appActions` 注入（`showAbou
 - 未全屏 →「进入全屏」；已全屏 →「退出全屏」。
 - 不支持或读失败：禁用。
 - 进入系统全屏后任务栏按现有逻辑 `hidden`，属预期。
-- `PinnedOnly` / 无 AX：禁用。
+- `PinnedOnly` / `RunningNoWindow` / 无 AX：禁用。
 
 ### 3.4 钉住
 

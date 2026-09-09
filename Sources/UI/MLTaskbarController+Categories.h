@@ -166,6 +166,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)readFullscreenForAXWindow:(AXUIElementRef)win;
 - (BOOL)canReadFullscreenForAXWindow:(AXUIElementRef)win;
 - (void)closeWindowForItem:(MLTaskbarItem *)item;
+- (void)terminateProcessForItem:(MLTaskbarItem *)item;
 - (void)toggleMinimizeForItem:(MLTaskbarItem *)item;
 - (void)toggleFullscreenForItem:(MLTaskbarItem *)item;
 - (void)toggleAudioMuteForItem:(MLTaskbarItem *)item;

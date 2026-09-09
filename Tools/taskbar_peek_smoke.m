@@ -46,6 +46,16 @@ static MLTaskbarItem *WindowChip(CGWindowID wid, BOOL minimized) {
     return it;
 }
 
+static MLTaskbarItem *NoWindowChip(void) {
+    MLTaskbarItem *it = [[MLTaskbarItem alloc] init];
+    it.kind = MLTaskbarItemRunningNoWindow;
+    it.windowID = 0;
+    it.path = @"/Applications/Ghost.app";
+    it.pid = 9999;
+    it.title = @"Ghost";
+    return it;
+}
+
 static MLTaskbarScreenBar *Bar(NSNumber *sid, NSArray<MLTaskbarItem *> *items) {
     MLTaskbarScreenBar *bar = [[MLTaskbarScreenBar alloc] init];
     bar.screenID = sid;
@@ -128,6 +138,24 @@ static void test_passiveMinimizeAllState(void) {
     SetSnapshot(tb, @[]);
     Assert([tb shouldIgnoreDesktopRevealBecauseAllMinimized],
            "all closed (no live windows) → ignore auto peek");
+}
+
+static void test_noWindowExcludedFromWindowChipCount(void) {
+    MLTaskbarController *tb = FreshController();
+    MLTaskbarItem *pin = [[MLTaskbarItem alloc] init];
+    pin.kind = MLTaskbarItemPinnedOnly;
+    pin.path = @"/Applications/Pin.app";
+    pin.pinned = YES;
+    NSArray *items = @[ pin, WindowChip(10, NO), NoWindowChip(), NoWindowChip() ];
+    Assert([tb windowChipCountInItems:items] == 1,
+           "RunningNoWindow must not count as window chips");
+    tb.bars = [NSMutableArray arrayWithObject:Bar(@1, items)];
+    Assert([tb windowChipCountOnBar:tb.bars.firstObject] == 1,
+           "bar windowChipCount ignores NoWindow");
+    tb.bars = [NSMutableArray arrayWithObject:Bar(@1, @[ NoWindowChip() ])];
+    SetSnapshot(tb, @[]);
+    Assert([tb shouldIgnoreDesktopRevealBecauseAllMinimized],
+           "NoWindow-only bar still ignores auto peek when no live windows");
 }
 
 static void test_userArmedBypassesIgnore(void) {
@@ -452,6 +480,7 @@ int main(int argc, const char *argv[]) {
     @autoreleasepool {
         test_boundsClearlyOnAScreen();
         test_passiveMinimizeAllState();
+        test_noWindowExcludedFromWindowChipCount();
         test_userArmedBypassesIgnore();
         test_looksLikeNeverOnPassiveMinimize();
         test_liveOnScreenBlocksLooksLike();
@@ -471,7 +500,7 @@ int main(int argc, const char *argv[]) {
         test_unfreezeRestoresNormalFrame();
 
         if (g_failures == 0) {
-            printf("taskbar_peek_smoke OK (%d assertions)\n", 18);
+            printf("taskbar_peek_smoke OK (%d assertions)\n", 19);
             return 0;
         }
         fprintf(stderr, "taskbar_peek_smoke FAILED (%d failures)\n", g_failures);

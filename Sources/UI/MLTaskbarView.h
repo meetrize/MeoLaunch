@@ -53,6 +53,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 /** Live flags for context menu (read at popup time). index < 0 = empty bar. */
 @interface MLTaskbarMenuFlags : NSObject
 @property (nonatomic, assign) BOOL hasWindow;
+/** RunningNoWindow chip — Close should quit the process. */
+@property (nonatomic, assign) BOOL canQuitProcess;
 @property (nonatomic, assign) BOOL minimized;
 @property (nonatomic, assign) BOOL fullscreen;
 @property (nonatomic, assign) BOOL fullscreenSupported;

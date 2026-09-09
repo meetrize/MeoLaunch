@@ -580,13 +580,24 @@
     return NO;
 }
 - (void)activateOrLaunchItem:(MLTaskbarItem *)item {
-    if (item.kind == MLTaskbarItemPinnedOnly) {
+    if (item.kind == MLTaskbarItemPinnedOnly ||
+        item.kind == MLTaskbarItemRunningNoWindow) {
         [self activateApplicationForItem:item];
         [self openApplicationAtPath:item.path];
         return;
     }
 
     if (item.pid > 0 || item.path.length > 0) {
+        /* Dead/ghost window chip: AX has no windows → open a new one (Activity Monitor etc.). */
+        if (item.kind == MLTaskbarItemRunningWindow &&
+            item.pid > 0 &&
+            AXIsProcessTrusted() &&
+            ![self processHasAXWindows:item.pid]) {
+            [self activateApplicationForItem:item];
+            [self openApplicationAtPath:item.path];
+            return;
+        }
+
         BOOL softRestore = [self isItemSoftHiddenOrMinimized:item];
         if (softRestore) {
             if (self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed) {
@@ -636,6 +647,28 @@
 
     [self openApplicationAtPath:item.path];
 }
+
+- (BOOL)processHasAXWindows:(pid_t)pid {
+    if (pid <= 0 || !AXIsProcessTrusted()) {
+        return YES; /* unknown — don't force open */
+    }
+    AXUIElementRef appRef = AXUIElementCreateApplication(pid);
+    if (!appRef) {
+        return YES;
+    }
+    CFTypeRef windowsRef = NULL;
+    AXError err = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef);
+    CFRelease(appRef);
+    if (err != kAXErrorSuccess || !windowsRef || CFGetTypeID(windowsRef) != CFArrayGetTypeID()) {
+        if (windowsRef) {
+            CFRelease(windowsRef);
+        }
+        return YES;
+    }
+    CFIndex count = CFArrayGetCount((CFArrayRef)windowsRef);
+    CFRelease(windowsRef);
+    return count > 0;
+}
 - (void)taskbarView:(MLTaskbarView *)view didClickItemAtIndex:(NSInteger)index {
     if (index < 0 || index >= (NSInteger)view.items.count) {
         return;
@@ -654,7 +687,11 @@
     if (!self.audioIndicatorEnabled) {
         return;
     }
-    if (!item || item.kind != MLTaskbarItemRunningWindow || item.pid <= 0) {
+    if (!item || item.pid <= 0) {
+        return;
+    }
+    if (item.kind != MLTaskbarItemRunningWindow &&
+        item.kind != MLTaskbarItemRunningNoWindow) {
         return;
     }
     if (!self.audioMute || ![MLAppAudioMuteController isAvailable]) {
@@ -715,6 +752,7 @@
         return;
     }
     flags.hasWindow = NO;
+    flags.canQuitProcess = NO;
     flags.minimized = NO;
     flags.fullscreen = NO;
     flags.fullscreenSupported = NO;
@@ -727,8 +765,11 @@
     MLTaskbarItem *item = view.items[(NSUInteger)index];
     flags.pinned = item.pinned;
     flags.hasWindow = (item.kind == MLTaskbarItemRunningWindow && item.windowID != 0);
+    flags.canQuitProcess = (item.kind == MLTaskbarItemRunningNoWindow && item.pid > 0);
     flags.minimized = [self isItemSoftHiddenOrMinimized:item];
-    if (item.kind == MLTaskbarItemRunningWindow && item.pid > 0 &&
+    BOOL audioCapable = (item.kind == MLTaskbarItemRunningWindow ||
+                         item.kind == MLTaskbarItemRunningNoWindow);
+    if (audioCapable && item.pid > 0 &&
         self.audioIndicatorEnabled &&
         self.audioMute && [MLAppAudioMuteController isAvailable]) {
         flags.audioMuteAvailable = (item.audioState != MLTaskbarAudioNone) ||
@@ -754,7 +795,14 @@
     }
 }
 - (void)closeWindowForItem:(MLTaskbarItem *)item {
-    if (!item || item.windowID == 0 || !AXIsProcessTrusted()) {
+    if (!item) {
+        return;
+    }
+    if (item.kind == MLTaskbarItemRunningNoWindow) {
+        [self terminateProcessForItem:item];
+        return;
+    }
+    if (item.windowID == 0 || !AXIsProcessTrusted()) {
         return;
     }
     BOOL wasSoft = [self isItemSoftHiddenOrMinimized:item];
@@ -801,6 +849,49 @@
                        [weakSelf rebuildItemsImmediate:YES];
                    });
 }
+
+- (void)terminateProcessForItem:(MLTaskbarItem *)item {
+    if (!item || item.pid <= 0) {
+        return;
+    }
+    NSRunningApplication *app =
+        [NSRunningApplication runningApplicationWithProcessIdentifier:item.pid];
+    if ((!app || app.terminated) && item.path.length > 0) {
+        NSString *bid = [[NSBundle bundleWithPath:item.path] bundleIdentifier];
+        if (bid.length > 0) {
+            NSString *std = item.path.stringByStandardizingPath;
+            for (NSRunningApplication *candidate in
+                 [NSRunningApplication runningApplicationsWithBundleIdentifier:bid]) {
+                if (candidate.terminated) {
+                    continue;
+                }
+                NSString *cpath = candidate.bundleURL.path.stringByStandardizingPath;
+                if (std.length > 0 && [cpath isEqualToString:std]) {
+                    app = candidate;
+                    break;
+                }
+                if (!app || app.terminated) {
+                    app = candidate;
+                }
+            }
+        }
+    }
+    if (!app || app.terminated) {
+        NSLog(@"[Taskbar] quit process failed — no running app pid=%d path=%@",
+              (int)item.pid, item.path ?: @"");
+        return;
+    }
+    if (![app terminate]) {
+        [app forceTerminate];
+    }
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       [weakSelf.monitor pollNow];
+                       [weakSelf rebuildItemsImmediate:YES];
+                   });
+}
+
 - (void)toggleMinimizeForItem:(MLTaskbarItem *)item {
     if (!item || item.windowID == 0) {
         return;

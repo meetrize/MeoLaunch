@@ -37,6 +37,22 @@
     return [[NSBundle bundleWithPath:path] bundleIdentifier];
 }
 
+/** Finder is always-resident and replaced by MeoFind — never appear on the taskbar. */
+- (BOOL)isExcludedTaskbarAppPath:(NSString *)path {
+    if (path.length == 0) {
+        return NO;
+    }
+    NSString *bid = [self bundleIDForItemPath:path fallback:nil];
+    if ([bid isEqualToString:@"com.apple.finder"]) {
+        return YES;
+    }
+    NSString *std = path.stringByStandardizingPath.lowercaseString;
+    if ([std hasSuffix:@"/finder.app"] || [std isEqualToString:@"/system/library/coreServices/finder.app"]) {
+        return YES;
+    }
+    return NO;
+}
+
 - (void)applyAudioStateOntoItemArray:(NSArray<MLTaskbarItem *> *)items {
     for (MLTaskbarItem *it in items ?: @[]) {
         if (it.kind != MLTaskbarItemRunningWindow) {
@@ -184,6 +200,9 @@
     }
     NSString *selfBid = [NSBundle mainBundle].bundleIdentifier;
     if (selfBid.length > 0 && [front.bundleIdentifier isEqualToString:selfBid]) {
+        return 0;
+    }
+    if ([front.bundleIdentifier isEqualToString:@"com.apple.finder"]) {
         return 0;
     }
     pid_t pid = front.processIdentifier;
@@ -619,6 +638,9 @@
                               ? self.rebuildPassFrontmostWID
                               : [self frontmostTrackedWindowID];
     for (MLTaskbarWindowInfo *w in uniqueWindows) {
+        if ([self isExcludedTaskbarAppPath:w.path]) {
+            continue;
+        }
         NSString *display = [self displayNameForPath:w.path];
         NSString *title = w.title.length > 0 ? w.title : display;
         BOOL pinned = [self pinSet:pinSet containsPath:w.path];
@@ -662,10 +684,9 @@
 
     /*
      * Pinned launchers with no window chip on this screen stay at the leading
-     * edge (pin order). Do NOT gate on runningSet: Electron apps (Cursor, etc.)
-     * often keep a process alive after the last window closes — hiding the pin
-     * then makes the icon vanish. Show the bare icon whenever this screen has
-     * no window for that path; click will activate or open a new window.
+     * edge (pin order). On the main screen, pins that are still running with
+     * zero windows globally become RunningNoWindow (not bare PinnedOnly).
+     * Secondary screens keep bare PinnedOnly so the launcher remains clickable.
      */
     NSMutableSet<NSString *> *pathsWithWindows = [NSMutableSet set];
     for (MLTaskbarWindowInfo *w in uniqueWindows) {
@@ -677,13 +698,46 @@
             }
         }
     }
+
+    NSScreen *mainScreen = NSScreen.mainScreen;
+    NSScreen *barScreen = bar.window.screen ?: screen;
+    BOOL isMainBar = (mainScreen == nil) ||
+                     (barScreen == mainScreen) ||
+                     (barScreen && mainScreen && NSEqualRects(barScreen.frame, mainScreen.frame));
+    NSSet<NSString *> *pathsWithVisibleWindows = snap.pathsWithVisibleWindows ?: [NSSet set];
+    NSArray<NSString *> *runningPaths = snap.runningAppPaths ?: @[];
+
+    NSMutableSet<NSString *> *globalNoWindowKeys = [NSMutableSet set];
+    for (NSString *path in runningPaths) {
+        if (path.length == 0) {
+            continue;
+        }
+        if ([self pinSet:pathsWithVisibleWindows containsPath:path]) {
+            continue;
+        }
+        [globalNoWindowKeys addObject:path];
+        NSString *std = path.stringByStandardizingPath;
+        if (std.length > 0) {
+            [globalNoWindowKeys addObject:std];
+        }
+    }
+
     for (NSString *path in pins) {
         if (path.length == 0) {
+            continue;
+        }
+        if ([self isExcludedTaskbarAppPath:path]) {
             continue;
         }
         NSString *std = path.stringByStandardizingPath;
         if ([pathsWithWindows containsObject:path] ||
             (std.length > 0 && [pathsWithWindows containsObject:std])) {
+            continue;
+        }
+        if (isMainBar &&
+            ([globalNoWindowKeys containsObject:path] ||
+             (std.length > 0 && [globalNoWindowKeys containsObject:std]))) {
+            /* Represented as RunningNoWindow below. */
             continue;
         }
         pid_t pinPid = [self pidForPath:path snapshot:snap];
@@ -698,6 +752,84 @@
                                   seenOrder:0]];
     }
     [items addObjectsFromArray:windowItems];
+
+    if (isMainBar && globalNoWindowKeys.count > 0) {
+        enum { MLTaskbarMaxNoWindowEntries = 16 };
+        NSMutableArray<NSString *> *noWinPinned = [NSMutableArray array];
+        NSMutableArray<NSString *> *noWinUnpinned = [NSMutableArray array];
+        NSMutableSet<NSString *> *queued = [NSMutableSet set];
+
+        void (^queuePath)(NSString *, BOOL) = ^(NSString *path, BOOL preferPinnedList) {
+            if (path.length == 0) {
+                return;
+            }
+            NSString *std = path.stringByStandardizingPath;
+            if ([queued containsObject:path] ||
+                (std.length > 0 && [queued containsObject:std])) {
+                return;
+            }
+            if (![globalNoWindowKeys containsObject:path] &&
+                !(std.length > 0 && [globalNoWindowKeys containsObject:std])) {
+                return;
+            }
+            [queued addObject:path];
+            if (std.length > 0) {
+                [queued addObject:std];
+            }
+            if (preferPinnedList) {
+                [noWinPinned addObject:path];
+            } else {
+                [noWinUnpinned addObject:path];
+            }
+        };
+
+        for (NSString *path in pins) {
+            if ([self isExcludedTaskbarAppPath:path]) {
+                continue;
+            }
+            queuePath(path, YES);
+        }
+        for (NSString *path in runningPaths) {
+            if ([self isExcludedTaskbarAppPath:path]) {
+                continue;
+            }
+            if ([self pinSet:pinSet containsPath:path]) {
+                continue;
+            }
+            queuePath(path, NO);
+        }
+
+        NSMutableArray<NSString *> *selected = [NSMutableArray array];
+        for (NSString *path in noWinPinned) {
+            if (selected.count >= (NSUInteger)MLTaskbarMaxNoWindowEntries) {
+                break;
+            }
+            [selected addObject:path];
+        }
+        for (NSString *path in noWinUnpinned) {
+            if (selected.count >= (NSUInteger)MLTaskbarMaxNoWindowEntries) {
+                break;
+            }
+            [selected addObject:path];
+        }
+
+        for (NSString *path in selected) {
+            pid_t pid = [self pidForPath:path snapshot:snap];
+            BOOL pinned = [self pinSet:pinSet containsPath:path];
+            MLTaskbarItem *chip = [self itemWithPath:path
+                                                 pid:pid
+                                            windowID:0
+                                               title:[self displayNameForPath:path]
+                                                kind:MLTaskbarItemRunningNoWindow
+                                              pinned:pinned
+                                           minimized:NO
+                                              active:NO
+                                           seenOrder:0];
+            chip.bundleID = [self bundleIDForItemPath:path fallback:nil];
+            chip.audioState = [self audioStateForPID:pid bundleID:chip.bundleID appPath:path];
+            [items addObject:chip];
+        }
+    }
 
     items = [self fitItems:items toWidth:NSWidth(bar.barView.bounds) spacing:bar.barView.spacing
                     minWidth:bar.barView.itemMinWidth];
@@ -957,7 +1089,7 @@
     if (width < 32.0 || items.count == 0) {
         return items;
     }
-    /* Pinned-only slots are bare icons (~iconSize+4); window chips use minW. */
+    /* Pinned-only slots are bare icons (~iconSize+4); window/NoWindow chips use minW. */
     CGFloat pinnedW = 36.0;
     CGFloat avail = width - 6.0;
     while (items.count > 0) {

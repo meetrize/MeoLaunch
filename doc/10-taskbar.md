@@ -1,8 +1,9 @@
 # 10 — 底部任务栏（设计方案 + 开发计划）
 
-> 在 MeoLaunch 上增加 Windows 风格的轻量任务栏：**每屏一条**，只显示该屏上的窗口，**图标旁显示标题**，支持钉住。**不显示**仅有进程、无窗口的应用。原则是尽量节约内存。
+> 在 MeoLaunch 上增加 Windows 风格的轻量任务栏：**每屏一条**，以该屏窗口芯片为主，**图标旁显示标题**，支持钉住。  
+> **扩展（N-Plan）**：全局无窗但仍在跑的 Regular 应用，仅在**主屏**显示一条 `RunningNoWindow`（样式区分于有窗芯片）。见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md)。
 
-相关实现任务卡见 [07-agent-playbook.md](./07-agent-playbook.md)（T0–T5）。
+相关实现任务卡见 [07-agent-playbook.md](./07-agent-playbook.md)（T0–T5）；无窗运行态见 [20-plan.md](./20-plan.md)。
 
 ---
 
@@ -15,11 +16,12 @@
 | 常驻底栏 | **每块显示器**底部各一条任务栏 |
 | 按屏过滤 | 每条任务栏**只显示落在该显示器上的窗口**；钉住且未运行的启动器可在各屏显示 |
 | 图标 + 标题 | 每个条目绘制 **小图标 + 截断标题**（见 §4 显示单元） |
-| 状态色 | 有可见窗口 / 仅钉住未运行，视觉区分（**不展示「仅有进程无窗口」**） |
-| 左键 | 窗口芯片：未激活→前置；已最前→软最小化；已最小化→还原几何。钉住未运行→启动 |
+| 状态色 | 有可见窗口 / 无窗仍运行 / 仅钉住未运行，视觉区分 |
+| 左键 | 窗口芯片：未激活→前置；已最前→软最小化；已最小化→还原几何。钉住未运行 / 无窗仍运行→启动或开新窗 |
 | 右键 | 见 [11-taskbar-context-menu.md](./11-taskbar-context-menu.md)：关闭 / 最小化↔还原 / 全屏 / 钉住 / MeoLaunch▸ |
 | 持久化 | 钉住列表写入 `taskbar_pins.json`（仅 path） |
 | 声音指示（扩展） | macOS 14.2+：出声应用芯片显示喇叭；点角标 / 右键静音。设计见 [19-taskbar-audio-indicator.md](./19-taskbar-audio-indicator.md) |
+| 无窗仍运行（扩展） | Regular 进程在、全局无窗芯片 → **主屏**一条淡化虚线芯片。设计见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md) |
 
 ### 非目标（明确不做）
 
@@ -29,7 +31,7 @@
 - Accessibility 窗口树 / 私有 Dock API
 - 复用 Launchpad 的 128px `MLIconCache` 作为任务栏常驻图标
 - 为标题单独引入 `NSTextField` 树或 attributed string 缓存池
-- **仅有进程、无可见窗口的应用**（不进入任务栏）
+- 次屏重复展示无窗仍运行芯片（仅主屏一条）
 
 ---
 
@@ -105,13 +107,14 @@ Sources/App/
 
 ### 4.1 显示单元（产品语义）
 
-任务栏条目以 **「该显示器上的可见窗口」为主**；**不显示**仅有进程、无可见窗口的应用。
+任务栏条目以 **「该显示器上的可见窗口」为主**；**主屏**额外显示全局无窗但仍在跑的 Regular 应用（`RunningNoWindow`）。
 
 | 情况 | 条目数 | 图标 | 标题文案 | 出现在哪条栏 |
 |------|--------|------|----------|--------------|
 | App 在本屏有 N 个可见窗口 | N 格 | app icon | 窗口标题（空则显示名） | **仅该窗口所在屏** |
-| 运行中但无可见窗口 | **不显示** | — | — | — |
-| 仅钉住、未运行 | 1 格 | app icon | 应用显示名 | **各屏任务栏都可显示**（启动器） |
+| 运行中但全局无窗（含 soft-min/最小化芯片皆无） | 1 格 | app icon（淡化） | 应用显示名 | **仅主屏**（`RunningNoWindow`） |
+| 仅钉住、未运行 | 1 格 | 裸 app icon | — | **各屏任务栏**（启动器） |
+| 钉住 + 运行中无窗 | 1 格 | 淡化芯片 | 应用显示名 | **主屏** NoWindow；**次屏** 仍为裸 Pin |
 
 窗口归属屏：与 `NSScreen.frame` 相交面积最大者；跨屏窗口归到面积最大的那块屏。
 
@@ -128,8 +131,8 @@ enum {
 };
 
 typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
-    MLTaskbarItemPinnedOnly = 0,   /* 钉住且未运行 */
-    MLTaskbarItemRunningNoWindow,  /* 保留枚举；UI 不再产出此类条目 */
+    MLTaskbarItemPinnedOnly = 0,   /* 钉住且未运行（或次屏无窗启动器） */
+    MLTaskbarItemRunningNoWindow,  /* 进程在、全局无窗；仅主屏产出 */
     MLTaskbarItemRunningWindow,    /* 对应一个可见窗口 */
 };
 
@@ -146,20 +149,21 @@ typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
 
 ### 4.3 合并规则（每屏独立 rebuild）
 
-1. **钉住且未运行**：本屏显示 1 条 `PinnedOnly`。
-2. **钉住且本屏有窗口**：只显示本屏窗口条（`pinned=YES`）；若进程在跑但本屏无窗口 → **本屏不显示**。
+1. **钉住且本屏无窗口**：`PinnedOnly`；**例外（仅主屏）**：若 path ∈ `runningAppPaths ∖ pathsWithVisibleWindows` → 跳过 Pin，改由 `RunningNoWindow`（`pinned=YES`）。
+2. **钉住且本屏有窗口**：只显示本屏窗口条（`pinned=YES`）。
 3. **未钉住的本屏窗口**：追加窗口条。
-4. **永不添加** `RunningNoWindow` / 其它屏上的窗口。
-5. 过滤：自身 `MeoLaunch`；仅 Regular；忽略 layer≠0、零面积、系统 UI。
+4. **主屏追加** `RunningNoWindow`（全局无窗的 Regular path；硬顶 16；钉住优先）。次屏与其它屏窗口不追加 NoWindow。
+5. 过滤：自身 `MeoLaunch`；**访达 Finder**（常驻且由 MeoFind 替代）；仅 Regular；忽略 layer≠0、零面积、系统 UI。
 
-顺序：先钉住相关（pin 顺序），再未钉住本屏窗口。
+顺序：先 Pin 区，再本屏窗口芯片，再（主屏）无窗运行芯片。细节见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md)。
 
 ### 4.4 视觉约定
 
 | kind | 图标 | 标题 | 指示 |
 |------|------|------|------|
-| `PinnedOnly` | alpha ≈ 0.55 | 同 alpha | 无或淡点 |
-| `RunningWindow` | 正常 | 正常 | 强调底条 |
+| `PinnedOnly` | 裸图标（满色） | 无 | — |
+| `RunningNoWindow` | alpha ≈ 0.55–0.65 | 同 alpha（显示名） | 淡 fill + 虚线描边 |
+| `RunningWindow` | 正常 | 正常 | 实心芯片 / active 强调 |
 
 布局（单格）：
 

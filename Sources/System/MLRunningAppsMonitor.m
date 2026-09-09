@@ -75,8 +75,14 @@ const MLPollOptions MLPollOptionsFast =
         return NO;
     }
     NSString *bid = app.bundleIdentifier;
-    if (bid.length > 0 && [bid isEqualToString:self.selfBundleID]) {
-        return NO;
+    if (bid.length > 0) {
+        if ([bid isEqualToString:self.selfBundleID]) {
+            return NO;
+        }
+        /* Finder is always-resident; MeoLaunch replaces it with MeoFind — never taskbar chips. */
+        if ([bid isEqualToString:@"com.apple.finder"]) {
+            return NO;
+        }
     }
     NSURL *url = app.bundleURL;
     if (!url.path.length) {
