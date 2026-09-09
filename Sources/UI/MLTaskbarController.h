@@ -3,6 +3,7 @@
 #import <ApplicationServices/ApplicationServices.h>
 
 @class MLTaskbarPinStore;
+@class MLTaskbarHideStore;
 @class MLRunningAppsMonitor;
 @class MLIconCache;
 @class MLAudioActivityMonitor;
@@ -25,6 +26,7 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 @property (nonatomic, assign) BOOL audioIndicatorEnabled;
 
 - (instancetype)initWithPinStore:(MLTaskbarPinStore *)pins
+                       hideStore:(MLTaskbarHideStore *)hide
                          monitor:(MLRunningAppsMonitor *)monitor
                        iconCache:(MLIconCache *)icons;
 

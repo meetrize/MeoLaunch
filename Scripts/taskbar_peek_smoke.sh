@@ -46,6 +46,7 @@ SYSTEM_SOURCES=(
   "$ROOT/Sources/System/MLScreenGeometry.m"
   "$ROOT/Sources/System/MLIconCache.m"
   "$ROOT/Sources/System/MLTaskbarPinStore.m"
+  "$ROOT/Sources/System/MLTaskbarHideStore.m"
   "$ROOT/Sources/System/MLDebouncedSave.m"
   "$ROOT/Sources/System/MLAppLauncher.m"
   "$ROOT/Sources/System/MLAXWindowHelper.m"

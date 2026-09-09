@@ -1,0 +1,35 @@
+---
+description: 任务栏隐藏任务芯片 H-Plan 全自动开发（21-plan）
+globs:
+  - Sources/**
+  - Scripts/**
+  - doc/21*.md
+  - doc/20*.md
+alwaysApply: true
+---
+
+# MeoLaunch H-Plan（任务栏「隐藏任务芯片」）
+
+当仓库存在未完成的 `doc/21-plan.md` 任务卡时，**优先**执行 21-plan（高于已全部 done 的 20/19/18/17/16/15-plan）。
+
+## 触发语
+
+用户说「继续」「继续自动化」「全自动开发」「做 H 计划」「按 21-plan」「隐藏任务芯片」「HideChip」「显示任务芯片」等 → 立刻读 `doc/21-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+
+## 全自动协议
+
+1. 读 `doc/21-taskbar-hide-chip.md` 理解目标（若尚未读过）。
+2. **一次一卡**实现；跑该卡验收（至少 `./Scripts/build.sh`）。
+3. 把该卡 Status 改为 `done` 并写备注。
+4. **同一会话继续下一张 pending**，直到全部 `done`、验收失败需决策、或用户打断。
+5. 遵守 peek 不变量：`.cursor/rules/taskbar-peek-invariants.mdc`。
+6. 不引入第三方库；不改 `doc/00`–`doc/06` 正文（`00-overview` 索引表可以加链接）。
+7. 非用户明确要求不要 git commit / push。
+8. **有窗芯片永不因 hidden 丢弃**；仅抑制无窗时的 `RunningNoWindow` / `PinnedOnly`。
+9. 隐藏按 app path；不新增 item kind。
+
+## 目标摘要
+
+- 右键「隐藏任务芯片」：无窗时不占任务栏；有窗仍显示窗口芯片。
+- 有窗时右键「显示任务芯片」恢复无窗占位（NoWindow / Pin）。
+- 与钉住正交；持久化 `taskbar_hidden_chips.json`。

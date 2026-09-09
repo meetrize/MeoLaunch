@@ -41,6 +41,14 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Unpin",
             @"zh" : @"取消钉住",
         },
+        @"taskbar.hide_chip" : @{
+            @"en" : @"Hide Task Chip",
+            @"zh" : @"隐藏任务芯片",
+        },
+        @"taskbar.show_chip" : @{
+            @"en" : @"Show Task Chip",
+            @"zh" : @"显示任务芯片",
+        },
         @"taskbar.close" : @{
             @"en" : @"Close",
             @"zh" : @"关闭",

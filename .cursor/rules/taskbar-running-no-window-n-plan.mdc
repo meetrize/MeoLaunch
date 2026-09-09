@@ -10,11 +10,13 @@ alwaysApply: true
 
 # MeoLaunch N-Plan（任务栏「无窗仍运行」芯片）
 
-当仓库存在未完成的 `doc/20-plan.md` 任务卡时，**优先**执行 20-plan（高于已全部 done 的 19/18/17/16/15-plan）。
+当仓库存在未完成的 `doc/21-plan.md` 任务卡时，**优先**执行 21-plan；其次未完成的 `doc/20-plan.md`；都 done 后再看 19/18/…。
+
+当更高 Plan 全部 done、且仍有未完成的 `doc/20-plan.md` 任务卡时，再执行 20-plan；否则不要回到历史 N/A/… 里程碑抢队列。
 
 ## 触发语
 
-用户说「继续」「继续自动化」「全自动开发」「做 N 计划」「按 20-plan」「无窗运行」「RunningNoWindow」「无窗仍运行」等 → 立刻读 `doc/20-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+用户说「继续」「继续自动化」「全自动开发」「做 N 计划」「按 20-plan」「无窗运行」「RunningNoWindow」「无窗仍运行」等 → 若 21 仍有 pending，先跑 21；否则读 `doc/20-plan.md` 的 **Status**，执行第一个 `pending` 卡。
 
 ## 全自动协议
 

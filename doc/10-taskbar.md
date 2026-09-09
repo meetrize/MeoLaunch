@@ -1,9 +1,10 @@
 # 10 — 底部任务栏（设计方案 + 开发计划）
 
 > 在 MeoLaunch 上增加 Windows 风格的轻量任务栏：**每屏一条**，以该屏窗口芯片为主，**图标旁显示标题**，支持钉住。  
-> **扩展（N-Plan）**：全局无窗但仍在跑的 Regular 应用，仅在**主屏**显示一条 `RunningNoWindow`（样式区分于有窗芯片）。见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md)。
+> **扩展（N-Plan）**：全局无窗但仍在跑的 Regular 应用，仅在**主屏**显示一条 `RunningNoWindow`（样式区分于有窗芯片）。见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md)。  
+> **扩展（H-Plan）**：右键「隐藏任务芯片」后，该 app **无窗时不占位**；有窗仍显示窗口芯片。见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md)。
 
-相关实现任务卡见 [07-agent-playbook.md](./07-agent-playbook.md)（T0–T5）；无窗运行态见 [20-plan.md](./20-plan.md)。
+相关实现任务卡见 [07-agent-playbook.md](./07-agent-playbook.md)（T0–T5）；无窗运行态见 [20-plan.md](./20-plan.md)；隐藏芯片见 [21-plan.md](./21-plan.md)。
 
 ---
 
@@ -18,10 +19,11 @@
 | 图标 + 标题 | 每个条目绘制 **小图标 + 截断标题**（见 §4 显示单元） |
 | 状态色 | 有可见窗口 / 无窗仍运行 / 仅钉住未运行，视觉区分 |
 | 左键 | 窗口芯片：未激活→前置；已最前→软最小化；已最小化→还原几何。钉住未运行 / 无窗仍运行→启动或开新窗 |
-| 右键 | 见 [11-taskbar-context-menu.md](./11-taskbar-context-menu.md)：关闭 / 最小化↔还原 / 全屏 / 钉住 / MeoLaunch▸ |
-| 持久化 | 钉住列表写入 `taskbar_pins.json`（仅 path） |
+| 右键 | 见 [11-taskbar-context-menu.md](./11-taskbar-context-menu.md)：关闭 / 最小化↔还原 / 全屏 / 钉住 / 隐藏↔显示任务芯片 / MeoLaunch▸ |
+| 持久化 | 钉住列表写入 `taskbar_pins.json`（仅 path）；隐藏列表写入 `taskbar_hidden_chips.json` |
 | 声音指示（扩展） | macOS 14.2+：出声应用芯片显示喇叭；点角标 / 右键静音。设计见 [19-taskbar-audio-indicator.md](./19-taskbar-audio-indicator.md) |
 | 无窗仍运行（扩展） | Regular 进程在、全局无窗芯片 → **主屏**一条淡化虚线芯片。设计见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md) |
+| 隐藏任务芯片（扩展） | 无窗不显示 idle 芯片（NoWindow/Pin）；有窗仍显示。设计见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md) |
 
 ### 非目标（明确不做）
 
@@ -153,7 +155,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
 2. **钉住且本屏有窗口**：只显示本屏窗口条（`pinned=YES`）。
 3. **未钉住的本屏窗口**：追加窗口条。
 4. **主屏追加** `RunningNoWindow`（全局无窗的 Regular path；硬顶 16；钉住优先）。次屏与其它屏窗口不追加 NoWindow。
-5. 过滤：自身 `MeoLaunch`；**访达 Finder**（常驻且由 MeoFind 替代）；仅 Regular；忽略 layer≠0、零面积、系统 UI。
+5. **H-Plan**：若 path 已隐藏 **且** 全局无窗（∉ `pathsWithVisibleWindows`）→ **跳过**步骤 1/4 的 `PinnedOnly` / `RunningNoWindow`；步骤 2–3 的有窗芯片不受影响。见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md)。
+6. 过滤：自身 `MeoLaunch`；**访达 Finder**（常驻且由 MeoFind 替代）；仅 Regular；忽略 layer≠0、零面积、系统 UI。
 
 顺序：先 Pin 区，再本屏窗口芯片，再（主屏）无窗运行芯片。细节见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md)。
 

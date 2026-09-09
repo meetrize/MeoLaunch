@@ -28,6 +28,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
     MLTaskbarMenuActionMinimizeToggle,
     MLTaskbarMenuActionFullscreenToggle,
     MLTaskbarMenuActionPinToggle,
+    MLTaskbarMenuActionHideChipToggle,
     MLTaskbarMenuActionAudioMuteToggle,
     MLTaskbarMenuActionAbout,
     MLTaskbarMenuActionPreferences,
@@ -59,6 +60,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 @property (nonatomic, assign) BOOL fullscreen;
 @property (nonatomic, assign) BOOL fullscreenSupported;
 @property (nonatomic, assign) BOOL pinned;
+@property (nonatomic, assign) BOOL taskChipHidden;
+@property (nonatomic, assign) BOOL canToggleHideChip;
 @property (nonatomic, assign) BOOL audioMuteAvailable;
 @property (nonatomic, assign) BOOL audioMuted;
 @end

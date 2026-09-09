@@ -1204,6 +1204,11 @@
         [menu addItem:[self menuItemWithTitle:pinTitle
                                        action:MLTaskbarMenuActionPinToggle
                                       enabled:YES]];
+        NSString *hideTitle = flags.taskChipHidden ? [MLStrings t:@"taskbar.show_chip"]
+                                                   : [MLStrings t:@"taskbar.hide_chip"];
+        [menu addItem:[self menuItemWithTitle:hideTitle
+                                       action:MLTaskbarMenuActionHideChipToggle
+                                      enabled:flags.canToggleHideChip]];
         if (flags.audioMuteAvailable) {
             NSString *muteTitle = flags.audioMuted ? [MLStrings t:@"taskbar.audio.unmute"]
                                                    : [MLStrings t:@"taskbar.audio.mute"];

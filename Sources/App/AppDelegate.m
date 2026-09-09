@@ -16,6 +16,7 @@
 #import "MLTaskbarController.h"
 #import "MLIconCache.h"
 #import "MLTaskbarPinStore.h"
+#import "MLTaskbarHideStore.h"
 #import "MLTaskbarView.h"
 #import "MLAudioActivityMonitor.h"
 #import "MLAppAudioMuteController.h"
@@ -41,6 +42,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLLayoutStore *layoutStore;
 @property (nonatomic, strong) MLPrefsWindow *prefs;
 @property (nonatomic, strong) MLTaskbarPinStore *taskbarPins;
+@property (nonatomic, strong) MLTaskbarHideStore *taskbarHiddenChips;
 @property (nonatomic, strong) MLRunningAppsMonitor *runningApps;
 @property (nonatomic, strong) MLIconCache *taskbarIcons;
 @property (nonatomic, strong) MLAudioActivityMonitor *audioActivity;
@@ -85,6 +87,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.taskbarPins = [[MLTaskbarPinStore alloc] init];
     [self.taskbarPins loadFromDisk];
     self.overlay.pinStore = self.taskbarPins;
+    self.taskbarHiddenChips = [[MLTaskbarHideStore alloc] init];
+    [self.taskbarHiddenChips loadFromDisk];
     self.runningApps = [[MLRunningAppsMonitor alloc] init];
     self.taskbarIcons = [[MLIconCache alloc] init];
     self.taskbarIcons.maxEntries = 48;
@@ -92,6 +96,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.audioActivity = [[MLAudioActivityMonitor alloc] init];
     self.audioMute = [[MLAppAudioMuteController alloc] init];
     self.taskbar = [[MLTaskbarController alloc] initWithPinStore:self.taskbarPins
+                                                       hideStore:self.taskbarHiddenChips
                                                          monitor:self.runningApps
                                                        iconCache:self.taskbarIcons];
     self.taskbar.audioActivity = self.audioActivity;

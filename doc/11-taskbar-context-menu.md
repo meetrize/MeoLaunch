@@ -16,6 +16,7 @@
 进入全屏 / 退出全屏        ← 文案随 AXFullScreen 切换
 ────────
 钉住 / 取消钉住            ← 保留现有
+隐藏任务芯片 / 显示任务芯片 ← 见 §3.4b / [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md)
 ────────
 MeoLaunch ▸
     关于 MeoLaunch
@@ -54,6 +55,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
     MLTaskbarMenuActionMinimizeToggle,
     MLTaskbarMenuActionFullscreenToggle,
     MLTaskbarMenuActionPinToggle,
+    MLTaskbarMenuActionHideChipToggle,  /* 隐藏 / 显示任务芯片 */
     MLTaskbarMenuActionAbout,
     MLTaskbarMenuActionPreferences,
     MLTaskbarMenuActionQuit,
@@ -92,6 +94,13 @@ MeoLaunch 三项经 `weak id<MLTaskbarAppActions> appActions` 注入（`showAbou
 ### 3.4 钉住
 
 保持现有逻辑；放在窗口操作与 MeoLaunch 子菜单之间（分隔线）。
+
+### 3.4b 隐藏 / 显示任务芯片（H-Plan）
+
+- 未隐藏 →「隐藏任务芯片」；已隐藏 →「显示任务芯片」。
+- 按 app `path` 持久化（`taskbar_hidden_chips.json`）；与钉住正交。
+- **语义**：隐藏后，全局无窗时不产出 `RunningNoWindow` / `PinnedOnly`；有窗时窗口芯片仍显示。
+- 完整设计见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md)。
 
 ### 3.5 MeoLaunch 子菜单
 
@@ -135,7 +144,8 @@ MeoLaunch 三项经 `weak id<MLTaskbarAppActions> appActions` 注入（`showAbou
 | ★ 本迭代 | 菜单弹出时刷新状态 | 文案/enabled 准确 |
 | 二期 | 显示桌面 | 与 peek 状态机联动 |
 | 二期 | 强制退出 | ⌥ 才显示 |
-| 二期 | 隐藏应用 | 整 app hide/unhide |
+| 二期 | 隐藏应用 | 整 app hide/unhide（系统级；异于任务栏「隐藏任务芯片」） |
+| ★ H-Plan | 隐藏任务芯片 | 无窗不占位；见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md) |
 | 二期 | 移到其他显示器 | 多屏 |
 | 二期 | 在 Finder 中显示 | `activateFileViewerSelectingURLs` |
 | 二期 | 新建窗口 | 行为因 app 而异，慎做 |

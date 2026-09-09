@@ -7,6 +7,7 @@
 #import "MLRunningAppsMonitor.h"
 #import "MLWindowCensus.h"
 #import "MLTaskbarPinStore.h"
+#import "MLTaskbarHideStore.h"
 #import "MLWindowSoftState.h"
 #import "MLAudioActivityMonitor.h"
 
@@ -17,6 +18,7 @@
 
 @interface MLTaskbarController ()
 @property (nonatomic, strong) MLTaskbarPinStore *pinStore;
+@property (nonatomic, strong) MLTaskbarHideStore *hideStore;
 @property (nonatomic, strong) MLRunningAppsMonitor *monitor;
 @property (nonatomic, strong) MLIconCache *iconCache;
 @property (nonatomic, strong) NSMutableArray<MLTaskbarScreenBar *> *bars;

@@ -5,6 +5,7 @@
 #import "MLMinimizeInterceptor.h"
 #import "MLRunningAppsMonitor.h"
 #import "MLTaskbarPinStore.h"
+#import "MLTaskbarHideStore.h"
 #import "MLTaskbarView.h"
 #import "MLWorkAreaEnforcer.h"
 
@@ -13,11 +14,13 @@
 @implementation MLTaskbarController
 
 - (instancetype)initWithPinStore:(MLTaskbarPinStore *)pins
+                       hideStore:(MLTaskbarHideStore *)hide
                          monitor:(MLRunningAppsMonitor *)monitor
                        iconCache:(MLIconCache *)icons {
     self = [super init];
     if (self) {
         _pinStore = pins;
+        _hideStore = hide;
         _monitor = monitor;
         _iconCache = icons;
         _enabled = YES;
@@ -69,6 +72,12 @@
                                              selector:@selector(pinsDidChange:)
                                                  name:MLTaskbarPinsDidChangeNotification
                                                object:self.pinStore];
+    if (self.hideStore) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(hideDidChange:)
+                                                     name:MLTaskbarHideDidChangeNotification
+                                                   object:self.hideStore];
+    }
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(runningDidChange:)
                                                  name:MLRunningAppsDidChangeNotification
@@ -170,6 +179,13 @@
     [self.displayNameCache removeAllObjects];
 }
 - (void)pinsDidChange:(NSNotification *)note {
+    (void)note;
+    if (self.itemsFrozenForDesktopReveal) {
+        return;
+    }
+    [self rebuildItemsImmediate:YES];
+}
+- (void)hideDidChange:(NSNotification *)note {
     (void)note;
     if (self.itemsFrozenForDesktopReveal) {
         return;

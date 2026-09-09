@@ -167,6 +167,21 @@
     return NO;
 }
 
+/** H-Plan: hide idle (Pin / NoWindow) when path is hidden and has no global windows. */
+- (BOOL)shouldSuppressIdleChipForPath:(NSString *)path
+             pathsWithVisibleWindows:(NSSet<NSString *> *)pathsWithVisibleWindows {
+    if (path.length == 0 || !self.hideStore) {
+        return NO;
+    }
+    if (![self.hideStore isHidden:path]) {
+        return NO;
+    }
+    if ([self pinSet:pathsWithVisibleWindows containsPath:path]) {
+        return NO;
+    }
+    return YES;
+}
+
 - (MLTaskbarItem *)itemWithPath:(NSString *)path
                             pid:(pid_t)pid
                        windowID:(CGWindowID)windowID
@@ -740,6 +755,10 @@
             /* Represented as RunningNoWindow below. */
             continue;
         }
+        if ([self shouldSuppressIdleChipForPath:path
+                       pathsWithVisibleWindows:pathsWithVisibleWindows]) {
+            continue;
+        }
         pid_t pinPid = [self pidForPath:path snapshot:snap];
         [items addObject:[self itemWithPath:path
                                         pid:pinPid
@@ -770,6 +789,10 @@
             }
             if (![globalNoWindowKeys containsObject:path] &&
                 !(std.length > 0 && [globalNoWindowKeys containsObject:std])) {
+                return;
+            }
+            if ([self shouldSuppressIdleChipForPath:path
+                           pathsWithVisibleWindows:pathsWithVisibleWindows]) {
                 return;
             }
             [queued addObject:path];

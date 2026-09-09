@@ -757,6 +757,8 @@
     flags.fullscreen = NO;
     flags.fullscreenSupported = NO;
     flags.pinned = NO;
+    flags.taskChipHidden = NO;
+    flags.canToggleHideChip = NO;
     flags.audioMuteAvailable = NO;
     flags.audioMuted = NO;
     if (index < 0 || index >= (NSInteger)view.items.count) {
@@ -764,6 +766,8 @@
     }
     MLTaskbarItem *item = view.items[(NSUInteger)index];
     flags.pinned = item.pinned;
+    flags.canToggleHideChip = (item.path.length > 0);
+    flags.taskChipHidden = (self.hideStore != nil && [self.hideStore isHidden:item.path]);
     flags.hasWindow = (item.kind == MLTaskbarItemRunningWindow && item.windowID != 0);
     flags.canQuitProcess = (item.kind == MLTaskbarItemRunningNoWindow && item.pid > 0);
     flags.minimized = [self isItemSoftHiddenOrMinimized:item];
@@ -978,6 +982,16 @@
                 [self.pinStore unpinPath:item.path];
             } else {
                 [self.pinStore pinPath:item.path];
+            }
+            break;
+        case MLTaskbarMenuActionHideChipToggle:
+            if (item.path.length == 0 || !self.hideStore) {
+                break;
+            }
+            if ([self.hideStore isHidden:item.path]) {
+                [self.hideStore unhidePath:item.path];
+            } else {
+                [self.hideStore hidePath:item.path];
             }
             break;
         case MLTaskbarMenuActionAudioMuteToggle:

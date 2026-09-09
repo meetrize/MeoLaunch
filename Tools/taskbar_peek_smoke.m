@@ -13,8 +13,14 @@
 #import "MLTaskbarScreenBar.h"
 #import "MLTaskbarView.h"
 #import "MLTaskbarPinStore.h"
+#import "MLTaskbarHideStore.h"
 #import "MLIconCache.h"
 #import "MLWindowSoftState.h"
+
+@interface MLTaskbarController (HideChipSmoke)
+- (BOOL)shouldSuppressIdleChipForPath:(NSString *)path
+             pathsWithVisibleWindows:(NSSet<NSString *> *)pathsWithVisibleWindows;
+@end
 
 static int g_failures = 0;
 static NSMutableArray *g_keepAlive;
@@ -66,14 +72,19 @@ static MLTaskbarScreenBar *Bar(NSNumber *sid, NSArray<MLTaskbarItem *> *items) {
 
 static MLTaskbarController *FreshController(void) {
     MLTaskbarPinStore *pins = [[MLTaskbarPinStore alloc] init];
+    MLTaskbarHideStore *hide = [[MLTaskbarHideStore alloc] init];
     MLRunningAppsMonitor *mon = [[MLRunningAppsMonitor alloc] init];
     MLIconCache *icons = [[MLIconCache alloc] init];
     icons.maxEntries = 8;
     icons.iconPointSize = 32;
     MLTaskbarController *tb =
-        [[MLTaskbarController alloc] initWithPinStore:pins monitor:mon iconCache:icons];
+        [[MLTaskbarController alloc] initWithPinStore:pins
+                                            hideStore:hide
+                                              monitor:mon
+                                            iconCache:icons];
     tb.desktopRevealArmTime = 0; /* armed immediately for looksLike tests */
     RetainForProcessLifetime(pins);
+    RetainForProcessLifetime(hide);
     RetainForProcessLifetime(mon);
     RetainForProcessLifetime(icons);
     RetainForProcessLifetime(tb);
@@ -156,6 +167,24 @@ static void test_noWindowExcludedFromWindowChipCount(void) {
     SetSnapshot(tb, @[]);
     Assert([tb shouldIgnoreDesktopRevealBecauseAllMinimized],
            "NoWindow-only bar still ignores auto peek when no live windows");
+}
+
+static void test_hiddenIdleChipSuppressed(void) {
+    MLTaskbarController *tb = FreshController();
+    NSString *path = @"/Applications/HiddenSmoke.app";
+    Assert(![tb.hideStore isHidden:path], "fresh hide store empty");
+    Assert(![tb shouldSuppressIdleChipForPath:path pathsWithVisibleWindows:[NSSet set]],
+           "unhidden path not suppressed");
+    Assert([tb.hideStore hidePath:path], "hidePath succeeds");
+    Assert([tb.hideStore isHidden:path], "path marked hidden");
+    Assert([tb shouldSuppressIdleChipForPath:path pathsWithVisibleWindows:[NSSet set]],
+           "hidden + no windows → suppress idle chip");
+    NSSet *withWin = [NSSet setWithObject:path];
+    Assert(![tb shouldSuppressIdleChipForPath:path pathsWithVisibleWindows:withWin],
+           "hidden + has windows → do not suppress (window chips stay)");
+    Assert([tb.hideStore unhidePath:path], "unhidePath succeeds");
+    Assert(![tb shouldSuppressIdleChipForPath:path pathsWithVisibleWindows:[NSSet set]],
+           "after unhide idle chips allowed again");
 }
 
 static void test_userArmedBypassesIgnore(void) {
@@ -481,6 +510,7 @@ int main(int argc, const char *argv[]) {
         test_boundsClearlyOnAScreen();
         test_passiveMinimizeAllState();
         test_noWindowExcludedFromWindowChipCount();
+        test_hiddenIdleChipSuppressed();
         test_userArmedBypassesIgnore();
         test_looksLikeNeverOnPassiveMinimize();
         test_liveOnScreenBlocksLooksLike();
@@ -500,7 +530,7 @@ int main(int argc, const char *argv[]) {
         test_unfreezeRestoresNormalFrame();
 
         if (g_failures == 0) {
-            printf("taskbar_peek_smoke OK (%d assertions)\n", 19);
+            printf("taskbar_peek_smoke OK (%d assertions)\n", 20);
             return 0;
         }
         fprintf(stderr, "taskbar_peek_smoke FAILED (%d failures)\n", g_failures);
