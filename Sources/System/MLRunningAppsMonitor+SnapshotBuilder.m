@@ -458,16 +458,46 @@
         }
     }
 }
+/**
+ * Keep an off-screen lastSeen window as a minimized chip?
+ * - AXMinimized → yes
+ * - Still in kAXWindows but not on-screen → yes (MeoFind parks without AXMinimized)
+ * - AX empty/unavailable for PID + substantial cached frame → yes (best-effort)
+ * Closed WeChat chats typically linger in CG but drop out of AX → rejected when axAlive nonempty.
+ */
+- (BOOL)shouldKeepOffscreenCached:(MLTaskbarWindowInfo *)cached
+                         windowID:(NSNumber *)widNum
+                            axMin:(NSSet<NSNumber *> *)axMin
+                          axAlive:(NSSet<NSNumber *> *)axAlive {
+    if (!widNum) {
+        return NO;
+    }
+    if (axMin && [axMin containsObject:widNum]) {
+        return YES;
+    }
+    if (axAlive.count > 0 && [axAlive containsObject:widNum]) {
+        return YES;
+    }
+    if (axAlive.count == 0 && cached) {
+        CGRect b = cached.bounds;
+        if (b.size.width >= 100.0 && b.size.height >= 80.0) {
+            return YES;
+        }
+    }
+    return NO;
+}
 - (void)appendMinimizedFromCacheAndOffscreenList:(CFArrayRef)all
                                             into:(NSMutableArray<MLTaskbarWindowInfo *> *)windows
                                    seenWindowIDs:(NSMutableSet<NSNumber *> *)seen
                                      withWindows:(NSMutableSet<NSString *> *)withWindows
                                              cap:(NSUInteger)cap {
-    if (!all || self.lastSeenWindows.count == 0) {
+    if (!all) {
         return;
     }
 
     NSMutableSet<NSNumber *> *offscreenIDs = [NSMutableSet set];
+    NSMutableDictionary<NSNumber *, NSValue *> *offscreenBounds = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *, NSNumber *> *offscreenPid = [NSMutableDictionary dictionary];
     CFIndex count = CFArrayGetCount(all);
     for (CFIndex i = 0; i < count; i++) {
         CFDictionaryRef info = (CFDictionaryRef)CFArrayGetValueAtIndex(all, i);
@@ -495,10 +525,28 @@
         if (wid == 0) {
             continue;
         }
-        [offscreenIDs addObject:@(wid)];
+        NSNumber *widNum = @(wid);
+        [offscreenIDs addObject:widNum];
+
+        CGRect bounds = CGRectZero;
+        CFDictionaryRef boundsDict = CFDictionaryGetValue(info, kCGWindowBounds);
+        if (boundsDict) {
+            CGRectMakeWithDictionaryRepresentation(boundsDict, &bounds);
+        }
+        offscreenBounds[widNum] = [NSValue valueWithRect:NSRectFromCGRect(bounds)];
+
+        CFNumberRef pidRef = CFDictionaryGetValue(info, kCGWindowOwnerPID);
+        pid_t pid = 0;
+        if (pidRef) {
+            CFNumberGetValue(pidRef, kCFNumberIntType, &pid);
+        }
+        if (pid > 0) {
+            offscreenPid[widNum] = @(pid);
+        }
     }
 
     NSMutableDictionary<NSNumber *, NSSet<NSNumber *> *> *axMinByPid = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *, NSSet<NSNumber *> *> *axAliveByPid = [NSMutableDictionary dictionary];
 
     for (NSNumber *widNum in self.lastSeenWindows.allKeys) {
         if (windows.count >= cap) {
@@ -538,15 +586,90 @@
             axMinByPid[pidKey] = axMin ?: [NSSet set];
             axMin = axMinByPid[pidKey];
         }
-        if (![axMin containsObject:widNum]) {
-            /* Off-screen ghost (closed WeChat chat, etc.) — drop. */
+        NSSet<NSNumber *> *axAlive = axAliveByPid[pidKey];
+        if (!axAlive) {
+            axAlive = [self axAllWindowIDsForPID:cached.pid];
+            axAliveByPid[pidKey] = axAlive ?: [NSSet set];
+            axAlive = axAliveByPid[pidKey];
+        }
+        if (![self shouldKeepOffscreenCached:cached windowID:widNum axMin:axMin axAlive:axAlive]) {
             continue;
         }
 
         MLTaskbarWindowInfo *w = [self copyWindowInfo:cached minimized:YES];
+        NSValue *cgB = offscreenBounds[widNum];
+        if (cgB) {
+            CGRect qb = NSRectToCGRect(cgB.rectValue);
+            if (qb.size.width >= 100.0 && qb.size.height >= 80.0) {
+                w.bounds = qb;
+            }
+        }
         [windows addObject:w];
         [seen addObject:widNum];
         [withWindows addObject:w.path];
+    }
+
+    /*
+     * Discover off-screen real windows never cached (e.g. opened already
+     * miniaturized). Require AX membership so CG-only ghosts stay out.
+     */
+    for (NSNumber *widNum in offscreenIDs) {
+        if (windows.count >= cap) {
+            break;
+        }
+        if ([seen containsObject:widNum]) {
+            continue;
+        }
+        NSNumber *pidNum = offscreenPid[widNum];
+        if (!pidNum) {
+            continue;
+        }
+        pid_t pid = (pid_t)pidNum.intValue;
+        NSString *path = self.pidPathMap[pidNum];
+        if (path.length == 0 || pid <= 0) {
+            continue;
+        }
+        NSValue *cgB = offscreenBounds[widNum];
+        CGRect bounds = cgB ? NSRectToCGRect(cgB.rectValue) : CGRectZero;
+        if (bounds.size.width < 100.0 || bounds.size.height < 80.0) {
+            continue;
+        }
+
+        NSNumber *pidKey = pidNum;
+        NSSet<NSNumber *> *axMin = axMinByPid[pidKey];
+        if (!axMin) {
+            axMin = [self axMinimizedWindowIDsForPID:pid];
+            axMinByPid[pidKey] = axMin ?: [NSSet set];
+            axMin = axMinByPid[pidKey];
+        }
+        NSSet<NSNumber *> *axAlive = axAliveByPid[pidKey];
+        if (!axAlive) {
+            axAlive = [self axAllWindowIDsForPID:pid];
+            axAliveByPid[pidKey] = axAlive ?: [NSSet set];
+            axAlive = axAliveByPid[pidKey];
+        }
+        /* New discoveries require AX proof — never invent from CG alone. */
+        if (axAlive.count == 0) {
+            continue;
+        }
+        if (![axAlive containsObject:widNum] && ![axMin containsObject:widNum]) {
+            continue;
+        }
+
+        MLTaskbarWindowInfo *w = [[MLTaskbarWindowInfo alloc] init];
+        w.path = path;
+        w.pid = pid;
+        w.windowID = (CGWindowID)widNum.unsignedIntValue;
+        w.title = @"";
+        w.bounds = bounds;
+        w.minimized = YES;
+        w.seenOrder = self.nextSeenOrder++;
+        [windows addObject:w];
+        [seen addObject:widNum];
+        [withWindows addObject:path];
+        if (!self.lastSeenWindows[widNum]) {
+            self.lastSeenWindows[widNum] = [self copyWindowInfo:w minimized:YES];
+        }
     }
 }
 - (void)appendMinimizedWindowsFromAccessibility:(NSMutableArray<MLTaskbarWindowInfo *> *)windows
@@ -557,10 +680,17 @@
     }
 
     CGRect fallbackBounds = NSRectToCGRect(NSScreen.mainScreen.frame);
+    /* Dedupe by windowID first. path+title only when title is non-empty (empty
+       titles must not collapse MeoFind / Finder multi-window chips). */
+    NSMutableSet<NSNumber *> *alreadyWIDs = [NSMutableSet set];
     NSMutableSet<NSString *> *alreadyPathTitle = [NSMutableSet set];
     for (MLTaskbarWindowInfo *existing in windows) {
-        if (existing.minimized) {
-            [alreadyPathTitle addObject:[NSString stringWithFormat:@"%@\n%@", existing.path ?: @"", existing.title ?: @""]];
+        if (existing.windowID != 0) {
+            [alreadyWIDs addObject:@(existing.windowID)];
+        }
+        if (existing.minimized && existing.title.length > 0) {
+            [alreadyPathTitle addObject:[NSString stringWithFormat:@"%@\n%@", existing.path ?: @"",
+                                                                   existing.title ?: @""]];
         }
     }
 
@@ -604,12 +734,17 @@
                 CFRelease(titleRef);
             }
 
-            NSString *dedupe = [NSString stringWithFormat:@"%@\n%@", path, title];
-            if ([alreadyPathTitle containsObject:dedupe]) {
+            CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
+            if (wid != 0 && [alreadyWIDs containsObject:@(wid)]) {
                 continue;
             }
+            if (title.length > 0) {
+                NSString *dedupe = [NSString stringWithFormat:@"%@\n%@", path, title];
+                if ([alreadyPathTitle containsObject:dedupe]) {
+                    continue;
+                }
+            }
 
-            CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
             /* Prefer cache by real window id — never glue a closed chat's stale id onto another window. */
             MLTaskbarWindowInfo *cached = (wid != 0) ? self.lastSeenWindows[@(wid)] : nil;
             if (!cached) {
@@ -622,6 +757,9 @@
             CGRect bounds = cached ? cached.bounds : fallbackBounds;
             if (wid == 0 && cached) {
                 wid = cached.windowID;
+            }
+            if (wid != 0 && [alreadyWIDs containsObject:@(wid)]) {
+                continue;
             }
 
             if ((!cached || CGRectIsEmpty(bounds)) && (CGRectEqualToRect(bounds, fallbackBounds) || !cached)) {
@@ -655,7 +793,12 @@
             w.minimized = YES;
             w.seenOrder = cached && cached.seenOrder > 0 ? cached.seenOrder : self.nextSeenOrder++;
             [windows addObject:w];
-            [alreadyPathTitle addObject:dedupe];
+            if (wid != 0) {
+                [alreadyWIDs addObject:@(wid)];
+            }
+            if (title.length > 0) {
+                [alreadyPathTitle addObject:[NSString stringWithFormat:@"%@\n%@", path, title]];
+            }
             [withWindows addObject:path];
         }
     }
@@ -795,8 +938,8 @@
             continue;
         }
 
-        /* Closed windows vanish from CG — do NOT revive them just because another
-           window of the same app (e.g. WeChat) is minimized. */
+        /* Closed windows vanish from CG — only revive when AX still reports this
+           window (minimized or alive). Do not revive because a sibling is min. */
         NSNumber *pidKey = @(cached.pid);
         NSSet<NSNumber *> *axMin = axMinByPid[pidKey];
         if (!axMin) {
@@ -818,8 +961,8 @@
 }
 - (void)pruneClosedCachedWindows:(NSSet<NSNumber *> *)aliveIDs
                      onScreenIDs:(NSSet<NSNumber *> *)onScreenIDs {
-    (void)aliveIDs;
     NSMutableDictionary<NSNumber *, NSSet<NSNumber *> *> *axMinByPid = [NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *, NSSet<NSNumber *> *> *axAliveByPid = [NSMutableDictionary dictionary];
     NSArray<NSNumber *> *keys = self.lastSeenWindows.allKeys;
     for (NSNumber *key in keys) {
         if ([self.softState isSoftHiddenWindowID:(CGWindowID)key.unsignedIntValue]) {
@@ -833,6 +976,8 @@
             [self.lastSeenWindows removeObjectForKey:key];
             continue;
         }
+        /* Gone from CG entirely and not soft → drop (unless AX still lists as min). */
+        BOOL stillInCG = aliveIDs && [aliveIDs containsObject:key];
         NSNumber *pidKey = @(cached.pid);
         NSSet<NSNumber *> *axMin = axMinByPid[pidKey];
         if (!axMin) {
@@ -840,7 +985,18 @@
             axMinByPid[pidKey] = axMin ?: [NSSet set];
             axMin = axMinByPid[pidKey];
         }
-        if ([axMin containsObject:key]) {
+        NSSet<NSNumber *> *axAlive = axAliveByPid[pidKey];
+        if (!axAlive) {
+            axAlive = [self axAllWindowIDsForPID:cached.pid];
+            axAliveByPid[pidKey] = axAlive ?: [NSSet set];
+            axAlive = axAliveByPid[pidKey];
+        }
+        if (stillInCG &&
+            [self shouldKeepOffscreenCached:cached windowID:key axMin:axMin axAlive:axAlive]) {
+            continue;
+        }
+        if (!stillInCG && [axMin containsObject:key]) {
+            /* Minimized may vanish from CG briefly; AXMinimized keeps the chip. */
             continue;
         }
         [self.lastSeenWindows removeObjectForKey:key];

@@ -490,10 +490,14 @@
         if ([keys containsObject:key]) {
             continue;
         }
-        /* Collapse path+title duplicates even when one has windowID and one does not */
+        /* Collapse AX clones (windowID=0) onto a real id; never merge two distinct IDs
+           even when titles are empty or identical (MeoFind multi-window). */
         BOOL pathTitleDup = NO;
         for (MLTaskbarWindowInfo *existing in uniqueWindows) {
             if (![existing.path isEqualToString:w.path]) {
+                continue;
+            }
+            if (existing.windowID != 0 && w.windowID != 0 && existing.windowID != w.windowID) {
                 continue;
             }
             BOOL sameID = (existing.windowID != 0 && existing.windowID == w.windowID);
@@ -505,7 +509,7 @@
                                [existing.title hasPrefix:w.title] ||
                                [w.title hasPrefix:existing.title]);
             BOOL bothEmptyTitle = existing.title.length == 0 && w.title.length == 0;
-            if (!(sameID || (idZeroClone && (titleMatch || bothEmptyTitle)) || titleMatch)) {
+            if (!(sameID || (idZeroClone && (titleMatch || bothEmptyTitle)))) {
                 continue;
             }
             pathTitleDup = YES;
