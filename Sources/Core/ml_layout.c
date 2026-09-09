@@ -803,3 +803,98 @@ int ml_layout_extract_app_from_folder(MLLayout *layout,
     layout->count += 1;
     return 0;
 }
+
+int ml_layout_move_app_path_to_folder(MLLayout *layout,
+                                      const char *app_path,
+                                      const char *folder_id) {
+    MLLayoutFolder *target;
+    size_t i, j, k;
+    char *path_copy = NULL;
+    char *src_folder_id = NULL;
+    int found = 0;
+
+    if (!layout || !app_path || !folder_id || app_path[0] == '\0' || folder_id[0] == '\0') {
+        return -1;
+    }
+    target = ml_layout_folder_by_id(layout, folder_id);
+    if (!target) {
+        return -1;
+    }
+
+    for (j = 0; j < target->count; j++) {
+        if (path_eq(target->items[j].path, app_path)) {
+            return 0;
+        }
+    }
+
+    for (i = 0; i < layout->count; i++) {
+        MLLayoutNode *node = &layout->root[i];
+        if (node->kind == ML_LAYOUT_APP && path_eq(node->u.app.path, app_path)) {
+            path_copy = ml_strdup(node->u.app.path);
+            if (!path_copy) {
+                return -1;
+            }
+            remove_root_at(layout, i);
+            found = 1;
+            break;
+        }
+        if (node->kind == ML_LAYOUT_FOLDER && node->u.folder) {
+            MLLayoutFolder *f = node->u.folder;
+            for (j = 0; j < f->count; j++) {
+                if (!path_eq(f->items[j].path, app_path)) {
+                    continue;
+                }
+                path_copy = ml_strdup(f->items[j].path);
+                if (!path_copy) {
+                    return -1;
+                }
+                if (f->id) {
+                    src_folder_id = ml_strdup(f->id);
+                    if (!src_folder_id) {
+                        free(path_copy);
+                        return -1;
+                    }
+                }
+                free_app_ref(&f->items[j]);
+                for (k = j; k + 1 < f->count; k++) {
+                    f->items[k] = f->items[k + 1];
+                }
+                f->count -= 1;
+                found = 1;
+                break;
+            }
+            if (found) {
+                break;
+            }
+        }
+    }
+
+    if (!found) {
+        path_copy = ml_strdup(app_path);
+        if (!path_copy) {
+            return -1;
+        }
+    }
+
+    /* Target folder object remains valid (we only removed an app node or items). */
+    target = ml_layout_folder_by_id(layout, folder_id);
+    if (!target) {
+        free(path_copy);
+        free(src_folder_id);
+        return -1;
+    }
+    if (ml_layout_folder_append_app(target, path_copy) != 0) {
+        free(path_copy);
+        free(src_folder_id);
+        return -1;
+    }
+    free(path_copy);
+
+    if (src_folder_id) {
+        if (strcmp(src_folder_id, folder_id) != 0) {
+            (void)ml_layout_dissolve_folder_if_small(layout, src_folder_id);
+        }
+        free(src_folder_id);
+    }
+    return 0;
+}

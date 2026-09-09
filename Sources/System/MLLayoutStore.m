@@ -335,4 +335,71 @@ NSNotificationName const MLLayoutStoreDidChangeNotification = @"MLLayoutStoreDid
     return YES;
 }
 
+- (NSArray<NSDictionary *> *)rootFolderInfos {
+    if (!self.layout) {
+        return @[];
+    }
+    NSMutableArray *out = [NSMutableArray array];
+    for (size_t i = 0; i < self.layout->count; i++) {
+        const MLLayoutNode *node = &self.layout->root[i];
+        if (node->kind != ML_LAYOUT_FOLDER || !node->u.folder || !node->u.folder->id) {
+            continue;
+        }
+        const MLLayoutFolder *f = node->u.folder;
+        NSString *fid = [NSString stringWithUTF8String:f->id];
+        NSString *name = f->name ? [NSString stringWithUTF8String:f->name] : @"";
+        if (fid.length == 0) {
+            continue;
+        }
+        [out addObject:@{ @"id" : fid, @"name" : name ?: @"" }];
+    }
+    return out;
+}
+
+- (NSString *)folderIdContainingAppPath:(NSString *)path {
+    if (!self.layout || path.length == 0) {
+        return nil;
+    }
+    const char *cpath = path.stringByStandardizingPath.UTF8String;
+    if (!cpath) {
+        cpath = path.UTF8String;
+    }
+    if (!cpath) {
+        return nil;
+    }
+    for (size_t i = 0; i < self.layout->count; i++) {
+        const MLLayoutNode *node = &self.layout->root[i];
+        if (node->kind != ML_LAYOUT_FOLDER || !node->u.folder) {
+            continue;
+        }
+        const MLLayoutFolder *f = node->u.folder;
+        for (size_t j = 0; j < f->count; j++) {
+            if (f->items[j].path && strcmp(f->items[j].path, cpath) == 0) {
+                return f->id ? [NSString stringWithUTF8String:f->id] : nil;
+            }
+        }
+        /* Also try non-standardized match */
+        for (size_t j = 0; j < f->count; j++) {
+            if (f->items[j].path && strcmp(f->items[j].path, path.UTF8String) == 0) {
+                return f->id ? [NSString stringWithUTF8String:f->id] : nil;
+            }
+        }
+    }
+    return nil;
+}
+
+- (BOOL)moveAppAtPath:(NSString *)path intoFolderId:(NSString *)folderId {
+    if (!self.layout || path.length == 0 || folderId.length == 0) {
+        return NO;
+    }
+    NSString *std = path.stringByStandardizingPath;
+    const char *cpath = std.length ? std.UTF8String : path.UTF8String;
+    if (!cpath || ml_layout_move_app_path_to_folder(self.layout, cpath, folderId.UTF8String) != 0) {
+        return NO;
+    }
+    [self scheduleSave];
+    NSLog(@"[MeoLaunch] layout move %@ -> folder %@", path, folderId);
+    return YES;
+}
+
 @end

@@ -132,6 +132,17 @@ int ml_layout_extract_app_from_folder(MLLayout *layout,
  */
 int ml_layout_dissolve_folder_if_small(MLLayout *layout, const char *folder_id);
 
+/*
+ * Move an app (by path) into an existing root folder.
+ * Removes it from root or another folder first (path stays globally unique).
+ * If already in folder_id → no-op success (0).
+ * Source folder may dissolve when left with ≤1 app.
+ * Returns 0 on success, -1 on bad args / missing folder / OOM.
+ */
+int ml_layout_move_app_path_to_folder(MLLayout *layout,
+                                      const char *app_path,
+                                      const char *folder_id);
+
 #ifdef __cplusplus
 }
 #endif

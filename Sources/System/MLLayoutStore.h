@@ -41,4 +41,13 @@ FOUNDATION_EXPORT NSNotificationName const MLLayoutStoreDidChangeNotification;
          fromFolderId:(NSString *)folderId
           folderGone:(BOOL *)folderGone;
 
+/// Root-level folders as @{ @"id": NSString, @"name": NSString } (name may be empty).
+- (NSArray<NSDictionary *> *)rootFolderInfos;
+
+/// Folder id containing `path`, or nil if on root / unknown.
+- (NSString *)folderIdContainingAppPath:(NSString *)path;
+
+/// Move app by path into an existing folder. Dissolves source folder if needed.
+- (BOOL)moveAppAtPath:(NSString *)path intoFolderId:(NSString *)folderId;
+
 @end

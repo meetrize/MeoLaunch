@@ -1,6 +1,7 @@
 #import "MLOverlayController.h"
 
 #import "MLAppLauncher.h"
+#import "MLAppUninstaller.h"
 #import "MLConfigStore.h"
 #import "MLDismissBackgroundView.h"
 #import "MLGridView.h"
@@ -10,6 +11,8 @@
 #import "MLOverlayWindow.h"
 #import "MLPageIndicator.h"
 #import "MLSearchField.h"
+#import "MLStrings.h"
+#import "MLTaskbarPinStore.h"
 #import "NSTextField+MLEditing.h"
 
 #include "ml_filter.h"
@@ -94,6 +97,118 @@ static const NSTimeInterval kMLOverlayIconRAMPurgeSeconds = 45.0;
     (void)point;
     return nil;
 }
+@end
+
+/** Leftover picker for uninstall NSAlert accessoryView (select-all + checkboxes). */
+@interface MLUninstallLeftoverAccessory : NSView
+@property (nonatomic, strong) NSArray<NSString *> *paths;
+@property (nonatomic, strong) NSMutableArray<NSButton *> *itemButtons;
+@property (nonatomic, strong) NSButton *selectAllButton;
+- (instancetype)initWithPaths:(NSArray<NSString *> *)paths selectAllTitle:(NSString *)selectAllTitle;
+- (NSArray<NSString *> *)selectedPaths;
+@end
+
+@implementation MLUninstallLeftoverAccessory
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (instancetype)initWithPaths:(NSArray<NSString *> *)paths selectAllTitle:(NSString *)selectAllTitle {
+    CGFloat width = 440.0;
+    CGFloat rowH = 22.0;
+    CGFloat selectH = 26.0;
+    NSUInteger visibleRows = MIN((NSUInteger)8, MAX((NSUInteger)1, paths.count));
+    CGFloat scrollH = (CGFloat)visibleRows * rowH + 6.0;
+    CGFloat totalH = selectH + 6.0 + scrollH;
+    self = [super initWithFrame:NSMakeRect(0, 0, width, totalH)];
+    if (!self) {
+        return nil;
+    }
+    _paths = [paths copy] ?: @[];
+    _itemButtons = [NSMutableArray array];
+
+    NSButton *selectAll = [[NSButton alloc] initWithFrame:NSMakeRect(4, 0, width - 8.0, selectH)];
+    selectAll.buttonType = NSButtonTypeSwitch;
+    selectAll.title = selectAllTitle ?: @"Select All";
+    selectAll.state = NSControlStateValueOff;
+    selectAll.allowsMixedState = YES;
+    selectAll.target = self;
+    selectAll.action = @selector(selectAllToggled:);
+    [self addSubview:selectAll];
+    _selectAllButton = selectAll;
+
+    NSScrollView *scroll = [[NSScrollView alloc] initWithFrame:NSMakeRect(0, selectH + 4.0, width, scrollH)];
+    scroll.hasVerticalScroller = (paths.count > 8);
+    scroll.hasHorizontalScroller = NO;
+    scroll.autohidesScrollers = YES;
+    scroll.borderType = NSBezelBorder;
+    scroll.drawsBackground = YES;
+
+    CGFloat docH = MAX(scrollH, (CGFloat)paths.count * rowH + 8.0);
+    NSView *doc = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, width - 18.0, docH)];
+    /* Document view: AppKit origin bottom-left; stack from top. */
+    CGFloat y = docH - rowH - 4.0;
+    NSString *home = NSHomeDirectory();
+    for (NSString *left in paths) {
+        NSString *title = left;
+        if ([title hasPrefix:home]) {
+            title = [@"~" stringByAppendingString:[title substringFromIndex:home.length]];
+        }
+        NSButton *cb = [[NSButton alloc] initWithFrame:NSMakeRect(6, y, width - 36.0, rowH)];
+        cb.buttonType = NSButtonTypeSwitch;
+        cb.title = title;
+        cb.state = NSControlStateValueOff;
+        cb.toolTip = left;
+        cb.target = self;
+        cb.action = @selector(itemToggled:);
+        [doc addSubview:cb];
+        [_itemButtons addObject:cb];
+        y -= rowH;
+    }
+    scroll.documentView = doc;
+    [self addSubview:scroll];
+    return self;
+}
+
+- (void)selectAllToggled:(NSButton *)sender {
+    NSControlStateValue state = sender.state;
+    if (state == NSControlStateValueMixed) {
+        state = NSControlStateValueOn;
+        sender.state = state;
+    }
+    for (NSButton *b in self.itemButtons) {
+        b.state = state;
+    }
+}
+
+- (void)itemToggled:(id)sender {
+    (void)sender;
+    NSUInteger on = 0;
+    for (NSButton *b in self.itemButtons) {
+        if (b.state == NSControlStateValueOn) {
+            on += 1;
+        }
+    }
+    if (on == 0) {
+        self.selectAllButton.state = NSControlStateValueOff;
+    } else if (on == self.itemButtons.count) {
+        self.selectAllButton.state = NSControlStateValueOn;
+    } else {
+        self.selectAllButton.state = NSControlStateValueMixed;
+    }
+}
+
+- (NSArray<NSString *> *)selectedPaths {
+    NSMutableArray<NSString *> *out = [NSMutableArray array];
+    for (NSUInteger i = 0; i < self.itemButtons.count && i < self.paths.count; i++) {
+        if (self.itemButtons[i].state == NSControlStateValueOn) {
+            [out addObject:self.paths[i]];
+        }
+    }
+    return out;
+}
+
 @end
 
 /** Minimum area (pt²) for a contentView subview to count as a "ghost panel".
@@ -2127,6 +2242,297 @@ doCommandBySelector:(SEL)commandSelector {
         return;
     }
     [self hide];
+}
+
+- (void)gridView:(MLGridView *)gridView
+    iconMenuFlags:(MLOverlayIconMenuFlags *)flags
+ forVisibleIndex:(NSInteger)vis {
+    (void)vis;
+    if (!flags) {
+        return;
+    }
+    NSString *path = flags.appPath.length ? flags.appPath : [gridView appPathAtVisibleIndex:vis];
+    if (path.length == 0 || [gridView isFolderAtVisibleIndex:vis]) {
+        flags.isApp = NO;
+        flags.canPin = NO;
+        flags.folderIds = @[];
+        flags.folderNames = @[];
+        return;
+    }
+    flags.isApp = YES;
+    flags.appPath = path.stringByStandardizingPath;
+    flags.canPin = (flags.appPath.length > 0);
+    flags.pinned = (self.pinStore != nil && [self.pinStore isPinned:flags.appPath]);
+    flags.canUninstall = [MLAppUninstaller canAttemptUninstallAtPath:flags.appPath];
+
+    NSString *currentFolder = [self.layoutStore folderIdContainingAppPath:flags.appPath];
+    if (!currentFolder.length && self.openFolderId.length) {
+        currentFolder = self.openFolderId;
+    }
+    NSArray<NSDictionary *> *infos = [self.layoutStore rootFolderInfos];
+    NSMutableArray<NSString *> *ids = [NSMutableArray array];
+    NSMutableArray<NSString *> *names = [NSMutableArray array];
+    for (NSDictionary *info in infos) {
+        NSString *fid = info[@"id"];
+        if (fid.length == 0) {
+            continue;
+        }
+        if (currentFolder.length && [fid isEqualToString:currentFolder]) {
+            continue;
+        }
+        NSString *name = info[@"name"];
+        [ids addObject:fid];
+        [names addObject:name ?: @""];
+    }
+    flags.folderIds = ids;
+    flags.folderNames = names;
+}
+
+- (void)gridView:(MLGridView *)gridView
+    didSelectIconMenuAction:(MLOverlayIconMenuAction)action
+            atVisibleIndex:(NSInteger)vis
+                  folderId:(NSString *)folderId {
+    NSString *path = [gridView appPathAtVisibleIndex:vis];
+    if (path.length == 0) {
+        return;
+    }
+    path = path.stringByStandardizingPath;
+
+    switch (action) {
+        case MLOverlayIconMenuActionOpen:
+            gridView.selectedVisibleIndex = vis;
+            [self gridView:gridView didActivateAppAtPath:path];
+            break;
+        case MLOverlayIconMenuActionRevealInFinder:
+            /* Hide first so the file viewer is frontmost; then reveal.
+             * Clear previousApp: finishHide would otherwise re-activate the
+             * pre-overlay app and steal focus from a cold-starting MeoFind. */
+            self.previousApp = nil;
+            [self hide];
+            [self revealAppInFinderAtPath:path];
+            break;
+        case MLOverlayIconMenuActionPinToggle:
+            if (!self.pinStore || path.length == 0) {
+                break;
+            }
+            if ([self.pinStore isPinned:path]) {
+                [self.pinStore unpinPath:path];
+            } else {
+                [self.pinStore pinPath:path];
+            }
+            break;
+        case MLOverlayIconMenuActionMoveToFolder: {
+            if (folderId.length == 0) {
+                break;
+            }
+            NSString *wasOpen = [self.openFolderId copy];
+            if (![self.layoutStore moveAppAtPath:path intoFolderId:folderId]) {
+                break;
+            }
+            if (wasOpen.length && !ml_layout_folder_by_id(self.layoutStore.layout, wasOpen.UTF8String)) {
+                [self exitFolderSavingTitle:NO];
+            } else {
+                NSString *q = self.searchField.stringValue ?: @"";
+                [self applyFilterWithQuery:q preservePage:YES];
+            }
+            break;
+        }
+        case MLOverlayIconMenuActionUninstall:
+            [self presentUninstallForAppAtPath:path];
+            break;
+    }
+}
+
+/**
+ * Reveal the .app in the default file viewer (MeoFind when set as folder default):
+ * open the *parent* directory and select the package — never browse into Contents.
+ *
+ * Do not `tell application "Finder"`: that opens Finder *and* forwards reveal to
+ * MeoFind. Prefer `open -R` (kAERevealSelection) so only the default viewer runs.
+ * MeoFind must treat .app as a selectable package (see ExternalFolderOpenRequestResolver).
+ */
+- (void)revealAppInFinderAtPath:(NSString *)path {
+    if (path.length == 0) {
+        return;
+    }
+    NSString *reveal = path.stringByStandardizingPath.length ? path.stringByStandardizingPath : path;
+    while (reveal.length > 1 && [reveal hasSuffix:@"/"]) {
+        reveal = [reveal substringToIndex:reveal.length - 1];
+    }
+    if (reveal.length == 0) {
+        return;
+    }
+
+    NSTask *task = [[NSTask alloc] init];
+    task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/open"];
+    task.arguments = @[@"-R", reveal];
+    NSError *launchErr = nil;
+    if (![task launchAndReturnError:&launchErr]) {
+        NSLog(@"[MeoLaunch] open -R failed: %@ — fallback selectFile", launchErr);
+        NSString *parent = reveal.stringByDeletingLastPathComponent;
+        [[NSWorkspace sharedWorkspace] selectFile:reveal inFileViewerRootedAtPath:parent ?: @""];
+    }
+
+    /* Cold-start MeoFind may appear behind MeoLaunch; nudge it front after launch. */
+    [self activateDefaultFileViewerAfterReveal];
+}
+
+/** Best-effort: bring MeoFind (default file viewer) to front after open -R. */
+- (void)activateDefaultFileViewerAfterReveal {
+    static NSString *const kMeoFindBundleID = @"com.explorer.app";
+    static const double kDelays[] = { 0.15, 0.4, 0.9, 1.6 };
+    for (size_t i = 0; i < sizeof(kDelays) / sizeof(kDelays[0]); i++) {
+        double delay = kDelays[i];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                           NSArray<NSRunningApplication *> *apps =
+                               [NSRunningApplication runningApplicationsWithBundleIdentifier:kMeoFindBundleID];
+                           NSRunningApplication *viewer = apps.firstObject;
+                           if (!viewer || viewer.isTerminated) {
+                               return;
+                           }
+                           [viewer activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+                       });
+    }
+}
+
+- (void)presentUninstallForAppAtPath:(NSString *)path {
+    if (![MLAppUninstaller canAttemptUninstallAtPath:path]) {
+        NSAlert *blocked = [[NSAlert alloc] init];
+        blocked.alertStyle = NSAlertStyleInformational;
+        blocked.messageText = [MLStrings t:@"overlay.uninstall.protected"];
+        [blocked addButtonWithTitle:[MLStrings t:@"overlay.uninstall.ok"]];
+        [self runModalAlertAboveOverlay:blocked];
+        return;
+    }
+
+    NSString *pathCopy = [path.stringByStandardizingPath copy];
+    NSString *name = [MLAppUninstaller displayNameAtPath:pathCopy];
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        NSString *uninstaller = [MLAppUninstaller findUninstallerNearAppAtPath:pathCopy];
+        NSArray<NSString *> *leftovers = [MLAppUninstaller discoverLeftoversAtPath:pathCopy];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [weakSelf continueUninstallForAppAtPath:pathCopy
+                                       displayName:name
+                                       uninstaller:uninstaller
+                                         leftovers:leftovers ?: @[]];
+        });
+    });
+}
+
+/**
+ * Overlay uses NSStatusWindowLevel (~25). NSAlert runModal uses
+ * NSModalPanelWindowLevel (~8), so a stock alert appears behind the overlay.
+ * Do NOT fight that by reordering the alert on a timer (it leaves a zombie
+ * window after runModal returns — buttons dead, dialog stuck).
+ * Instead, temporarily drop the overlay under the modal panel, then restore.
+ */
+- (NSModalResponse)runModalAlertAboveOverlay:(NSAlert *)alert {
+    if (!alert) {
+        return NSAlertSecondButtonReturn;
+    }
+    [NSApp activateIgnoringOtherApps:YES];
+
+    NSWindow *host = self.window;
+    NSInteger savedLevel = host ? host.level : (NSInteger)NSStatusWindowLevel;
+    BOOL savedIgnoreMouse = host ? host.ignoresMouseEvents : NO;
+    if (host) {
+        /* Below NSModalPanelWindowLevel so the alert is on top and receives clicks. */
+        host.level = NSFloatingWindowLevel;
+        host.ignoresMouseEvents = YES;
+    }
+
+    NSModalResponse response = [alert runModal];
+
+    /* Ensure the alert panel is gone (avoids stuck chrome after modal ends). */
+    NSWindow *alertWindow = alert.window;
+    if (alertWindow) {
+        [alertWindow orderOut:nil];
+    }
+
+    if (host) {
+        host.level = savedLevel;
+        host.ignoresMouseEvents = savedIgnoreMouse;
+        if (self.visible) {
+            [host makeKeyAndOrderFront:nil];
+        }
+    }
+    return response;
+}
+
+- (void)continueUninstallForAppAtPath:(NSString *)path
+                          displayName:(NSString *)name
+                          uninstaller:(NSString *)uninstaller
+                            leftovers:(NSArray<NSString *> *)leftovers {
+    if (uninstaller.length) {
+        NSAlert *hint = [[NSAlert alloc] init];
+        hint.alertStyle = NSAlertStyleInformational;
+        hint.messageText = [NSString stringWithFormat:[MLStrings t:@"overlay.uninstall.uninstaller_title"], name];
+        hint.informativeText = [MLStrings t:@"overlay.uninstall.uninstaller_body"];
+        [hint addButtonWithTitle:[MLStrings t:@"overlay.uninstall.open_uninstaller"]];
+        [hint addButtonWithTitle:[MLStrings t:@"overlay.uninstall.trash_anyway"]];
+        [hint addButtonWithTitle:[MLStrings t:@"overlay.uninstall.cancel"]];
+        NSModalResponse r = [self runModalAlertAboveOverlay:hint];
+        if (r == NSAlertFirstButtonReturn) {
+            [MLAppLauncher openApplicationAtPath:uninstaller];
+            return;
+        }
+        if (r != NSAlertSecondButtonReturn) {
+            return;
+        }
+    }
+
+    NSAlert *alert = [[NSAlert alloc] init];
+    alert.alertStyle = NSAlertStyleWarning;
+    alert.messageText = [NSString stringWithFormat:[MLStrings t:@"overlay.uninstall.title"], name];
+    NSMutableString *body = [NSMutableString stringWithString:[MLStrings t:@"overlay.uninstall.body"]];
+    if ([MLAppUninstaller isAppRunningAtPath:path]) {
+        [body appendString:@"\n\n"];
+        [body appendString:[MLStrings t:@"overlay.uninstall.running_note"]];
+    }
+    if (leftovers.count > 0) {
+        [body appendString:@"\n\n"];
+        [body appendFormat:[MLStrings t:@"overlay.uninstall.leftovers_body"], (unsigned long)leftovers.count];
+    }
+    alert.informativeText = body;
+
+    MLUninstallLeftoverAccessory *picker = nil;
+    if (leftovers.count > 0) {
+        picker = [[MLUninstallLeftoverAccessory alloc] initWithPaths:leftovers
+                                                      selectAllTitle:[MLStrings t:@"overlay.uninstall.select_all"]];
+        alert.accessoryView = picker;
+    }
+
+    [alert addButtonWithTitle:[MLStrings t:@"overlay.uninstall.confirm"]];
+    [alert addButtonWithTitle:[MLStrings t:@"overlay.uninstall.cancel"]];
+    if ([self runModalAlertAboveOverlay:alert] != NSAlertFirstButtonReturn) {
+        return;
+    }
+
+    NSArray<NSString *> *selectedLeftovers = picker ? [picker selectedPaths] : @[];
+
+    NSError *error = nil;
+    if (![MLAppUninstaller moveAppToTrashAtPath:path error:&error]) {
+        NSAlert *fail = [[NSAlert alloc] init];
+        fail.alertStyle = NSAlertStyleWarning;
+        fail.messageText = [MLStrings t:@"overlay.uninstall.failed"];
+        fail.informativeText = error.localizedDescription ?: @"";
+        [fail addButtonWithTitle:[MLStrings t:@"overlay.uninstall.ok"]];
+        [self runModalAlertAboveOverlay:fail];
+        return;
+    }
+
+    if (selectedLeftovers.count > 0) {
+        [MLAppUninstaller movePathsToTrash:selectedLeftovers];
+    }
+
+    if (self.pinStore && [self.pinStore isPinned:path]) {
+        [self.pinStore unpinPath:path];
+    }
+    if ([self.delegate respondsToSelector:@selector(overlayControllerDidRequestAppRescan:)]) {
+        [self.delegate overlayControllerDidRequestAppRescan:self];
+    }
 }
 
 - (void)gridView:(MLGridView *)gridView didChangePage:(NSInteger)page pageCount:(NSInteger)pageCount {

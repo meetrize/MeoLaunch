@@ -7,6 +7,25 @@
 @class MLIconCache;
 @class MLGridView;
 
+typedef NS_ENUM(NSInteger, MLOverlayIconMenuAction) {
+    MLOverlayIconMenuActionOpen = 0,
+    MLOverlayIconMenuActionRevealInFinder,
+    MLOverlayIconMenuActionPinToggle,
+    MLOverlayIconMenuActionMoveToFolder, /* representedObject = folderId */
+    MLOverlayIconMenuActionUninstall,
+};
+
+/** Live flags for overlay icon context menu (read at popup time). */
+@interface MLOverlayIconMenuFlags : NSObject
+@property (nonatomic, assign) BOOL isApp;
+@property (nonatomic, copy) NSString *appPath;
+@property (nonatomic, assign) BOOL pinned;
+@property (nonatomic, assign) BOOL canPin;
+@property (nonatomic, assign) BOOL canUninstall;
+@property (nonatomic, copy) NSArray<NSString *> *folderIds;
+@property (nonatomic, copy) NSArray<NSString *> *folderNames;
+@end
+
 @protocol MLGridViewDelegate <NSObject>
 - (void)gridView:(MLGridView *)gridView didActivateAppAtPath:(NSString *)path;
 - (void)gridViewDidClickBackground:(MLGridView *)gridView;
@@ -18,6 +37,13 @@
 - (void)gridView:(MLGridView *)gridView didAddItem:(NSInteger)fromIndex toFolderAt:(NSInteger)folderIndex;
 - (void)gridView:(MLGridView *)gridView didActivateFolderId:(NSString *)folderId;
 - (void)gridView:(MLGridView *)gridView didExtractItemAt:(NSInteger)index;
+- (void)gridView:(MLGridView *)gridView
+    iconMenuFlags:(MLOverlayIconMenuFlags *)flags
+ forVisibleIndex:(NSInteger)vis;
+- (void)gridView:(MLGridView *)gridView
+    didSelectIconMenuAction:(MLOverlayIconMenuAction)action
+            atVisibleIndex:(NSInteger)vis
+                  folderId:(NSString *)folderId;
 @end
 
 @interface MLGridView : NSView
@@ -57,6 +83,7 @@
 - (NSImage *)iconImageForVisibleIndex:(NSInteger)vis;
 - (BOOL)isFolderAtVisibleIndex:(NSInteger)vis;
 - (NSString *)folderIdAtVisibleIndex:(NSInteger)vis;
+- (NSString *)appPathAtVisibleIndex:(NSInteger)vis;
 
 /// Brief spring/glow on a cell after merge or add-to-folder.
 - (void)pulseVisibleIndex:(NSInteger)vis;

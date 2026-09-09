@@ -10,13 +10,11 @@ alwaysApply: true
 
 # MeoLaunch M-Plan（Slim Warm Memory）
 
-当仓库存在未完成的 `doc/17-plan.md` 任务卡时，**优先**执行 17-plan（Slim Icon），不要再跑已全部 done 的 16-plan。
-
-当 17-plan 全部 done、且仍有未完成的 `doc/16-plan.md` 任务卡时，再执行 16-plan；否则不要回到历史 M/Z 里程碑抢队列。
+当仓库存在未完成的 `doc/18-plan.md` 任务卡时，**优先**执行 18-plan；其次未完成的 17-plan。都 done 且仍有未完成的 `doc/16-plan.md` 时再执行 16-plan；否则不要回到历史 M/Z 里程碑抢队列。
 
 ## 触发语
 
-用户说「继续」「继续自动化」「全自动开发」「做 M 计划」「按 16-plan」「Slim Warm」等 → 若 17-plan 仍有 pending，先跑 17；否则读 `doc/16-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+用户说「继续」「继续自动化」「全自动开发」「做 M 计划」「按 16-plan」「Slim Warm」等 → 若 18/17 仍有 pending，先跑更高优先级；否则读 `doc/16-plan.md` 的 **Status**，执行第一个 `pending` 卡。
 
 ## 全自动协议
 

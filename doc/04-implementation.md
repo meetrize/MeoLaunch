@@ -185,6 +185,11 @@ void ml_grid_cell_frame(const MLGridConfig *cfg,
 static inline int ml_grid_page_capacity(const MLGridConfig *c) {
     return c->cols * c->rows;
 }
+
+/* ml_layout.h (excerpt) — move app into folder by path (overlay context menu) */
+int ml_layout_move_app_path_to_folder(MLLayout *layout,
+                                      const char *app_path,
+                                      const char *folder_id);
 ```
 
 ObjC 通过 bridging 直接 `#import "ml_app_index.h"`。

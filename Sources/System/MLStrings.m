@@ -73,6 +73,94 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Version %@ (%@)",
             @"zh" : @"版本 %@（%@）",
         },
+        @"overlay.menu.open" : @{
+            @"en" : @"Open",
+            @"zh" : @"打开",
+        },
+        @"overlay.menu.reveal_in_finder" : @{
+            @"en" : @"Show in Finder",
+            @"zh" : @"在访达中显示",
+        },
+        @"overlay.menu.pin" : @{
+            @"en" : @"Pin to Taskbar",
+            @"zh" : @"固定到任务栏",
+        },
+        @"overlay.menu.unpin" : @{
+            @"en" : @"Unpin from Taskbar",
+            @"zh" : @"从任务栏取消固定",
+        },
+        @"overlay.menu.move_to" : @{
+            @"en" : @"Move to",
+            @"zh" : @"移动到",
+        },
+        @"overlay.menu.no_folders" : @{
+            @"en" : @"No Groups",
+            @"zh" : @"暂无分组",
+        },
+        @"overlay.menu.folder_default" : @{
+            @"en" : @"Folder",
+            @"zh" : @"文件夹",
+        },
+        @"overlay.menu.uninstall" : @{
+            @"en" : @"Uninstall…",
+            @"zh" : @"卸载…",
+        },
+        @"overlay.uninstall.title" : @{
+            @"en" : @"Uninstall “%@”?",
+            @"zh" : @"卸载「%@」？",
+        },
+        @"overlay.uninstall.body" : @{
+            @"en" : @"The app will be moved to Trash and can be restored. If it is running, the move may fail.",
+            @"zh" : @"将把应用移入废纸篓，可从废纸篓还原。若应用正在运行，操作可能失败。",
+        },
+        @"overlay.uninstall.confirm" : @{
+            @"en" : @"Move to Trash",
+            @"zh" : @"移入废纸篓",
+        },
+        @"overlay.uninstall.running_note" : @{
+            @"en" : @"This app appears to be running.",
+            @"zh" : @"该应用似乎正在运行。",
+        },
+        @"overlay.uninstall.failed" : @{
+            @"en" : @"Could not move the app to Trash.",
+            @"zh" : @"无法将应用移入废纸篓。",
+        },
+        @"overlay.uninstall.protected" : @{
+            @"en" : @"This app cannot be uninstalled from MeoLaunch.",
+            @"zh" : @"无法从 MeoLaunch 卸载此应用。",
+        },
+        @"overlay.uninstall.cancel" : @{
+            @"en" : @"Cancel",
+            @"zh" : @"取消",
+        },
+        @"overlay.uninstall.ok" : @{
+            @"en" : @"OK",
+            @"zh" : @"好",
+        },
+        @"overlay.uninstall.uninstaller_title" : @{
+            @"en" : @"“%@” has an uninstaller",
+            @"zh" : @"「%@」提供了专用卸载程序",
+        },
+        @"overlay.uninstall.uninstaller_body" : @{
+            @"en" : @"Run the uninstaller first when possible, so drivers or privileged components are removed cleanly.",
+            @"zh" : @"建议先运行卸载程序，以免残留驱动或特权组件。",
+        },
+        @"overlay.uninstall.open_uninstaller" : @{
+            @"en" : @"Open Uninstaller",
+            @"zh" : @"打开卸载程序",
+        },
+        @"overlay.uninstall.trash_anyway" : @{
+            @"en" : @"Move to Trash Anyway…",
+            @"zh" : @"仍移入废纸篓…",
+        },
+        @"overlay.uninstall.leftovers_body" : @{
+            @"en" : @"Possible leftovers (%lu). Checked items will also move to Trash (restorable).",
+            @"zh" : @"检测到可能残留 %lu 项。勾选的项将一并移入废纸篓（可还原）。",
+        },
+        @"overlay.uninstall.select_all" : @{
+            @"en" : @"Select All",
+            @"zh" : @"全选",
+        },
         @"prefs.title" : @{
             @"en" : @"MeoLaunch Preferences",
             @"zh" : @"MeoLaunch 设置",

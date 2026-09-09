@@ -80,6 +80,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
     self.taskbarPins = [[MLTaskbarPinStore alloc] init];
     [self.taskbarPins loadFromDisk];
+    self.overlay.pinStore = self.taskbarPins;
     self.runningApps = [[MLRunningAppsMonitor alloc] init];
     self.taskbarIcons = [[MLIconCache alloc] init];
     self.taskbarIcons.maxEntries = 48;
@@ -501,6 +502,11 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     (void)controller;
     [self.runningApps setOverlayVisible:NO];
     [self.taskbar overlayDidHide];
+}
+
+- (void)overlayControllerDidRequestAppRescan:(MLOverlayController *)controller {
+    (void)controller;
+    [self rescanApps];
 }
 
 - (void)quit:(id)sender {

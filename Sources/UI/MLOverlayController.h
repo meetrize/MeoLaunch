@@ -4,6 +4,7 @@
 
 @class MLConfigStore;
 @class MLLayoutStore;
+@class MLTaskbarPinStore;
 @class MLOverlayController;
 
 @protocol MLOverlayControllerDelegate <NSObject>
@@ -11,11 +12,15 @@
 - (void)overlayControllerDidRequestPreferences:(MLOverlayController *)controller;
 - (void)overlayControllerWillShow:(MLOverlayController *)controller;
 - (void)overlayControllerDidHide:(MLOverlayController *)controller;
+/** After an app was removed from disk — rescan index + layout sync. */
+- (void)overlayControllerDidRequestAppRescan:(MLOverlayController *)controller;
 @end
 
 @interface MLOverlayController : NSObject
 
 @property (nonatomic, weak) id<MLOverlayControllerDelegate> delegate;
+/** Shared with taskbar; used by overlay icon context menu pin toggle. */
+@property (nonatomic, weak) MLTaskbarPinStore *pinStore;
 
 - (instancetype)initWithConfigStore:(MLConfigStore *)config
                         layoutStore:(MLLayoutStore *)layoutStore;

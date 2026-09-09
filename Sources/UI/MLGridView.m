@@ -1,10 +1,14 @@
 #import "MLGridView.h"
 
 #import "MLIconCache.h"
+#import "MLStrings.h"
 
 #import <QuartzCore/QuartzCore.h>
 
 #include <string.h>
+
+@implementation MLOverlayIconMenuFlags
+@end
 
 @implementation MLGridView {
     CGFloat _wheelAccum;
@@ -26,6 +30,7 @@
     NSMutableDictionary<NSString *, NSImage *> *_folderCompositeCache;
     NSMutableArray<NSString *> *_folderCompositeLRU;
     BOOL _iconRedrawScheduled;
+    NSInteger _menuVisibleIndex;
 }
 
 enum { MLFolderCompositeMaxEntries = 16 };
@@ -56,6 +61,7 @@ enum { MLFolderCompositeMaxEntries = 16 };
         _dragIconBaseSize = NSZeroSize;
         _folderCompositeCache = [NSMutableDictionary dictionary];
         _folderCompositeLRU = [NSMutableArray array];
+        _menuVisibleIndex = -1;
         self.wantsLayer = NO;
     }
     return self;
@@ -113,6 +119,13 @@ enum { MLFolderCompositeMaxEntries = 16 };
         return nil;
     }
     return [NSString stringWithUTF8String:fid];
+}
+
+- (NSString *)appPathAtVisibleIndex:(NSInteger)vis {
+    if (vis < 0) {
+        return nil;
+    }
+    return [self appPathAtVisible:(size_t)vis];
 }
 
 - (uint32_t)appIndexForPathC:(const char *)path {
@@ -1732,6 +1745,130 @@ enum { MLFolderCompositeMaxEntries = 16 };
         return;
     }
     [self.delegate gridView:self didActivateAppAtPath:path];
+}
+
+- (NSMenuItem *)iconMenuItemWithTitle:(NSString *)title
+                               action:(MLOverlayIconMenuAction)action
+                              enabled:(BOOL)enabled {
+    NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title
+                                                  action:@selector(iconContextMenuAction:)
+                                           keyEquivalent:@""];
+    item.target = self;
+    item.tag = (NSInteger)action;
+    item.enabled = enabled;
+    return item;
+}
+
+- (void)rightMouseDown:(NSEvent *)event {
+    if (_dropAnimating || _dragActive) {
+        return;
+    }
+    /* Cancel pending left-drag tracking so a right-click does not become a drop. */
+    if (_dragTracking) {
+        [self endDragVisuals];
+    }
+
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    NSInteger vis = [self visibleSlotAtPoint:p];
+    if (vis < 0 || [self isFolderAtVisibleIndex:vis]) {
+        return;
+    }
+
+    NSString *path = [self appPathAtVisibleIndex:vis];
+    if (path.length == 0) {
+        return;
+    }
+
+    MLOverlayIconMenuFlags *flags = [[MLOverlayIconMenuFlags alloc] init];
+    flags.isApp = YES;
+    flags.appPath = path;
+    flags.canPin = YES;
+    if ([self.delegate respondsToSelector:@selector(gridView:iconMenuFlags:forVisibleIndex:)]) {
+        [self.delegate gridView:self iconMenuFlags:flags forVisibleIndex:vis];
+    }
+    if (!flags.isApp || flags.appPath.length == 0) {
+        return;
+    }
+
+    self.selectedVisibleIndex = vis;
+    _menuVisibleIndex = vis;
+
+    NSMenu *menu = [[NSMenu alloc] initWithTitle:@"OverlayIcon"];
+    [menu addItem:[self iconMenuItemWithTitle:[MLStrings t:@"overlay.menu.open"]
+                                       action:MLOverlayIconMenuActionOpen
+                                      enabled:YES]];
+    [menu addItem:[self iconMenuItemWithTitle:[MLStrings t:@"overlay.menu.reveal_in_finder"]
+                                       action:MLOverlayIconMenuActionRevealInFinder
+                                      enabled:YES]];
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    NSString *pinTitle = flags.pinned ? [MLStrings t:@"overlay.menu.unpin"]
+                                      : [MLStrings t:@"overlay.menu.pin"];
+    [menu addItem:[self iconMenuItemWithTitle:pinTitle
+                                       action:MLOverlayIconMenuActionPinToggle
+                                      enabled:flags.canPin]];
+
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    NSMenuItem *moveRoot = [[NSMenuItem alloc] initWithTitle:[MLStrings t:@"overlay.menu.move_to"]
+                                                      action:nil
+                                               keyEquivalent:@""];
+    NSArray<NSString *> *folderIds = flags.folderIds ?: @[];
+    NSArray<NSString *> *folderNames = flags.folderNames ?: @[];
+    if (folderIds.count == 0) {
+        moveRoot.enabled = NO;
+        NSMenu *emptySub = [[NSMenu alloc] initWithTitle:[MLStrings t:@"overlay.menu.move_to"]];
+        NSMenuItem *none = [self iconMenuItemWithTitle:[MLStrings t:@"overlay.menu.no_folders"]
+                                                action:MLOverlayIconMenuActionMoveToFolder
+                                               enabled:NO];
+        [emptySub addItem:none];
+        moveRoot.submenu = emptySub;
+    } else {
+        NSMenu *sub = [[NSMenu alloc] initWithTitle:[MLStrings t:@"overlay.menu.move_to"]];
+        NSUInteger n = MIN(folderIds.count, folderNames.count);
+        for (NSUInteger i = 0; i < n; i++) {
+            NSString *fid = folderIds[i];
+            NSString *fname = folderNames[i];
+            if (fid.length == 0) {
+                continue;
+            }
+            if (fname.length == 0) {
+                fname = [MLStrings t:@"overlay.menu.folder_default"];
+            }
+            NSMenuItem *item = [self iconMenuItemWithTitle:fname
+                                                    action:MLOverlayIconMenuActionMoveToFolder
+                                                   enabled:YES];
+            item.representedObject = fid;
+            [sub addItem:item];
+        }
+        moveRoot.submenu = sub;
+        moveRoot.enabled = (sub.numberOfItems > 0);
+    }
+    [menu addItem:moveRoot];
+
+    [menu addItem:[NSMenuItem separatorItem]];
+    [menu addItem:[self iconMenuItemWithTitle:[MLStrings t:@"overlay.menu.uninstall"]
+                                       action:MLOverlayIconMenuActionUninstall
+                                      enabled:flags.canUninstall]];
+
+    [NSMenu popUpContextMenu:menu withEvent:event forView:self];
+}
+
+- (void)iconContextMenuAction:(NSMenuItem *)sender {
+    MLOverlayIconMenuAction action = (MLOverlayIconMenuAction)sender.tag;
+    NSInteger vis = _menuVisibleIndex;
+    _menuVisibleIndex = -1;
+    NSString *folderId = nil;
+    if ([sender.representedObject isKindOfClass:[NSString class]]) {
+        folderId = (NSString *)sender.representedObject;
+    }
+    if (![self.delegate respondsToSelector:@selector(gridView:didSelectIconMenuAction:atVisibleIndex:folderId:)]) {
+        return;
+    }
+    [self.delegate gridView:self
+     didSelectIconMenuAction:action
+             atVisibleIndex:vis
+                   folderId:folderId];
 }
 
 @end
