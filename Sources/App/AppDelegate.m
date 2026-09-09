@@ -17,6 +17,8 @@
 #import "MLIconCache.h"
 #import "MLTaskbarPinStore.h"
 #import "MLTaskbarView.h"
+#import "MLAudioActivityMonitor.h"
+#import "MLAppAudioMuteController.h"
 
 #include "ml_app_index.h"
 #include "ml_layout.h"
@@ -41,6 +43,8 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLTaskbarPinStore *taskbarPins;
 @property (nonatomic, strong) MLRunningAppsMonitor *runningApps;
 @property (nonatomic, strong) MLIconCache *taskbarIcons;
+@property (nonatomic, strong) MLAudioActivityMonitor *audioActivity;
+@property (nonatomic, strong) MLAppAudioMuteController *audioMute;
 @property (nonatomic, strong) MLTaskbarController *taskbar;
 @property (nonatomic, strong) MLMemoryStatusController *memoryStatus;
 @property (nonatomic, strong) MLIdleMemoryReclaimer *idleMemoryReclaimer;
@@ -85,9 +89,14 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.taskbarIcons = [[MLIconCache alloc] init];
     self.taskbarIcons.maxEntries = 48;
     self.taskbarIcons.iconPointSize = 32.0;
+    self.audioActivity = [[MLAudioActivityMonitor alloc] init];
+    self.audioMute = [[MLAppAudioMuteController alloc] init];
     self.taskbar = [[MLTaskbarController alloc] initWithPinStore:self.taskbarPins
                                                          monitor:self.runningApps
                                                        iconCache:self.taskbarIcons];
+    self.taskbar.audioActivity = self.audioActivity;
+    self.taskbar.audioMute = self.audioMute;
+    self.taskbar.audioIndicatorEnabled = self.config.taskbarAudioIndicatorEnabled;
     self.taskbar.appActions = self;
     self.taskbar.enabled = self.config.taskbarEnabled;
     [self.overlay setIconCacheMaxEntries:self.config.overlayIconCacheMax];
@@ -190,6 +199,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     [self.runningApps applyWindowPollInterval:self.config.taskbarWindowPollSeconds];
     if (self.config.taskbarEnabled) {
         self.taskbar.enabled = YES;
+        self.taskbar.audioIndicatorEnabled = self.config.taskbarAudioIndicatorEnabled;
         [self.taskbar start];
     } else {
         [self.taskbar stop];

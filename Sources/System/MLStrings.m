@@ -73,6 +73,26 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Version %@ (%@)",
             @"zh" : @"版本 %@（%@）",
         },
+        @"taskbar.audio.mute_failed" : @{
+            @"en" : @"Couldn’t mute this app",
+            @"zh" : @"无法静音此应用",
+        },
+        @"taskbar.audio.mute_failed_detail" : @{
+            @"en" : @"Grant System Audio Recording permission in System Settings, or try again.",
+            @"zh" : @"请在系统设置中允许「系统音频录制」权限后重试。",
+        },
+        @"taskbar.audio.ok" : @{
+            @"en" : @"OK",
+            @"zh" : @"好",
+        },
+        @"taskbar.audio.mute" : @{
+            @"en" : @"Mute App",
+            @"zh" : @"静音此应用",
+        },
+        @"taskbar.audio.unmute" : @{
+            @"en" : @"Unmute App",
+            @"zh" : @"取消静音",
+        },
         @"overlay.menu.open" : @{
             @"en" : @"Open",
             @"zh" : @"打开",
@@ -272,6 +292,10 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
         @"prefs.taskbar_enabled" : @{
             @"en" : @"Show taskbar",
             @"zh" : @"显示任务栏",
+        },
+        @"prefs.taskbar_audio_indicator" : @{
+            @"en" : @"Show sound indicator on taskbar (mute on click)",
+            @"zh" : @"任务栏显示声音指示（点击可静音）",
         },
         @"prefs.memory_free_enabled" : @{
             @"en" : @"Show free memory % in menu bar",

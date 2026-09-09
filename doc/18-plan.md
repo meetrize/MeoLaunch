@@ -1,7 +1,7 @@
 # 18-Plan — Overlay 应用图标右键菜单（自动化任务卡）
 
-> **当前自动化队列真源**（17-plan 已全部 done）。  
-> 用户说「继续」「全自动开发」「按 18-plan」「Overlay 右键」等 → 读下方 **Status**，执行第一个 `pending`。  
+> **已全部 done。** 当前自动化队列真源改为 [19-plan.md](./19-plan.md)（任务栏声音指示）。  
+> 若需回顾本里程碑：用户说「按 18-plan」「Overlay 右键」等 → 以本文件 Status 为准（应无 pending）。  
 > 设计：[18-overlay-icon-context-menu.md](./18-overlay-icon-context-menu.md)
 
 ## Status

@@ -1,0 +1,34 @@
+---
+description: 任务栏声音指示 A-Plan 全自动开发（19-plan）
+globs:
+  - Sources/**
+  - Scripts/**
+  - doc/19*.md
+  - doc/18*.md
+alwaysApply: true
+---
+
+# MeoLaunch A-Plan（任务栏声音指示 + 静音）
+
+当仓库存在未完成的 `doc/19-plan.md` 任务卡时，**优先**执行 19-plan（高于已全部 done 的 18/17/16/15-plan）。
+
+## 触发语
+
+用户说「继续」「继续自动化」「全自动开发」「做 A 计划」「按 19-plan」「任务栏声音」「音频指示」「声音指示」等 → 立刻读 `doc/19-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+
+## 全自动协议
+
+1. 读 `doc/19-taskbar-audio-indicator.md` 理解目标（若尚未读过）。
+2. **一次一卡**实现；跑该卡验收（至少 `./Scripts/build.sh`）。
+3. 把该卡 Status 改为 `done` 并写备注。
+4. **同一会话继续下一张 pending**，直到全部 `done`、验收失败需决策、或用户打断。
+5. 遵守 peek 不变量：`.cursor/rules/taskbar-peek-invariants.mdc`。
+6. 不引入第三方库；不改 `doc/00`–`doc/06` 正文（`00-overview` 索引表可以加链接）。
+7. 非用户明确要求不要 git commit / push。
+8. **macOS 14.2+** 门控；角标点击不得触发芯片左键 activate/soft-min；无用户静音时不建 Process Tap。
+
+## 目标摘要
+
+- 任务条：应用正在音频输出时显示喇叭；点击角标 mute/unmute（Process Tap）。
+- 按进程（pid/bundle）共享状态；非窗口级。
+- A0 spike 不可行则停并报告，勿强行做完后续卡。

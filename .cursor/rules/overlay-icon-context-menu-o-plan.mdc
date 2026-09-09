@@ -1,10 +1,10 @@
 # MeoLaunch O-Plan（Overlay 图标右键菜单）
 
-当仓库存在未完成的 `doc/18-plan.md` 任务卡时，**优先**执行该 Plan（高于已全部 done 的 17/16/15-plan）。
+当仓库存在未完成的 `doc/19-plan.md` 任务卡时，**优先**执行 19-plan；其次未完成的 `doc/18-plan.md`（高于已全部 done 的 17/16/15-plan）。
 
 ## 触发语
 
-用户说「继续」「继续自动化」「全自动开发」「做 O 计划」「按 18-plan」「Overlay 右键」等 → 立刻读 `doc/18-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+用户说「继续」「继续自动化」「全自动开发」「做 O 计划」「按 18-plan」「Overlay 右键」等 → 若 19-plan 仍有 pending，先跑 19；否则读 `doc/18-plan.md` 的 **Status**，执行第一个 `pending` 卡。
 
 ## 全自动协议
 

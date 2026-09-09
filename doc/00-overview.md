@@ -28,7 +28,9 @@
 | [17-slim-icon-fast-show.md](./17-slim-icon-fast-show.md) | Slim Icon：控 Active 内存 + 热区/翻页快显 |
 | [17-plan.md](./17-plan.md) | S0–S3 任务卡（已完成） |
 | [18-overlay-icon-context-menu.md](./18-overlay-icon-context-menu.md) | Overlay 应用图标右键：打开/访达/钉住/移入组/卸载 |
-| [18-plan.md](./18-plan.md) | O0–O3 任务卡（自动化真源） |
+| [18-plan.md](./18-plan.md) | O0–O3 任务卡（已完成） |
+| [19-taskbar-audio-indicator.md](./19-taskbar-audio-indicator.md) | 任务栏声音指示 + 一键静音（14.2+ Process Tap） |
+| [19-plan.md](./19-plan.md) | A0–A4 任务卡（已完成） |
 
 ## 产品定位
 

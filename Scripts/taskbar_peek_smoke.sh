@@ -51,6 +51,9 @@ SYSTEM_SOURCES=(
   "$ROOT/Sources/System/MLAXWindowHelper.m"
   "$ROOT/Sources/System/MLCGSAlpha.m"
   "$ROOT/Sources/System/MLStrings.m"
+  "$ROOT/Sources/System/MLAudioProcessSupport.m"
+  "$ROOT/Sources/System/MLAudioActivityMonitor.m"
+  "$ROOT/Sources/System/MLAppAudioMuteController.m"
 )
 
 OBJS=()
@@ -62,7 +65,7 @@ done
 compile_m "$ROOT/Tools/taskbar_peek_smoke.m"
 OBJS+=("$OBJ/taskbar_peek_smoke.o")
 
-clang -o "$OUT" "${OBJS[@]}" "${LIBS[@]}"
+clang -o "$OUT" "${OBJS[@]}" "${LIBS[@]}" -framework CoreAudio
 
 echo "[taskbar_peek_smoke] running ..."
 "$OUT"

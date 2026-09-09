@@ -1,10 +1,82 @@
 #import "MLTaskbarController+Private.h"
 
+#import "MLAppAudioMuteController.h"
 #import "MLScreenGeometry.h"
 
 #import <ApplicationServices/ApplicationServices.h>
 
 @implementation MLTaskbarController (Items)
+
+- (MLTaskbarAudioState)audioStateForPID:(pid_t)pid bundleID:(NSString *)bundleID {
+    return [self audioStateForPID:pid bundleID:bundleID appPath:nil];
+}
+
+- (MLTaskbarAudioState)audioStateForPID:(pid_t)pid
+                               bundleID:(NSString *)bundleID
+                                appPath:(NSString *)appPath {
+    if (!self.audioIndicatorEnabled) {
+        return MLTaskbarAudioNone;
+    }
+    if (self.audioMute && [self.audioMute isMutedPID:pid bundleID:bundleID]) {
+        return MLTaskbarAudioMuted;
+    }
+    if (self.audioActivity &&
+        [self.audioActivity isAudioActiveForPID:pid bundleID:bundleID appPath:appPath]) {
+        return MLTaskbarAudioPlaying;
+    }
+    return MLTaskbarAudioNone;
+}
+
+- (NSString *)bundleIDForItemPath:(NSString *)path fallback:(NSString *)fallback {
+    if (fallback.length > 0) {
+        return fallback;
+    }
+    if (path.length == 0) {
+        return nil;
+    }
+    return [[NSBundle bundleWithPath:path] bundleIdentifier];
+}
+
+- (void)applyAudioStateOntoItemArray:(NSArray<MLTaskbarItem *> *)items {
+    for (MLTaskbarItem *it in items ?: @[]) {
+        if (it.kind != MLTaskbarItemRunningWindow) {
+            it.audioState = MLTaskbarAudioNone;
+            continue;
+        }
+        if (it.bundleID.length == 0) {
+            it.bundleID = [self bundleIDForItemPath:it.path fallback:nil];
+        }
+        it.audioState = [self audioStateForPID:it.pid bundleID:it.bundleID appPath:it.path];
+    }
+}
+
+/** Refresh badges without full rebuild (audio activity notification). */
+- (void)applyAudioBadgesFromMonitor {
+    [self pruneDeadAudioMutes];
+    if (self.itemsFrozenForDesktopReveal) {
+        for (NSNumber *sid in self.frozenItemsByScreenID) {
+            [self applyAudioStateOntoItemArray:self.frozenItemsByScreenID[sid]];
+        }
+    }
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        [self applyAudioStateOntoItemArray:bar.barView.items];
+        [self applyAudioStateOntoItemArray:bar.pendingItems];
+        [bar.barView setNeedsDisplay:YES];
+    }
+}
+
+- (void)pruneDeadAudioMutes {
+    if (!self.audioMute) {
+        return;
+    }
+    for (NSNumber *pidNum in [self.audioMute copyMutedPIDs]) {
+        pid_t pid = (pid_t)pidNum.intValue;
+        NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+        if (!app || app.terminated) {
+            [self.audioMute unmutePID:pid error:NULL];
+        }
+    }
+}
 
 - (NSString *)displayNameForPath:(NSString *)path {
     if (path.length == 0) {
@@ -439,6 +511,7 @@
         c.minimized = it.minimized;
         c.active = it.active;
         c.seenOrder = it.seenOrder;
+        c.audioState = it.audioState;
         [out addObject:c];
     }
     return out;
@@ -558,15 +631,18 @@
             ord = priorOrderByPathTitle[pt].unsignedIntegerValue;
         }
         BOOL active = !w.minimized && w.windowID != 0 && frontWid != 0 && w.windowID == frontWid;
-        [windowItems addObject:[self itemWithPath:w.path
-                                              pid:w.pid
-                                         windowID:w.windowID
-                                            title:title
-                                             kind:MLTaskbarItemRunningWindow
-                                           pinned:pinned
-                                        minimized:w.minimized
-                                           active:active
-                                        seenOrder:ord]];
+        MLTaskbarItem *chip = [self itemWithPath:w.path
+                                             pid:w.pid
+                                        windowID:w.windowID
+                                           title:title
+                                            kind:MLTaskbarItemRunningWindow
+                                          pinned:pinned
+                                       minimized:w.minimized
+                                          active:active
+                                       seenOrder:ord];
+        chip.bundleID = [self bundleIDForItemPath:w.path fallback:w.bundleID];
+        chip.audioState = [self audioStateForPID:w.pid bundleID:chip.bundleID appPath:w.path];
+        [windowItems addObject:chip];
     }
 
     [windowItems sortUsingComparator:^NSComparisonResult(MLTaskbarItem *a, MLTaskbarItem *b) {

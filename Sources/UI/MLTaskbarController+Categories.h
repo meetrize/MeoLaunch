@@ -50,6 +50,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)commitPendingItemsForce:(BOOL)force;
 - (void)computePendingItemsForAllBars;
 - (void)rebuildItemsImmediate:(BOOL)immediate;
+- (void)applyAudioBadgesFromMonitor;
+- (nullable NSString *)bundleIDForItemPath:(nullable NSString *)path
+                                  fallback:(nullable NSString *)fallback;
 - (NSMutableArray<MLTaskbarItem *> *)fitItems:(NSMutableArray<MLTaskbarItem *> *)items
                                       toWidth:(CGFloat)width
                                       spacing:(CGFloat)spacing
@@ -165,6 +168,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)closeWindowForItem:(MLTaskbarItem *)item;
 - (void)toggleMinimizeForItem:(MLTaskbarItem *)item;
 - (void)toggleFullscreenForItem:(MLTaskbarItem *)item;
+- (void)toggleAudioMuteForItem:(MLTaskbarItem *)item;
 
 @end
 

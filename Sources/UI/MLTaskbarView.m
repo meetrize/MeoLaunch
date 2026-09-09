@@ -29,6 +29,7 @@
 @property (nonatomic, assign) CGFloat externalPlaceholderWidth;
 @property (nonatomic, strong) NSWindow *ghostWindow;
 @property (nonatomic, strong) NSImageView *ghostImageView;
+@property (nonatomic, assign) NSInteger pendingAudioBadgeIndex;
 @end
 
 @implementation MLTaskbarView
@@ -55,6 +56,7 @@
         _menuIndex = -1;
         _dragSourceIndex = -1;
         _dropInsertIndex = -1;
+        _pendingAudioBadgeIndex = -1;
         _gapAnimFromDest = -1;
         _localDragZone = MLTaskbarChipZoneNone;
         _externalPreviewZone = MLTaskbarChipZoneNone;
@@ -238,6 +240,45 @@
         }
     }
     return -1;
+}
+
+- (NSRect)iconRectForItemAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.items.count) {
+        return NSZeroRect;
+    }
+    MLTaskbarItem *item = self.items[(NSUInteger)index];
+    if ([self isPinnedIconOnly:item]) {
+        return NSZeroRect;
+    }
+    CGFloat chipW = [self windowChipWidth];
+    NSRect cell = [self layoutRectForIndex:index chipWidth:chipW];
+    if (NSIsEmptyRect(cell)) {
+        return NSZeroRect;
+    }
+    NSRect chip = NSInsetRect(cell, 0.0, 3.0);
+    return NSMakeRect(NSMinX(chip) + 6.0,
+                      NSMinY(chip) + (NSHeight(chip) - self.iconSize) * 0.5,
+                      self.iconSize,
+                      self.iconSize);
+}
+
+- (NSRect)audioBadgeRectForItemAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)self.items.count) {
+        return NSZeroRect;
+    }
+    MLTaskbarItem *item = self.items[(NSUInteger)index];
+    if (item.audioState == MLTaskbarAudioNone) {
+        return NSZeroRect;
+    }
+    NSRect iconRect = [self iconRectForItemAtIndex:index];
+    if (NSIsEmptyRect(iconRect)) {
+        return NSZeroRect;
+    }
+    CGFloat s = 16.0; /* hit slightly larger than draw */
+    return NSMakeRect(NSMaxX(iconRect) - s + 3.0,
+                      NSMaxY(iconRect) - s + 2.0,
+                      s,
+                      s);
 }
 
 - (NSRect)rectForItemAtIndex:(NSInteger)index {
@@ -599,6 +640,56 @@
     }
 }
 
+- (void)drawAudioBadgeForItem:(MLTaskbarItem *)item iconRect:(NSRect)iconRect {
+    if (!item || item.audioState == MLTaskbarAudioNone) {
+        return;
+    }
+    CGFloat s = 14.0;
+    /* Bottom-right of icon (flipped view: MinY is top — use MaxY for bottom). */
+    NSRect badge = NSMakeRect(NSMaxX(iconRect) - s + 2.0,
+                              NSMaxY(iconRect) - s + 1.0,
+                              s,
+                              s);
+    [[NSColor colorWithCalibratedRed:0.12 green:0.45 blue:0.95 alpha:0.95] setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:badge] fill];
+    [[NSColor colorWithCalibratedWhite:1.0 alpha:0.9] setStroke];
+    NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(badge, 0.5, 0.5)];
+    ring.lineWidth = 1.0;
+    [ring stroke];
+
+    [[NSColor whiteColor] setFill];
+    [[NSColor whiteColor] setStroke];
+    CGFloat cx = NSMidX(badge);
+    CGFloat cy = NSMidY(badge);
+    NSBezierPath *body = [NSBezierPath bezierPath];
+    [body moveToPoint:NSMakePoint(cx - 3.4, cy - 1.7)];
+    [body lineToPoint:NSMakePoint(cx - 1.2, cy - 1.7)];
+    [body lineToPoint:NSMakePoint(cx + 1.2, cy - 3.4)];
+    [body lineToPoint:NSMakePoint(cx + 1.2, cy + 3.4)];
+    [body lineToPoint:NSMakePoint(cx - 1.2, cy + 1.7)];
+    [body lineToPoint:NSMakePoint(cx - 3.4, cy + 1.7)];
+    [body closePath];
+    [body fill];
+
+    if (item.audioState == MLTaskbarAudioMuted) {
+        NSBezierPath *slash = [NSBezierPath bezierPath];
+        slash.lineWidth = 1.4;
+        slash.lineCapStyle = NSLineCapStyleRound;
+        [slash moveToPoint:NSMakePoint(cx - 3.8, cy - 3.8)];
+        [slash lineToPoint:NSMakePoint(cx + 3.8, cy + 3.8)];
+        [slash stroke];
+    } else {
+        NSBezierPath *wave = [NSBezierPath bezierPath];
+        wave.lineWidth = 1.15;
+        wave.lineCapStyle = NSLineCapStyleRound;
+        [wave moveToPoint:NSMakePoint(cx + 2.2, cy - 2.0)];
+        [wave curveToPoint:NSMakePoint(cx + 2.2, cy + 2.0)
+             controlPoint1:NSMakePoint(cx + 3.7, cy - 1.1)
+             controlPoint2:NSMakePoint(cx + 3.7, cy + 1.1)];
+        [wave stroke];
+    }
+}
+
 - (void)drawPlaceholderInRect:(NSRect)cell {
     if (NSIsEmptyRect(cell)) {
         return;
@@ -731,6 +822,7 @@
             NSBezierPath *ph = [NSBezierPath bezierPathWithRoundedRect:iconRect xRadius:6.0 yRadius:6.0];
             [ph fill];
         }
+        [self drawAudioBadgeForItem:item iconRect:iconRect];
 
         NSRect titleRect = NSMakeRect(NSMaxX(iconRect) + 6.0,
                                       NSMinY(chip) + (NSHeight(chip) - 14.0) * 0.5,
@@ -873,7 +965,17 @@
     }
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     NSInteger idx = [self indexAtPoint:p];
+    self.pendingAudioBadgeIndex = -1;
     if (idx < 0) {
+        self.dragTracking = NO;
+        self.dragActive = NO;
+        self.dragSourceIndex = -1;
+        return;
+    }
+    NSRect badge = [self audioBadgeRectForItemAtIndex:idx];
+    if (!NSIsEmptyRect(badge) && NSPointInRect(p, badge)) {
+        /* Badge click — no chip drag / activate. */
+        self.pendingAudioBadgeIndex = idx;
         self.dragTracking = NO;
         self.dragActive = NO;
         self.dragSourceIndex = -1;
@@ -931,6 +1033,8 @@
     NSPoint screenPt = [NSEvent mouseLocation];
     BOOL wasDragging = self.dragActive;
     NSInteger src = self.dragSourceIndex;
+    NSInteger audioIdx = self.pendingAudioBadgeIndex;
+    self.pendingAudioBadgeIndex = -1;
 
     if (wasDragging) {
         if ([self.delegate respondsToSelector:@selector(taskbarView:endedDragAtScreenPoint:cancelled:)]) {
@@ -943,7 +1047,16 @@
     self.dragTracking = NO;
     self.dragActive = NO;
     self.dragSourceIndex = -1;
-    (void)p;
+
+    if (audioIdx >= 0) {
+        NSRect badge = [self audioBadgeRectForItemAtIndex:audioIdx];
+        if (!NSIsEmptyRect(badge) && NSPointInRect(p, badge) &&
+            [self.delegate respondsToSelector:@selector(taskbarView:didClickAudioBadgeAtIndex:)]) {
+            [self.delegate taskbarView:self didClickAudioBadgeAtIndex:audioIdx];
+        }
+        return;
+    }
+
     if (src >= 0 && [self.delegate respondsToSelector:@selector(taskbarView:didClickItemAtIndex:)]) {
         [self.delegate taskbarView:self didClickItemAtIndex:src];
     }
@@ -1039,6 +1152,13 @@
         [menu addItem:[self menuItemWithTitle:pinTitle
                                        action:MLTaskbarMenuActionPinToggle
                                       enabled:YES]];
+        if (flags.audioMuteAvailable) {
+            NSString *muteTitle = flags.audioMuted ? [MLStrings t:@"taskbar.audio.unmute"]
+                                                   : [MLStrings t:@"taskbar.audio.mute"];
+            [menu addItem:[self menuItemWithTitle:muteTitle
+                                           action:MLTaskbarMenuActionAudioMuteToggle
+                                          enabled:YES]];
+        }
         [menu addItem:[NSMenuItem separatorItem]];
     }
 

@@ -10,6 +10,13 @@ typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
     MLTaskbarItemRunningWindow,
 };
 
+/** Audio chrome on a chip (doc/19). None/Playing in A1; Muted in A2. */
+typedef NS_ENUM(NSInteger, MLTaskbarAudioState) {
+    MLTaskbarAudioNone = 0,
+    MLTaskbarAudioPlaying,
+    MLTaskbarAudioMuted,
+};
+
 typedef NS_ENUM(NSInteger, MLTaskbarChipZone) {
     MLTaskbarChipZoneNone = 0,
     MLTaskbarChipZonePin,
@@ -21,6 +28,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
     MLTaskbarMenuActionMinimizeToggle,
     MLTaskbarMenuActionFullscreenToggle,
     MLTaskbarMenuActionPinToggle,
+    MLTaskbarMenuActionAudioMuteToggle,
     MLTaskbarMenuActionAbout,
     MLTaskbarMenuActionPreferences,
     MLTaskbarMenuActionQuit,
@@ -38,6 +46,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 /** Frontmost on-screen window of the frontmost app. */
 @property (nonatomic, assign) BOOL active;
 @property (nonatomic, assign) NSUInteger seenOrder;
+/** Per-process audio indicator (shared across chips with same pid). */
+@property (nonatomic, assign) MLTaskbarAudioState audioState;
 @end
 
 /** Live flags for context menu (read at popup time). index < 0 = empty bar. */
@@ -47,6 +57,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 @property (nonatomic, assign) BOOL fullscreen;
 @property (nonatomic, assign) BOOL fullscreenSupported;
 @property (nonatomic, assign) BOOL pinned;
+@property (nonatomic, assign) BOOL audioMuteAvailable;
+@property (nonatomic, assign) BOOL audioMuted;
 @end
 
 @protocol MLTaskbarAppActions <NSObject>
@@ -74,6 +86,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 - (void)taskbarView:(MLTaskbarView *)view
     endedDragAtScreenPoint:(NSPoint)screenPoint
                  cancelled:(BOOL)cancelled;
+/** Audio badge only — must not activate / soft-min the chip. */
+- (void)taskbarView:(MLTaskbarView *)view didClickAudioBadgeAtIndex:(NSInteger)index;
 @end
 
 @interface MLTaskbarView : NSView
@@ -90,6 +104,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 
 - (NSInteger)indexAtPoint:(NSPoint)p;
 - (NSRect)rectForItemAtIndex:(NSInteger)index;
+/** Hit / draw rect for audio badge; empty if none. */
+- (NSRect)audioBadgeRectForItemAtIndex:(NSInteger)index;
 
 /** Leading contiguous PinnedOnly count (pin zone length). */
 - (NSInteger)pinZoneCount;

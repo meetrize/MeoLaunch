@@ -19,6 +19,7 @@
 | 左键 | 窗口芯片：未激活→前置；已最前→软最小化；已最小化→还原几何。钉住未运行→启动 |
 | 右键 | 见 [11-taskbar-context-menu.md](./11-taskbar-context-menu.md)：关闭 / 最小化↔还原 / 全屏 / 钉住 / MeoLaunch▸ |
 | 持久化 | 钉住列表写入 `taskbar_pins.json`（仅 path） |
+| 声音指示（扩展） | macOS 14.2+：出声应用芯片显示喇叭；点角标 / 右键静音。设计见 [19-taskbar-audio-indicator.md](./19-taskbar-audio-indicator.md) |
 
 ### 非目标（明确不做）
 

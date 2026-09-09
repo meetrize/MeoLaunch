@@ -1,5 +1,7 @@
 #import "MLTaskbarController+Private.h"
 
+#import "MLAudioActivityMonitor.h"
+#import "MLAppAudioMuteController.h"
 #import "MLMinimizeInterceptor.h"
 #import "MLRunningAppsMonitor.h"
 #import "MLTaskbarPinStore.h"
@@ -33,6 +35,7 @@
         _desktopRevealArmTime = 0;
         _desktopPeekUserArmed = NO;
         _stickyDisplayUntil = 0;
+        _audioIndicatorEnabled = YES;
     }
     return self;
 }
@@ -87,6 +90,13 @@
              selector:@selector(activeSpaceDidChange:)
                  name:NSWorkspaceActiveSpaceDidChangeNotification
                object:nil];
+    if (self.audioActivity && self.audioIndicatorEnabled) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(audioActivityDidChange:)
+                                                     name:MLAudioActivityDidChangeNotification
+                                                   object:self.audioActivity];
+        [self.audioActivity start];
+    }
 
     [self.monitor start];
     /* Allow Show Desktop freeze only after census has settled (avoid startup false peek). */
@@ -140,6 +150,8 @@
     self.minimizeInterceptor = nil;
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
+    [self.audioActivity stop];
+    [self.audioMute unmuteAll];
     [self.monitor stop];
     for (MLTaskbarScreenBar *bar in self.bars) {
         [bar.window orderOut:nil];
@@ -164,6 +176,38 @@
     }
     [self rebuildItemsImmediate:YES];
 }
+- (void)audioActivityDidChange:(NSNotification *)note {
+    (void)note;
+    [self applyAudioBadgesFromMonitor];
+}
+
+- (void)setAudioIndicatorEnabled:(BOOL)audioIndicatorEnabled {
+    if (_audioIndicatorEnabled == audioIndicatorEnabled) {
+        return;
+    }
+    _audioIndicatorEnabled = audioIndicatorEnabled;
+    if (!self.started) {
+        return;
+    }
+    if (!_audioIndicatorEnabled) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                        name:MLAudioActivityDidChangeNotification
+                                                      object:self.audioActivity];
+        [self.audioActivity stop];
+        [self.audioMute unmuteAll];
+        [self applyAudioBadgesFromMonitor];
+        return;
+    }
+    if (self.audioActivity) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(audioActivityDidChange:)
+                                                     name:MLAudioActivityDidChangeNotification
+                                                   object:self.audioActivity];
+        [self.audioActivity start];
+        [self applyAudioBadgesFromMonitor];
+    }
+}
+
 - (void)runningDidChange:(NSNotification *)note {
     (void)note;
     [self applyActiveHighlightImmediate];

@@ -63,6 +63,7 @@ LIBS=(
   -framework ServiceManagement
   -framework CoreServices
   -framework CoreGraphics
+  -framework CoreAudio
 )
 
 COMMON_FLAGS=(-mmacosx-version-min="$MIN_MACOS" "${INC[@]}")

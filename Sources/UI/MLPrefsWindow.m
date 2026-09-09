@@ -1,5 +1,6 @@
 #import "MLPrefsWindow.h"
 
+#import "MLAppAudioMuteController.h"
 #import "MLConfigStore.h"
 #import "MLLaunchAtLogin.h"
 #import "MLScreenGeometry.h"
@@ -52,6 +53,7 @@
 @property (nonatomic, strong) NSTextField *hotkeyLabel;
 @property (nonatomic, strong) MLHotKeyRecorder *hotkeyRecorder;
 @property (nonatomic, strong) NSButton *taskbarEnabled;
+@property (nonatomic, strong) NSButton *taskbarAudioIndicator;
 @property (nonatomic, strong) NSButton *memoryFreeEnabled;
 @property (nonatomic, strong) NSTextField *pollLabel;
 @property (nonatomic, strong) NSSlider *pollSlider;
@@ -350,6 +352,13 @@ static const CGFloat kPrefsValueW = 48;
     [c addSubview:self.taskbarEnabled];
     y += 28;
 
+    self.taskbarAudioIndicator = [NSButton checkboxWithTitle:@""
+                                                      target:self
+                                                      action:@selector(prefsChanged:)];
+    self.taskbarAudioIndicator.frame = NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 24);
+    [c addSubview:self.taskbarAudioIndicator];
+    y += 28;
+
     self.memoryFreeEnabled = [NSButton checkboxWithTitle:@""
                                                   target:self
                                                   action:@selector(prefsChanged:)];
@@ -573,6 +582,7 @@ static const CGFloat kPrefsValueW = 48;
     self.hotkeyEnabled.title = [MLStrings t:@"prefs.hotkey_enabled"];
     self.hotkeyLabel.stringValue = [MLStrings t:@"prefs.hotkey_shortcut"];
     self.taskbarEnabled.title = [MLStrings t:@"prefs.taskbar_enabled"];
+    self.taskbarAudioIndicator.title = [MLStrings t:@"prefs.taskbar_audio_indicator"];
     self.memoryFreeEnabled.title = [MLStrings t:@"prefs.memory_free_enabled"];
     self.pollLabel.stringValue = [MLStrings t:@"prefs.window_poll"];
     self.iconCacheLabel.stringValue = [MLStrings t:@"prefs.overlay_icon_cache"];
@@ -647,6 +657,7 @@ static const CGFloat kPrefsValueW = 48;
                             control:NO
                               shift:YES];
     self.taskbarEnabled.state = NSControlStateValueOn;
+    self.taskbarAudioIndicator.state = NSControlStateValueOn;
     self.memoryFreeEnabled.state = NSControlStateValueOff;
     self.pollSlider.doubleValue = 10;
     [self updatePollValueLabel];
@@ -667,6 +678,11 @@ static const CGFloat kPrefsValueW = 48;
     BOOL keyOn = (self.hotkeyEnabled.state == NSControlStateValueOn);
     self.hotkeyRecorder.enabled = keyOn;
     self.hotkeyLabel.textColor = keyOn ? [NSColor labelColor] : [NSColor disabledControlTextColor];
+
+    BOOL audioOK = [MLAppAudioMuteController isAvailable];
+    self.taskbarAudioIndicator.hidden = !audioOK;
+    self.taskbarAudioIndicator.enabled =
+        audioOK && (self.taskbarEnabled.state == NSControlStateValueOn);
 }
 
 - (void)languageChanged:(id)sender {
@@ -1017,6 +1033,11 @@ static const CGFloat kPrefsValueW = 48;
                             control:self.config.hotkeyControl
                               shift:self.config.hotkeyShift];
     self.taskbarEnabled.state = self.config.taskbarEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    self.taskbarAudioIndicator.state =
+        self.config.taskbarAudioIndicatorEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    BOOL audioOK = [MLAppAudioMuteController isAvailable];
+    self.taskbarAudioIndicator.hidden = !audioOK;
+    self.taskbarAudioIndicator.enabled = audioOK && self.config.taskbarEnabled;
     self.memoryFreeEnabled.state = self.config.memoryFreeEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     NSTimeInterval poll = self.config.taskbarWindowPollSeconds;
     if (poll < 0.5) poll = 0.5;
@@ -1060,6 +1081,10 @@ static const CGFloat kPrefsValueW = 48;
                                shift:self.hotkeyRecorder.capturedShift];
 
     [self.config updateTaskbarEnabled:(self.taskbarEnabled.state == NSControlStateValueOn)];
+    if (!self.taskbarAudioIndicator.hidden) {
+        [self.config updateTaskbarAudioIndicatorEnabled:
+                         (self.taskbarAudioIndicator.state == NSControlStateValueOn)];
+    }
     [self.config updateMemoryFreeEnabled:(self.memoryFreeEnabled.state == NSControlStateValueOn)];
     [self.config updateTaskbarWindowPollSeconds:[self pollSecondsFromSlider]];
     [self.config updateOverlayIconCacheMax:(NSUInteger)lround(self.iconCacheSlider.doubleValue)];

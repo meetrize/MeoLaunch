@@ -1,11 +1,13 @@
 #import "MLTaskbarController+Private.h"
 
+#import "MLAppAudioMuteController.h"
 #import "MLAppLauncher.h"
 #import "MLAXWindowHelper.h"
 #import "MLCGSAlpha.h"
 #import "MLDebugLog.h"
 #import "MLRunningAppsMonitor.h"
 #import "MLScreenGeometry.h"
+#import "MLStrings.h"
 #import "MLTaskbarPinStore.h"
 #import "MLTaskbarView.h"
 #import "MLWindowSoftState.h"
@@ -640,6 +642,45 @@
     }
     [self activateOrLaunchItem:view.items[(NSUInteger)index]];
 }
+
+- (void)taskbarView:(MLTaskbarView *)view didClickAudioBadgeAtIndex:(NSInteger)index {
+    if (index < 0 || index >= (NSInteger)view.items.count) {
+        return;
+    }
+    [self toggleAudioMuteForItem:view.items[(NSUInteger)index]];
+}
+
+- (void)toggleAudioMuteForItem:(MLTaskbarItem *)item {
+    if (!self.audioIndicatorEnabled) {
+        return;
+    }
+    if (!item || item.kind != MLTaskbarItemRunningWindow || item.pid <= 0) {
+        return;
+    }
+    if (!self.audioMute || ![MLAppAudioMuteController isAvailable]) {
+        return;
+    }
+    if (item.bundleID.length == 0) {
+        item.bundleID = [[NSBundle bundleWithPath:item.path ?: @""] bundleIdentifier];
+    }
+    NSError *err = nil;
+    BOOL muted = NO;
+    if (![self.audioMute toggleMutePID:item.pid
+                              bundleID:item.bundleID
+                              outMuted:&muted
+                                 error:&err]) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        alert.messageText = [MLStrings t:@"taskbar.audio.mute_failed"];
+        alert.informativeText = err.localizedDescription.length > 0
+                                    ? err.localizedDescription
+                                    : [MLStrings t:@"taskbar.audio.mute_failed_detail"];
+        [alert addButtonWithTitle:[MLStrings t:@"taskbar.audio.ok"]];
+        [alert runModal];
+        return;
+    }
+    [self applyAudioBadgesFromMonitor];
+}
+
 - (BOOL)readFullscreenForAXWindow:(AXUIElementRef)win {
     if (!win) {
         return NO;
@@ -678,6 +719,8 @@
     flags.fullscreen = NO;
     flags.fullscreenSupported = NO;
     flags.pinned = NO;
+    flags.audioMuteAvailable = NO;
+    flags.audioMuted = NO;
     if (index < 0 || index >= (NSInteger)view.items.count) {
         return;
     }
@@ -685,6 +728,13 @@
     flags.pinned = item.pinned;
     flags.hasWindow = (item.kind == MLTaskbarItemRunningWindow && item.windowID != 0);
     flags.minimized = [self isItemSoftHiddenOrMinimized:item];
+    if (item.kind == MLTaskbarItemRunningWindow && item.pid > 0 &&
+        self.audioIndicatorEnabled &&
+        self.audioMute && [MLAppAudioMuteController isAvailable]) {
+        flags.audioMuteAvailable = (item.audioState != MLTaskbarAudioNone) ||
+                                   [self.audioMute isMutedPID:item.pid bundleID:item.bundleID];
+        flags.audioMuted = [self.audioMute isMutedPID:item.pid bundleID:item.bundleID];
+    }
     if (!flags.hasWindow || !AXIsProcessTrusted()) {
         return;
     }
@@ -838,6 +888,9 @@
             } else {
                 [self.pinStore pinPath:item.path];
             }
+            break;
+        case MLTaskbarMenuActionAudioMuteToggle:
+            [self toggleAudioMuteForItem:item];
             break;
         default:
             break;

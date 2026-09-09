@@ -8,6 +8,7 @@
 #import "MLWindowCensus.h"
 #import "MLTaskbarPinStore.h"
 #import "MLWindowSoftState.h"
+#import "MLAudioActivityMonitor.h"
 
 #import <ApplicationServices/ApplicationServices.h>
 
