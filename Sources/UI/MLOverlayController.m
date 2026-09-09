@@ -1899,6 +1899,24 @@ static void MLLogMemory(NSString *tag, NSUInteger iconCount) {
                    });
 }
 
+/** Skip fade — park warm immediately (Reveal in Finder / other handoff cases). */
+- (void)hideImmediate {
+    if (!self.visible && !self.window.isVisible) {
+        return;
+    }
+    [self removeEscapeMonitor];
+    [self removeOutsideClickMonitors];
+    self.showGeneration += 1;
+    /* Cancel in-flight fade so completion cannot re-enter finishHide late. */
+    NSWindow *w = self.window;
+    if (w) {
+        [w.animator setAlphaValue:w.alphaValue];
+        w.alphaValue = 0.0;
+        [w orderOut:nil];
+    }
+    [self finishHide];
+}
+
 - (BOOL)isVisible {
     return self.visible;
 }
@@ -2304,11 +2322,12 @@ doCommandBySelector:(SEL)commandSelector {
             [self gridView:gridView didActivateAppAtPath:path];
             break;
         case MLOverlayIconMenuActionRevealInFinder:
-            /* Hide first so the file viewer is frontmost; then reveal.
+            /* Instant hide: do not leave a translucent overlay while MeoFind
+             * loads / selects the .app — that felt stuck for seconds.
              * Clear previousApp: finishHide would otherwise re-activate the
              * pre-overlay app and steal focus from a cold-starting MeoFind. */
             self.previousApp = nil;
-            [self hide];
+            [self hideImmediate];
             [self revealAppInFinderAtPath:path];
             break;
         case MLOverlayIconMenuActionPinToggle:
