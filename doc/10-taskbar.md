@@ -2,9 +2,10 @@
 
 > 在 MeoLaunch 上增加 Windows 风格的轻量任务栏：**每屏一条**，以该屏窗口芯片为主，**图标旁显示标题**，支持钉住。  
 > **扩展（N-Plan）**：全局无窗但仍在跑的 Regular 应用，仅在**主屏**显示一条 `RunningNoWindow`（样式区分于有窗芯片）。见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md)。  
-> **扩展（H-Plan）**：右键「隐藏任务芯片」后，该 app **无窗时不占位**；有窗仍显示窗口芯片。见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md)。
+> **扩展（H-Plan）**：右键「隐藏任务芯片」后，该 app **无窗时不占位**；有窗仍显示窗口芯片。见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md)。  
+> **扩展（Q-Plan，已完成）**：全局快捷键弹出芯片定位面板（搜索 / 多屏 / MRU）。见 [22-taskbar-chip-locator.md](./22-taskbar-chip-locator.md) / [22-plan.md](./22-plan.md)。
 
-相关实现任务卡见 [07-agent-playbook.md](./07-agent-playbook.md)（T0–T5）；无窗运行态见 [20-plan.md](./20-plan.md)；隐藏芯片见 [21-plan.md](./21-plan.md)。
+相关实现任务卡见 [07-agent-playbook.md](./07-agent-playbook.md)（T0–T5）；无窗运行态见 [20-plan.md](./20-plan.md)；隐藏芯片见 [21-plan.md](./21-plan.md)；快速定位见 [22-plan.md](./22-plan.md)。
 
 ---
 

@@ -55,6 +55,9 @@
 @property (nonatomic, strong) NSButton *hotkeyEnabled;
 @property (nonatomic, strong) NSTextField *hotkeyLabel;
 @property (nonatomic, strong) MLHotKeyRecorder *hotkeyRecorder;
+@property (nonatomic, strong) NSButton *chipLocatorHotkeyEnabled;
+@property (nonatomic, strong) NSTextField *chipLocatorHotkeyLabel;
+@property (nonatomic, strong) MLHotKeyRecorder *chipLocatorHotkeyRecorder;
 @property (nonatomic, strong) NSButton *taskbarEnabled;
 @property (nonatomic, strong) NSButton *taskbarAudioIndicator;
 @property (nonatomic, strong) NSButton *memoryFreeEnabled;
@@ -412,21 +415,41 @@ static const CGFloat kPrefsValueW = 48;
     [c addSubview:self.sizeField];
     y += 34;
 
-    [self splitColumnsAtY:y height:28 left:&left right:&right];
+    /* Full-width rows: checkbox (feature) + recorder button (current combo / click to rebind). */
+    __weak typeof(self) weakSelf = self;
+    CGFloat hotkeyRowW = kPrefsContentW - kPrefsPad * 2;
+    CGFloat recorderW = 168;
+    CGFloat checkW = hotkeyRowW - recorderW - 12;
+
     self.hotkeyEnabled = [NSButton checkboxWithTitle:@""
                                               target:self
                                               action:@selector(prefsChanged:)];
-    self.hotkeyEnabled.frame = left;
+    self.hotkeyEnabled.frame = NSMakeRect(kPrefsPad, y, checkW, 28);
     [c addSubview:self.hotkeyEnabled];
     self.hotkeyLabel = [self makeLabel:@"" frame:NSZeroRect];
+    self.hotkeyLabel.hidden = YES;
     [c addSubview:self.hotkeyLabel];
-    self.hotkeyRecorder = [[MLHotKeyRecorder alloc] initWithFrame:NSZeroRect];
-    __weak typeof(self) weakSelf = self;
+    self.hotkeyRecorder = [[MLHotKeyRecorder alloc] initWithFrame:NSMakeRect(kPrefsPad + checkW + 12, y, recorderW, 26)];
     self.hotkeyRecorder.onChange = ^{
         [weakSelf hotkeyRecorderChanged];
     };
     [c addSubview:self.hotkeyRecorder];
-    [self placeLabel:self.hotkeyLabel control:self.hotkeyRecorder inRect:right];
+    y += 34;
+
+    self.chipLocatorHotkeyEnabled = [NSButton checkboxWithTitle:@""
+                                                         target:self
+                                                         action:@selector(prefsChanged:)];
+    self.chipLocatorHotkeyEnabled.frame = NSMakeRect(kPrefsPad, y, checkW, 28);
+    [c addSubview:self.chipLocatorHotkeyEnabled];
+    self.chipLocatorHotkeyLabel = [self makeLabel:@"" frame:NSZeroRect];
+    self.chipLocatorHotkeyLabel.hidden = YES;
+    [c addSubview:self.chipLocatorHotkeyLabel];
+    self.chipLocatorHotkeyRecorder =
+        [[MLHotKeyRecorder alloc] initWithFrame:NSMakeRect(kPrefsPad + checkW + 12, y, recorderW, 26)];
+    self.chipLocatorHotkeyRecorder.onChange = ^{
+        [weakSelf hotkeyRecorderChanged];
+    };
+    [c addSubview:self.chipLocatorHotkeyRecorder];
     y += 34;
 
     /* —— Performance —— */
@@ -651,6 +674,8 @@ static const CGFloat kPrefsValueW = 48;
     self.sizeLabel.stringValue = @"pt";
     self.hotkeyEnabled.title = [MLStrings t:@"prefs.hotkey_enabled"];
     self.hotkeyLabel.stringValue = [MLStrings t:@"prefs.hotkey_shortcut"];
+    self.chipLocatorHotkeyEnabled.title = [MLStrings t:@"prefs.chip_locator_hotkey_enabled"];
+    self.chipLocatorHotkeyLabel.stringValue = [MLStrings t:@"prefs.chip_locator_hotkey_shortcut"];
     self.taskbarEnabled.title = [MLStrings t:@"prefs.taskbar_enabled"];
     self.taskbarAudioIndicator.title = [MLStrings t:@"prefs.taskbar_audio_indicator"];
     self.memoryFreeEnabled.title = [MLStrings t:@"prefs.memory_free_enabled"];
@@ -692,7 +717,7 @@ static const CGFloat kPrefsValueW = 48;
 
 - (void)done:(id)sender {
     (void)sender;
-    if (self.hotkeyRecorder.isRecording) {
+    if (self.hotkeyRecorder.isRecording || self.chipLocatorHotkeyRecorder.isRecording) {
         return;
     }
     [self.window performClose:nil];
@@ -735,6 +760,12 @@ static const CGFloat kPrefsValueW = 48;
                              option:YES
                             control:NO
                               shift:YES];
+    self.chipLocatorHotkeyEnabled.state = NSControlStateValueOn;
+    [self.chipLocatorHotkeyRecorder setKeyCode:kVK_Space
+                                       command:YES
+                                        option:NO
+                                       control:YES
+                                         shift:NO];
     self.taskbarEnabled.state = NSControlStateValueOn;
     self.taskbarAudioIndicator.state = NSControlStateValueOn;
     self.memoryFreeEnabled.state = NSControlStateValueOff;
@@ -756,7 +787,9 @@ static const CGFloat kPrefsValueW = 48;
 
     BOOL keyOn = (self.hotkeyEnabled.state == NSControlStateValueOn);
     self.hotkeyRecorder.enabled = keyOn;
-    self.hotkeyLabel.textColor = keyOn ? [NSColor labelColor] : [NSColor disabledControlTextColor];
+
+    BOOL locOn = (self.chipLocatorHotkeyEnabled.state == NSControlStateValueOn);
+    self.chipLocatorHotkeyRecorder.enabled = locOn;
 
     BOOL audioOK = [MLAppAudioMuteController isAvailable];
     self.taskbarAudioIndicator.hidden = !audioOK;
@@ -1169,6 +1202,13 @@ static const CGFloat kPrefsValueW = 48;
                              option:self.config.hotkeyOption
                             control:self.config.hotkeyControl
                               shift:self.config.hotkeyShift];
+    self.chipLocatorHotkeyEnabled.state =
+        self.config.chipLocatorHotkeyEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    [self.chipLocatorHotkeyRecorder setKeyCode:self.config.chipLocatorHotkeyKeyCode
+                                       command:self.config.chipLocatorHotkeyCommand
+                                        option:self.config.chipLocatorHotkeyOption
+                                       control:self.config.chipLocatorHotkeyControl
+                                         shift:self.config.chipLocatorHotkeyShift];
     self.taskbarEnabled.state = self.config.taskbarEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     self.taskbarAudioIndicator.state =
         self.config.taskbarAudioIndicatorEnabled ? NSControlStateValueOn : NSControlStateValueOff;
@@ -1216,6 +1256,13 @@ static const CGFloat kPrefsValueW = 48;
                              command:self.hotkeyRecorder.capturedCommand
                              control:self.hotkeyRecorder.capturedControl
                                shift:self.hotkeyRecorder.capturedShift];
+
+    [self.config updateChipLocatorHotkeyEnabled:(self.chipLocatorHotkeyEnabled.state == NSControlStateValueOn)
+                                        keyCode:self.chipLocatorHotkeyRecorder.capturedKeyCode
+                                         option:self.chipLocatorHotkeyRecorder.capturedOption
+                                        command:self.chipLocatorHotkeyRecorder.capturedCommand
+                                        control:self.chipLocatorHotkeyRecorder.capturedControl
+                                          shift:self.chipLocatorHotkeyRecorder.capturedShift];
 
     [self.config updateTaskbarEnabled:(self.taskbarEnabled.state == NSControlStateValueOn)];
     if (!self.taskbarAudioIndicator.hidden) {

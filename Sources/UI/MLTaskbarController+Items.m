@@ -861,9 +861,30 @@
         }
     }
 
+    bar.unfittedItems = [items copy];
     items = [self fitItems:items toWidth:NSWidth(bar.barView.bounds) spacing:bar.barView.spacing
                     minWidth:bar.barView.itemMinWidth];
     bar.pendingItems = items;
+}
+
+- (NSDictionary<NSNumber *, NSArray<MLTaskbarItem *> *> *)chipLocatorItemsByScreenID {
+    NSMutableDictionary<NSNumber *, NSArray<MLTaskbarItem *> *> *out =
+        [NSMutableDictionary dictionary];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        if (!bar.screenID) {
+            continue;
+        }
+        NSArray<MLTaskbarItem *> *src = bar.unfittedItems;
+        if (src.count == 0) {
+            /* Frozen peek / first paint: fall back to what's on the bar. */
+            src = bar.barView.items;
+        }
+        if (src.count == 0) {
+            continue;
+        }
+        out[bar.screenID] = [self deepCopyItems:src];
+    }
+    return out;
 }
 
 - (NSInteger)windowChipCountOnBar:(MLTaskbarScreenBar *)bar {

@@ -9,5 +9,6 @@
                                 shift:(BOOL)shift;
 
 + (NSString *)displayStringFromConfig:(id)config;
++ (NSString *)chipLocatorDisplayStringFromConfig:(id)config;
 
 @end

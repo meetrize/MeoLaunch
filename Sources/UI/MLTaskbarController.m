@@ -7,6 +7,7 @@
 #import "MLTaskbarPinStore.h"
 #import "MLTaskbarHideStore.h"
 #import "MLTaskbarView.h"
+#import "MLWindowActivationMRU.h"
 #import "MLWorkAreaEnforcer.h"
 
 #import <ApplicationServices/ApplicationServices.h>
@@ -23,6 +24,7 @@
         _hideStore = hide;
         _monitor = monitor;
         _iconCache = icons;
+        _activationMRU = [[MLWindowActivationMRU alloc] init];
         _enabled = YES;
         _bars = [NSMutableArray array];
         _displayNameCache = [NSMutableDictionary dictionary];
@@ -224,8 +226,77 @@
     }
 }
 
+- (void)pruneActivationMRUFromSnapshot {
+    MLRunningAppsSnapshot *snap = self.monitor.snapshot;
+    NSMutableSet<NSNumber *> *liveWIDs = [NSMutableSet set];
+    NSMutableSet<NSString *> *livePaths = [NSMutableSet set];
+    for (MLTaskbarWindowInfo *w in snap.windows ?: @[]) {
+        if (w.windowID != 0) {
+            [liveWIDs addObject:@(w.windowID)];
+        }
+        if (w.path.length > 0) {
+            [livePaths addObject:w.path];
+        }
+    }
+    for (NSString *path in snap.runningAppPaths ?: @[]) {
+        if (path.length > 0) {
+            [livePaths addObject:path];
+        }
+    }
+    for (NSString *path in self.pinStore.pinnedPaths ?: @[]) {
+        if (path.length > 0) {
+            [livePaths addObject:path];
+        }
+    }
+    [self.activationMRU pruneToLiveWindowIDs:liveWIDs livePaths:livePaths];
+}
+
+- (void)touchActivationMRUForWindowID:(CGWindowID)wid {
+    if (wid == 0 || !self.activationMRU) {
+        return;
+    }
+    NSString *path = nil;
+    NSNumber *screenID = nil;
+    for (MLTaskbarWindowInfo *w in self.monitor.snapshot.windows ?: @[]) {
+        if (w.windowID == wid) {
+            path = w.path;
+            NSScreen *scr = [self screenForWindowBounds:w.bounds];
+            if (scr) {
+                screenID = [[self class] screenIDForScreen:scr];
+            }
+            break;
+        }
+    }
+    if (!screenID) {
+        NSNumber *aff = self.chipScreenAffinityByWid[@(wid)];
+        if (aff) {
+            screenID = aff;
+        }
+    }
+    [self.activationMRU touchWindowID:wid path:path screenID:screenID];
+}
+
+- (void)touchActivationMRUForItem:(MLTaskbarItem *)item {
+    if (!item || !self.activationMRU) {
+        return;
+    }
+    NSNumber *screenID = nil;
+    if (item.windowID != 0) {
+        NSNumber *aff = self.chipScreenAffinityByWid[@(item.windowID)];
+        if (aff) {
+            screenID = aff;
+        }
+    }
+    if (item.windowID != 0) {
+        [self.activationMRU touchWindowID:item.windowID path:item.path screenID:screenID];
+    } else if (item.path.length > 0) {
+        [self.activationMRU touchPath:item.path screenID:screenID];
+    }
+}
+
 - (void)runningDidChange:(NSNotification *)note {
     (void)note;
+    [self pruneActivationMRUFromSnapshot];
     [self applyActiveHighlightImmediate];
     if (!self.itemsFrozenForDesktopReveal && [self shouldFreezeForDesktopReveal]) {
         [self freezeDesktopReveal];
@@ -241,6 +312,7 @@
 - (void)frontWindowDidChange:(NSNotification *)note {
     NSNumber *widNum = note.userInfo[MLRunningAppsFrontWindowIDKey];
     CGWindowID wid = widNum.unsignedIntValue;
+    [self touchActivationMRUForWindowID:wid];
     [self applyActiveHighlightForWindowID:wid];
 }
 - (void)frontAppDidChange:(NSNotification *)note {

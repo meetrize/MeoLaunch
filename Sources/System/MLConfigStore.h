@@ -40,6 +40,14 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 @property (nonatomic, assign, readonly) BOOL hotkeyControl;
 @property (nonatomic, assign, readonly) BOOL hotkeyShift;
 
+/** Chip Locator panel shortcut (doc/22); default ⌃⌘Space. */
+@property (nonatomic, assign, readonly) BOOL chipLocatorHotkeyEnabled;
+@property (nonatomic, assign, readonly) NSInteger chipLocatorHotkeyKeyCode;
+@property (nonatomic, assign, readonly) BOOL chipLocatorHotkeyOption;
+@property (nonatomic, assign, readonly) BOOL chipLocatorHotkeyCommand;
+@property (nonatomic, assign, readonly) BOOL chipLocatorHotkeyControl;
+@property (nonatomic, assign, readonly) BOOL chipLocatorHotkeyShift;
+
 @property (nonatomic, assign, readonly) CGFloat wheelThreshold;
 @property (nonatomic, assign, readonly) NSInteger fadeMs;
 @property (nonatomic, assign, readonly) CGFloat overlayOpacity; /* 0…1 scrim alpha, default 0.55 */
@@ -65,6 +73,8 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 
 + (NSURL *)configFileURL;
 + (NSArray<NSString *> *)builtInScanRoots;
+/** Screen containing the mouse pointer (fallback: main / first). */
++ (NSScreen *)screenUnderMouse;
 
 - (void)loadDefaults;
 - (BOOL)loadFromDisk;
@@ -84,6 +94,12 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
                     command:(BOOL)command
                     control:(BOOL)control
                       shift:(BOOL)shift;
+- (void)updateChipLocatorHotkeyEnabled:(BOOL)enabled
+                               keyCode:(NSInteger)keyCode
+                                option:(BOOL)option
+                               command:(BOOL)command
+                               control:(BOOL)control
+                                 shift:(BOOL)shift;
 - (void)updateLanguage:(MLLanguage)language;
 
 /** Resolve preferred overlay screen; falls back to main / first if fixed ID missing. */

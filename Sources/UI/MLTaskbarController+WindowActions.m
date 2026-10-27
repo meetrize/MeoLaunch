@@ -326,6 +326,10 @@
     return matched;
 }
 - (void)raiseAndFocusWindowForItem:(MLTaskbarItem *)item {
+    [self raiseAndFocusWindowForItem:item makeAppFrontmost:YES];
+}
+
+- (void)raiseAndFocusWindowForItem:(MLTaskbarItem *)item makeAppFrontmost:(BOOL)makeAppFrontmost {
     if (item.pid <= 0) {
         return;
     }
@@ -359,11 +363,13 @@
             }
             AXUIElementSetAttributeValue(softAX, kAXMinimizedAttribute, kCFBooleanFalse);
             AXUIElementPerformAction(softAX, kAXRaiseAction);
-            AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+            if (makeAppFrontmost) {
+                AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+            }
             if (needsGeometry) {
                 [self applyRestoreFrame:restoreFrame toAXWindow:softAX windowID:wid clearIfMatched:YES];
             }
-        } else {
+        } else if (makeAppFrontmost) {
             AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
         }
         CFRelease(appRef);
@@ -451,8 +457,11 @@
         AXUIElementSetAttributeValue(target, kAXMinimizedAttribute, kCFBooleanFalse);
         AXUIElementPerformAction(target, kAXRaiseAction);
         AXUIElementSetAttributeValue(target, kAXMainAttribute, kCFBooleanTrue);
-        AXUIElementSetAttributeValue(target, kAXFocusedAttribute, kCFBooleanTrue);
-        AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+        /* Avoid kAXFocused on the foreign window during locator preview — steals key. */
+        if (makeAppFrontmost) {
+            AXUIElementSetAttributeValue(target, kAXFocusedAttribute, kCFBooleanTrue);
+            AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+        }
 
         if (needsGeometry) {
             verified = [self applyRestoreFrame:restoreFrame
@@ -515,7 +524,9 @@
             }
         }
     } else {
-        AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+        if (makeAppFrontmost) {
+            AXUIElementSetAttributeValue(appRef, kAXFrontmostAttribute, kCFBooleanTrue);
+        }
         MLDebugLog(@"[Taskbar] soft restore fail — no AX target wid=%u", (unsigned)wid);
     }
 
@@ -584,6 +595,7 @@
         item.kind == MLTaskbarItemRunningNoWindow) {
         [self activateApplicationForItem:item];
         [self openApplicationAtPath:item.path];
+        [self touchActivationMRUForItem:item];
         return;
     }
 
@@ -595,6 +607,7 @@
             ![self processHasAXWindows:item.pid]) {
             [self activateApplicationForItem:item];
             [self openApplicationAtPath:item.path];
+            [self touchActivationMRUForItem:item];
             return;
         }
 
@@ -606,6 +619,7 @@
             /* Minimized / soft-hidden → restore geometry + activate. */
             [self activateApplicationForItem:item];
             [self raiseAndFocusWindowForItem:item];
+            [self touchActivationMRUForItem:item];
             __weak typeof(self) weakSelf = self;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
@@ -628,6 +642,7 @@
         /* Visible but not front → raise + activate. */
         [self raiseAndFocusWindowForItem:item];
         [self activateApplicationForItem:item];
+        [self touchActivationMRUForItem:item];
         __weak typeof(self) weakSelf = self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
@@ -646,6 +661,88 @@
     }
 
     [self openApplicationAtPath:item.path];
+}
+
+/**
+ * Chip Locator confirm: raise + activate, never soft-min toggle.
+ * Soft-min / peek restore paths match chip click when needed.
+ */
+- (void)raiseOnlyItem:(MLTaskbarItem *)item {
+    if (!item) {
+        return;
+    }
+    if (item.kind == MLTaskbarItemPinnedOnly ||
+        item.kind == MLTaskbarItemRunningNoWindow) {
+        [self activateApplicationForItem:item];
+        [self openApplicationAtPath:item.path];
+        [self touchActivationMRUForItem:item];
+        return;
+    }
+
+    if (item.kind == MLTaskbarItemRunningWindow &&
+        item.pid > 0 &&
+        AXIsProcessTrusted() &&
+        ![self processHasAXWindows:item.pid]) {
+        [self activateApplicationForItem:item];
+        [self openApplicationAtPath:item.path];
+        [self touchActivationMRUForItem:item];
+        return;
+    }
+
+    BOOL softRestore = [self isItemSoftHiddenOrMinimized:item];
+    if (softRestore) {
+        if (self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed) {
+            [self unfreezeDesktopRevealAndRefresh];
+        }
+        [self activateApplicationForItem:item];
+        [self raiseAndFocusWindowForItem:item makeAppFrontmost:YES];
+        [self touchActivationMRUForItem:item];
+        __weak typeof(self) weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                           [weakSelf raiseAndFocusWindowForItem:item makeAppFrontmost:YES];
+                           [weakSelf activateApplicationForItem:item];
+                       });
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.22 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+                           [weakSelf raiseAndFocusWindowForItem:item makeAppFrontmost:YES];
+                       });
+        return;
+    }
+
+    /* Never soft-minimize even when already frontmost. */
+    [self raiseAndFocusWindowForItem:item makeAppFrontmost:YES];
+    [self activateApplicationForItem:item];
+    [self touchActivationMRUForItem:item];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       [weakSelf raiseAndFocusWindowForItem:item makeAppFrontmost:YES];
+                       [weakSelf activateApplicationForItem:item];
+                   });
+}
+
+/**
+ * Locator live preview: bring the window forward without activating its app,
+ * so the locator panel keeps key focus / typing stays smooth.
+ */
+- (void)previewRaiseItem:(MLTaskbarItem *)item {
+    if (!item || item.kind != MLTaskbarItemRunningWindow) {
+        return;
+    }
+    if (item.pid <= 0) {
+        return;
+    }
+    /* Do not touch MRU here — locator list order stays frozen while the panel is open. */
+    BOOL softRestore = [self isItemSoftHiddenOrMinimized:item];
+    if (softRestore) {
+        if (self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed) {
+            [self unfreezeDesktopRevealAndRefresh];
+        }
+        [self raiseAndFocusWindowForItem:item makeAppFrontmost:NO];
+        return;
+    }
+    [self raiseAndFocusWindowForItem:item makeAppFrontmost:NO];
 }
 
 - (BOOL)processHasAXWindows:(pid_t)pid {

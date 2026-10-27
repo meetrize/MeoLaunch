@@ -41,6 +41,11 @@
     "key_code": 49,
     "modifiers": ["option"]
   },
+  "hotkey_chip_locator": {
+    "enabled": true,
+    "key_code": 49,
+    "modifiers": ["control", "command"]
+  },
   "search": {
     "autofocus": true,
     "pinyin": false
@@ -92,6 +97,7 @@
 | `hot_corner.action` | string | `show` \| `toggle` |
 | `hotkey.key_code` | int | Carbon/虚拟键码；49 ≈ Space |
 | `hotkey.modifiers` | string[] | `command` `option` `control` `shift` |
+| `hotkey_chip_locator.*` | — | 快速定位芯片快捷键（默认 ⌃⌘Space）；字段同 `hotkey` |
 | `paging.wheel_threshold` | number | 滚轮累积阈值 |
 | `scan.roots` | string[] | `~` 展开为 home |
 | `ui.lsuielement` | bool | 不进 Dock（改后需重启生效） |

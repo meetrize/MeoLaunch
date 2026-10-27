@@ -1,0 +1,25 @@
+# MeoLaunch Q-Plan（任务栏「快速定位芯片」）
+
+当仓库存在未完成的 `doc/22-plan.md` 任务卡时，**优先**执行 22-plan（高于已全部 done 的 21/20/19/…）。
+
+## 触发语
+
+用户说「继续」「继续自动化」「全自动开发」「做 Q 计划」「按 22-plan」「快速定位」「Chip Locator」「定位芯片」等 → 立刻读 `doc/22-plan.md` 的 **Status**，执行第一个 `pending` 卡。
+
+## 全自动协议
+
+1. 读 `doc/22-taskbar-chip-locator.md` 理解目标（若尚未读过）。
+2. **一次一卡**实现；跑该卡验收（至少 `./Scripts/build.sh`）。
+3. 把该卡 Status 改为 `done` 并写备注。
+4. **同一会话继续下一张 pending**，直到全部 `done`、验收失败需决策、或用户打断。
+5. 遵守 peek 不变量：`.cursor/rules/taskbar-peek-invariants.mdc`。
+6. 不引入第三方库；不改 `doc/00`–`doc/06` 正文（`00-overview` 索引与 `06` 热键 schema 字段除外）。
+7. 非用户明确要求不要 git commit / push。
+8. Locator 对 `RunningWindow` **只用 raiseOnly**，禁止 soft-min toggle。
+9. 决策以 22 设计文档 §12 为准（⌃⌘Space、开面板前置第 1 条、含 NoWindow/Pin、Esc 先清空、MRU 不落盘等）。
+
+## 目标摘要
+
+- 全局快捷键弹出芯片定位面板：搜索 + 当前鼠标屏优先 + MRU。
+- 多窗一行一标题（与任务栏芯片文字一致）；默认 10 条可展开。
+- ↑↓ 预览前置；Enter 确认；Esc 清空/关闭。

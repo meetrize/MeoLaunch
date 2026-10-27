@@ -16,5 +16,7 @@
 @property (nonatomic, assign) NSUInteger peekPresentationGeneration;
 /** Latest computed chips; painted only via commit (not on every monitor tick). */
 @property (nonatomic, strong) NSArray<MLTaskbarItem *> *pendingItems;
+/** Same as pending before width fit — Chip Locator uses this so squeezed chips stay findable. */
+@property (nonatomic, strong) NSArray<MLTaskbarItem *> *unfittedItems;
 
 @end

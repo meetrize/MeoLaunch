@@ -14,6 +14,7 @@
 #import "MLRunningAppsMonitor.h"
 #import "MLStrings.h"
 #import "MLTaskbarController.h"
+#import "MLChipLocatorController.h"
 #import "MLIconCache.h"
 #import "MLTaskbarPinStore.h"
 #import "MLTaskbarHideStore.h"
@@ -29,7 +30,7 @@
 
 static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibilityGuide";
 
-@interface AppDelegate () <MLHotCornerMonitorDelegate, MLHotKeyManagerDelegate, MLOverlayControllerDelegate, MLTaskbarAppActions>
+@interface AppDelegate () <MLHotCornerMonitorDelegate, MLHotKeyManagerDelegate, MLOverlayControllerDelegate, MLTaskbarAppActions, MLChipLocatorControllerDelegate>
 @property (nonatomic, strong) NSStatusItem *statusItem;
 @property (nonatomic, strong) NSMenuItem *showOverlayItem;
 @property (nonatomic, strong) NSMenuItem *retryHotCornerItem;
@@ -48,6 +49,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 @property (nonatomic, strong) MLAudioActivityMonitor *audioActivity;
 @property (nonatomic, strong) MLAppAudioMuteController *audioMute;
 @property (nonatomic, strong) MLTaskbarController *taskbar;
+@property (nonatomic, strong) MLChipLocatorController *chipLocator;
 @property (nonatomic, strong) MLMemoryStatusController *memoryStatus;
 @property (nonatomic, strong) MLIdleMemoryReclaimer *idleMemoryReclaimer;
 @property (nonatomic, strong) MLAppScanWatcher *appScanWatcher;
@@ -104,6 +106,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.taskbar.audioIndicatorEnabled = self.config.taskbarAudioIndicatorEnabled;
     self.taskbar.appActions = self;
     self.taskbar.enabled = self.config.taskbarEnabled;
+    self.chipLocator = [[MLChipLocatorController alloc] init];
+    self.chipLocator.taskbar = self.taskbar;
+    self.chipLocator.config = self.config;
+    self.chipLocator.delegate = self;
     [self.overlay setIconCacheMaxEntries:self.config.overlayIconCacheMax];
     [self.runningApps applyWindowPollInterval:self.config.taskbarWindowPollSeconds];
     self.memoryStatus = [[MLMemoryStatusController alloc] init];
@@ -589,10 +595,17 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 #pragma mark - MLHotKeyManagerDelegate
 
-- (void)hotKeyManagerDidFire:(MLHotKeyManager *)manager {
+- (void)hotKeyManager:(MLHotKeyManager *)manager didFireAction:(MLHotKeyAction)action {
     (void)manager;
+    if (action == MLHotKeyActionChipLocator) {
+        [self.chipLocator toggle];
+        return;
+    }
     NSLog(@"[MeoLaunch] hotkey toggle (%@)", [MLHotKeyDisplay displayStringFromConfig:self.config]);
     /* Carbon handler already bounced to main. Same show path as hot corner. */
+    if ([self.chipLocator isVisible]) {
+        [self.chipLocator hide];
+    }
     if ([self.overlay isVisible]) {
         [self.overlay hide];
         return;
@@ -607,6 +620,15 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         [self.overlay showDeferredChrome];
         [self scheduleRescan];
     });
+}
+
+#pragma mark - MLChipLocatorControllerDelegate
+
+- (void)chipLocatorControllerWillShow:(MLChipLocatorController *)controller {
+    (void)controller;
+    if ([self.overlay isVisible]) {
+        [self.overlay hide];
+    }
 }
 
 @end

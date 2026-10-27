@@ -286,8 +286,8 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"zh" : @"热区大小 (pt)",
         },
         @"prefs.hotkey_enabled" : @{
-            @"en" : @"Overlay shortcut enabled",
-            @"zh" : @"启用启动器快捷键",
+            @"en" : @"Launcher shortcut",
+            @"zh" : @"启动器快捷键",
         },
         @"prefs.hotkey_shortcut" : @{
             @"en" : @"Shortcut",
@@ -296,6 +296,54 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
         @"prefs.hotkey_record_prompt" : @{
             @"en" : @"Press shortcut…",
             @"zh" : @"按下快捷键…",
+        },
+        @"prefs.chip_locator_hotkey_enabled" : @{
+            @"en" : @"Quick locate task chips",
+            @"zh" : @"快速定位任务芯片",
+        },
+        @"prefs.chip_locator_hotkey_shortcut" : @{
+            @"en" : @"Locate shortcut",
+            @"zh" : @"定位快捷键",
+        },
+        @"locator.search_placeholder" : @{
+            @"en" : @"Search windows or apps",
+            @"zh" : @"搜索窗口或应用",
+        },
+        @"locator.section_this_display" : @{
+            @"en" : @"This Display · %@",
+            @"zh" : @"本显示器 · %@",
+        },
+        @"locator.section_display" : @{
+            @"en" : @"Display · %@",
+            @"zh" : @"显示器 · %@",
+        },
+        @"locator.subtitle_running" : @{
+            @"en" : @"Running",
+            @"zh" : @"运行中",
+        },
+        @"locator.subtitle_pinned" : @{
+            @"en" : @"Pinned",
+            @"zh" : @"钉住",
+        },
+        @"locator.show_all" : @{
+            @"en" : @"Show all",
+            @"zh" : @"显示全部",
+        },
+        @"locator.show_all_fmt" : @{
+            @"en" : @"Show all (%lu more)",
+            @"zh" : @"显示全部（还有 %lu 项）",
+        },
+        @"locator.show_less" : @{
+            @"en" : @"Show less",
+            @"zh" : @"显示较少",
+        },
+        @"locator.no_match" : @{
+            @"en" : @"No matches",
+            @"zh" : @"无匹配",
+        },
+        @"locator.empty" : @{
+            @"en" : @"No task chips",
+            @"zh" : @"暂无任务芯片",
         },
         @"prefs.taskbar_enabled" : @{
             @"en" : @"Show taskbar",

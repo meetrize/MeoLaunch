@@ -57,6 +57,7 @@ NS_ASSUME_NONNULL_BEGIN
                                       toWidth:(CGFloat)width
                                       spacing:(CGFloat)spacing
                                      minWidth:(CGFloat)minW;
+- (NSDictionary<NSNumber *, NSArray<MLTaskbarItem *> *> *)chipLocatorItemsByScreenID;
 
 @end
 
@@ -159,10 +160,16 @@ NS_ASSUME_NONNULL_BEGIN
                   windowID:(CGWindowID)wid
              clearIfMatched:(BOOL)clearIfMatched;
 - (void)raiseAndFocusWindowForItem:(MLTaskbarItem *)item;
+/** When makeAppFrontmost=NO, only AX-raise the window (no app frontmost) — for locator preview. */
+- (void)raiseAndFocusWindowForItem:(MLTaskbarItem *)item makeAppFrontmost:(BOOL)makeAppFrontmost;
 - (void)activateApplicationForItem:(MLTaskbarItem *)item;
 - (void)openApplicationAtPath:(NSString *)path;
 - (BOOL)isApplicationRunningAtPath:(NSString *)path;
 - (void)activateOrLaunchItem:(MLTaskbarItem *)item;
+/** Locator confirm: raise + activate without soft-min toggle (doc/22). */
+- (void)raiseOnlyItem:(MLTaskbarItem *)item;
+/** Locator live preview while panel stays key — no app activate / no focus steal. */
+- (void)previewRaiseItem:(MLTaskbarItem *)item;
 - (BOOL)readFullscreenForAXWindow:(AXUIElementRef)win;
 - (BOOL)canReadFullscreenForAXWindow:(AXUIElementRef)win;
 - (void)closeWindowForItem:(MLTaskbarItem *)item;

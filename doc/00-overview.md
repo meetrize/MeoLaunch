@@ -35,6 +35,8 @@
 | [20-plan.md](./20-plan.md) | N0–N3 任务卡（已完成） |
 | [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md) | 任务栏「隐藏任务芯片」：无窗不占位、有窗仍显示 |
 | [21-plan.md](./21-plan.md) | H0–H4 任务卡（已完成） |
+| [22-taskbar-chip-locator.md](./22-taskbar-chip-locator.md) | 任务栏「快速定位芯片」：快捷键面板搜索/MRU/多屏 |
+| [22-plan.md](./22-plan.md) | Q0–Q5 任务卡（已完成） |
 
 ## 产品定位
 

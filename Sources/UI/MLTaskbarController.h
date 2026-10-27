@@ -8,6 +8,8 @@
 @class MLIconCache;
 @class MLAudioActivityMonitor;
 @class MLAppAudioMuteController;
+@class MLWindowActivationMRU;
+@class MLTaskbarItem;
 
 @protocol MLTaskbarAppActions;
 
@@ -24,6 +26,10 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 @property (nonatomic, strong) MLAppAudioMuteController *audioMute;
 /** When NO, stop monitor and clear mute taps (prefs). Default YES. */
 @property (nonatomic, assign) BOOL audioIndicatorEnabled;
+/** Session-only activation MRU for Chip Locator (doc/22). */
+@property (nonatomic, strong, readonly) MLWindowActivationMRU *activationMRU;
+@property (nonatomic, strong, readonly) MLIconCache *iconCache;
+@property (nonatomic, strong, readonly) MLRunningAppsMonitor *monitor;
 
 - (instancetype)initWithPinStore:(MLTaskbarPinStore *)pins
                        hideStore:(MLTaskbarHideStore *)hide

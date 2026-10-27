@@ -55,6 +55,7 @@ SYSTEM_SOURCES=(
   "$ROOT/Sources/System/MLAudioProcessSupport.m"
   "$ROOT/Sources/System/MLAudioActivityMonitor.m"
   "$ROOT/Sources/System/MLAppAudioMuteController.m"
+  "$ROOT/Sources/System/MLWindowActivationMRU.m"
 )
 
 OBJS=()

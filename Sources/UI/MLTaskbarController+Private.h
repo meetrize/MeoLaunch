@@ -15,12 +15,14 @@
 
 @class MLMinimizeInterceptor;
 @class MLWorkAreaEnforcer;
+@class MLWindowActivationMRU;
 
 @interface MLTaskbarController ()
 @property (nonatomic, strong) MLTaskbarPinStore *pinStore;
 @property (nonatomic, strong) MLTaskbarHideStore *hideStore;
-@property (nonatomic, strong) MLRunningAppsMonitor *monitor;
-@property (nonatomic, strong) MLIconCache *iconCache;
+@property (nonatomic, strong, readwrite) MLRunningAppsMonitor *monitor;
+@property (nonatomic, strong, readwrite) MLIconCache *iconCache;
+@property (nonatomic, strong, readwrite) MLWindowActivationMRU *activationMRU;
 @property (nonatomic, strong) NSMutableArray<MLTaskbarScreenBar *> *bars;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *displayNameCache;
 @property (nonatomic, strong) MLMinimizeInterceptor *minimizeInterceptor;
@@ -62,4 +64,9 @@
 @property (nonatomic, assign) CGFloat chipDragPlaceholderWidth;
 
 + (NSNumber *)screenIDForScreen:(NSScreen *)screen;
+
+- (void)touchActivationMRUForItem:(MLTaskbarItem *)item;
+- (void)touchActivationMRUForWindowID:(CGWindowID)wid;
+- (void)pruneActivationMRUFromSnapshot;
+
 @end

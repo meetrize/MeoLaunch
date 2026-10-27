@@ -21,6 +21,13 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @property (nonatomic, assign, readwrite) BOOL hotkeyCommand;
 @property (nonatomic, assign, readwrite) BOOL hotkeyControl;
 @property (nonatomic, assign, readwrite) BOOL hotkeyShift;
+
+@property (nonatomic, assign, readwrite) BOOL chipLocatorHotkeyEnabled;
+@property (nonatomic, assign, readwrite) NSInteger chipLocatorHotkeyKeyCode;
+@property (nonatomic, assign, readwrite) BOOL chipLocatorHotkeyOption;
+@property (nonatomic, assign, readwrite) BOOL chipLocatorHotkeyCommand;
+@property (nonatomic, assign, readwrite) BOOL chipLocatorHotkeyControl;
+@property (nonatomic, assign, readwrite) BOOL chipLocatorHotkeyShift;
 @property (nonatomic, assign, readwrite) CGFloat wheelThreshold;
 @property (nonatomic, assign, readwrite) NSInteger fadeMs;
 @property (nonatomic, assign, readwrite) CGFloat overlayOpacity;
@@ -203,6 +210,13 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.hotkeyControl = NO;
     self.hotkeyShift = YES;
 
+    self.chipLocatorHotkeyEnabled = YES;
+    self.chipLocatorHotkeyKeyCode = kVK_Space;
+    self.chipLocatorHotkeyOption = NO;
+    self.chipLocatorHotkeyCommand = YES;
+    self.chipLocatorHotkeyControl = YES;
+    self.chipLocatorHotkeyShift = NO;
+
     self.wheelThreshold = 0.15;
     self.fadeMs = 100;
     self.overlayOpacity = 0.55;
@@ -312,6 +326,19 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         }
     }
 
+    NSDictionary *hkLoc = root[@"hotkey_chip_locator"];
+    if ([hkLoc isKindOfClass:[NSDictionary class]]) {
+        if (hkLoc[@"enabled"]) self.chipLocatorHotkeyEnabled = [hkLoc[@"enabled"] boolValue];
+        if (hkLoc[@"key_code"]) self.chipLocatorHotkeyKeyCode = [hkLoc[@"key_code"] integerValue];
+        NSArray *modsLoc = hkLoc[@"modifiers"];
+        if ([modsLoc isKindOfClass:[NSArray class]]) {
+            self.chipLocatorHotkeyOption = [modsLoc containsObject:@"option"];
+            self.chipLocatorHotkeyCommand = [modsLoc containsObject:@"command"];
+            self.chipLocatorHotkeyControl = [modsLoc containsObject:@"control"];
+            self.chipLocatorHotkeyShift = [modsLoc containsObject:@"shift"];
+        }
+    }
+
     NSDictionary *paging = root[@"paging"];
     if ([paging isKindOfClass:[NSDictionary class]] && paging[@"wheel_threshold"]) {
         CGFloat thr = [paging[@"wheel_threshold"] doubleValue];
@@ -405,6 +432,12 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     if (self.hotkeyControl) [mods addObject:@"control"];
     if (self.hotkeyShift) [mods addObject:@"shift"];
 
+    NSMutableArray *modsLoc = [NSMutableArray array];
+    if (self.chipLocatorHotkeyCommand) [modsLoc addObject:@"command"];
+    if (self.chipLocatorHotkeyOption) [modsLoc addObject:@"option"];
+    if (self.chipLocatorHotkeyControl) [modsLoc addObject:@"control"];
+    if (self.chipLocatorHotkeyShift) [modsLoc addObject:@"shift"];
+
     MLGridConfig g = self.gridConfig;
     NSArray *roots = self.scanRoots.count ? self.scanRoots : [[self class] builtInScanRoots];
     return @{
@@ -428,6 +461,11 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
             @"enabled" : @(self.hotkeyEnabled),
             @"key_code" : @(self.hotkeyKeyCode),
             @"modifiers" : mods,
+        },
+        @"hotkey_chip_locator" : @{
+            @"enabled" : @(self.chipLocatorHotkeyEnabled),
+            @"key_code" : @(self.chipLocatorHotkeyKeyCode),
+            @"modifiers" : modsLoc,
         },
         @"search" : @{
             @"autofocus" : @YES,
@@ -744,6 +782,37 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.hotkeyCommand = command;
     self.hotkeyControl = control;
     self.hotkeyShift = shift;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateChipLocatorHotkeyEnabled:(BOOL)enabled
+                               keyCode:(NSInteger)keyCode
+                                option:(BOOL)option
+                               command:(BOOL)command
+                               control:(BOOL)control
+                                 shift:(BOOL)shift {
+    if (keyCode < 0) {
+        keyCode = kVK_Space;
+    }
+    if (!option && !command && !control && !shift) {
+        command = YES;
+        control = YES;
+    }
+    if (self.chipLocatorHotkeyEnabled == enabled &&
+        self.chipLocatorHotkeyKeyCode == keyCode &&
+        self.chipLocatorHotkeyOption == option &&
+        self.chipLocatorHotkeyCommand == command &&
+        self.chipLocatorHotkeyControl == control &&
+        self.chipLocatorHotkeyShift == shift) {
+        return;
+    }
+    self.chipLocatorHotkeyEnabled = enabled;
+    self.chipLocatorHotkeyKeyCode = keyCode;
+    self.chipLocatorHotkeyOption = option;
+    self.chipLocatorHotkeyCommand = command;
+    self.chipLocatorHotkeyControl = control;
+    self.chipLocatorHotkeyShift = shift;
     [self notifyChanged];
     [self scheduleSave];
 }

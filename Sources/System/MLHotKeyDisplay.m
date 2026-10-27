@@ -99,4 +99,15 @@
                                    shift:config.hotkeyShift];
 }
 
++ (NSString *)chipLocatorDisplayStringFromConfig:(MLConfigStore *)config {
+    if (!config.chipLocatorHotkeyEnabled) {
+        return @"—";
+    }
+    return [self displayStringForKeyCode:config.chipLocatorHotkeyKeyCode
+                                 command:config.chipLocatorHotkeyCommand
+                                  option:config.chipLocatorHotkeyOption
+                                 control:config.chipLocatorHotkeyControl
+                                   shift:config.chipLocatorHotkeyShift];
+}
+
 @end
