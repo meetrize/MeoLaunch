@@ -91,6 +91,26 @@
         return nil;
     }
 
+    /* Finder desktop wallpaper is near-full-screen layer 0 — not a folder window chip. */
+    NSString *bid = nil;
+    NSRunningApplication *ownerApp =
+        [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+    if (ownerApp) {
+        bid = ownerApp.bundleIdentifier;
+    }
+    if (bid.length == 0) {
+        bid = [[NSBundle bundleWithPath:path] bundleIdentifier];
+    }
+    BOOL isFinder = [bid isEqualToString:@"com.apple.finder"];
+    if (!isFinder) {
+        NSString *std = path.stringByStandardizingPath.lowercaseString;
+        isFinder = [std hasSuffix:@"/finder.app"] ||
+                   [std isEqualToString:@"/system/library/coreServices/finder.app"];
+    }
+    if (isFinder && [MLScreenGeometry quartzBoundsLooksLikeDesktopWallpaper:bounds]) {
+        return nil;
+    }
+
     CFNumberRef winRef = CFDictionaryGetValue(info, kCGWindowNumber);
     CGWindowID wid = 0;
     if (winRef) {

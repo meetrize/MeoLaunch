@@ -82,13 +82,13 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     [self.hotKey applyConfig:self.config];
     [self.hotKey registerDefaultHotKey];
 
-    self.prefs = [[MLPrefsWindow alloc] initWithConfigStore:self.config];
-
     self.taskbarPins = [[MLTaskbarPinStore alloc] init];
     [self.taskbarPins loadFromDisk];
     self.overlay.pinStore = self.taskbarPins;
     self.taskbarHiddenChips = [[MLTaskbarHideStore alloc] init];
     [self.taskbarHiddenChips loadFromDisk];
+    self.prefs = [[MLPrefsWindow alloc] initWithConfigStore:self.config
+                                                  hideStore:self.taskbarHiddenChips];
     self.runningApps = [[MLRunningAppsMonitor alloc] init];
     self.taskbarIcons = [[MLIconCache alloc] init];
     self.taskbarIcons.maxEntries = 48;

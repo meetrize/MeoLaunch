@@ -156,7 +156,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarItemKind) {
 3. **未钉住的本屏窗口**：追加窗口条。
 4. **主屏追加** `RunningNoWindow`（全局无窗的 Regular path；硬顶 16；钉住优先）。次屏与其它屏窗口不追加 NoWindow。
 5. **H-Plan**：若 path 已隐藏 **且** 全局无窗（∉ `pathsWithVisibleWindows`）→ **跳过**步骤 1/4 的 `PinnedOnly` / `RunningNoWindow`；步骤 2–3 的有窗芯片不受影响。见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md)。
-6. 过滤：自身 `MeoLaunch`；**访达 Finder**（常驻且由 MeoFind 替代）；仅 Regular；忽略 layer≠0、零面积、系统 UI。
+6. 过滤：自身 `MeoLaunch`；仅 Regular；忽略 layer≠0、零面积、系统 UI。**访达 Finder**：文件夹窗口照常出 `RunningWindow`（桌面壁纸近全屏面过滤）；无窗时的 `RunningNoWindow` / 裸 `PinnedOnly` 仍抑制（常驻桌面进程，文件浏览以 MeoFind 为主）。
 
 顺序：先 Pin 区，再本屏窗口芯片，再（主屏）无窗运行芯片。细节见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md)。
 

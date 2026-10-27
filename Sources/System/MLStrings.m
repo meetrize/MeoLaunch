@@ -305,6 +305,22 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Show sound indicator on taskbar (mute on click)",
             @"zh" : @"任务栏显示声音指示（点击可静音）",
         },
+        @"prefs.section.hidden_chips" : @{
+            @"en" : @"Hidden Task Chips",
+            @"zh" : @"已隐藏的任务芯片",
+        },
+        @"prefs.hidden_chips_hint" : @{
+            @"en" : @"Apps hidden from the taskbar when they have no windows. Select one and show it again.",
+            @"zh" : @"无窗口时不在任务栏占位的应用。选中后可重新显示。",
+        },
+        @"prefs.hidden_chips_empty" : @{
+            @"en" : @"No hidden task chips",
+            @"zh" : @"暂无已隐藏的任务芯片",
+        },
+        @"prefs.show_hidden_chip" : @{
+            @"en" : @"Show Task Chip",
+            @"zh" : @"显示任务芯片",
+        },
         @"prefs.memory_free_enabled" : @{
             @"en" : @"Show free memory % in menu bar",
             @"zh" : @"菜单栏显示剩余内存 %",

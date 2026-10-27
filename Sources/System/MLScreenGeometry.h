@@ -26,6 +26,12 @@
 /** Screen with largest intersection with Cocoa bounds. */
 + (NSScreen *)screenForCocoaRect:(NSRect)cocoa;
 
+/**
+ * Quartz kCGWindowBounds covers ≥80% of some display — typical Finder desktop
+ * wallpaper surface (not a folder window).
+ */
++ (BOOL)quartzBoundsLooksLikeDesktopWallpaper:(CGRect)quartzBounds;
+
 + (NSNumber *)screenIDForScreen:(NSScreen *)screen;
 
 + (BOOL)nearlyEqual:(CGFloat)a b:(CGFloat)b tolerance:(CGFloat)tol;

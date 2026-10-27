@@ -42,6 +42,21 @@
     return CGPointMake(cocoa.origin.x, NSMaxY(main) - NSMaxY(cocoa));
 }
 
++ (BOOL)quartzBoundsLooksLikeDesktopWallpaper:(CGRect)quartzBounds {
+    if (quartzBounds.size.width < 1.0 || quartzBounds.size.height < 1.0) {
+        return NO;
+    }
+    NSRect cocoaBounds = [self cocoaRectFromQuartzBounds:quartzBounds];
+    NSScreen *screen = [self screenForCocoaRect:cocoaBounds];
+    NSRect sf = screen ? screen.frame : NSScreen.mainScreen.frame;
+    if (NSWidth(sf) <= 1.0 || NSHeight(sf) <= 1.0) {
+        return NO;
+    }
+    NSRect hit = NSIntersectionRect(cocoaBounds, sf);
+    CGFloat cover = (NSWidth(hit) * NSHeight(hit)) / (NSWidth(sf) * NSHeight(sf));
+    return cover >= 0.80;
+}
+
 + (NSScreen *)screenForCocoaRect:(NSRect)cocoa {
     NSScreen *best = nil;
     CGFloat bestArea = -1.0;

@@ -7,6 +7,7 @@
 #import "MLHotKeyRecorder.h"
 #import "MLHotKeyDisplay.h"
 #import "MLStrings.h"
+#import "MLTaskbarHideStore.h"
 
 #import <Carbon/Carbon.h>
 
@@ -21,12 +22,14 @@
 
 @interface MLPrefsWindow () <NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @property (nonatomic, weak) MLConfigStore *config;
+@property (nonatomic, weak) MLTaskbarHideStore *hideStore;
 @property (nonatomic, strong) NSWindow *window;
 @property (nonatomic, strong) NSScrollView *outerScroll;
 @property (nonatomic, strong) NSView *bottomBar;
 @property (nonatomic, strong) NSTextField *sectionGeneral;
 @property (nonatomic, strong) NSTextField *sectionHot;
 @property (nonatomic, strong) NSTextField *sectionPerf;
+@property (nonatomic, strong) NSTextField *sectionHiddenChips;
 @property (nonatomic, strong) NSTextField *languageLabel;
 @property (nonatomic, strong) NSPopUpButton *languagePopup;
 @property (nonatomic, strong) NSTextField *colsLabel;
@@ -61,6 +64,11 @@
 @property (nonatomic, strong) NSTextField *iconCacheLabel;
 @property (nonatomic, strong) NSSlider *iconCacheSlider;
 @property (nonatomic, strong) NSTextField *iconCacheValueLabel;
+@property (nonatomic, strong) NSTextField *hiddenChipsHint;
+@property (nonatomic, strong) NSTextField *hiddenChipsEmptyLabel;
+@property (nonatomic, strong) NSTableView *hiddenChipsTable;
+@property (nonatomic, strong) NSButton *showHiddenChipBtn;
+@property (nonatomic, strong) NSArray<NSString *> *hiddenChipsCache;
 @property (nonatomic, strong) NSTextField *scanTitle;
 @property (nonatomic, strong) NSTextField *scanHint;
 @property (nonatomic, strong) NSTextField *sysLabel;
@@ -90,14 +98,21 @@ static const CGFloat kPrefsColGap = 20;
 static const CGFloat kPrefsLabelW = 128;
 static const CGFloat kPrefsValueW = 48;
 
-- (instancetype)initWithConfigStore:(MLConfigStore *)config {
+- (instancetype)initWithConfigStore:(MLConfigStore *)config
+                          hideStore:(MLTaskbarHideStore *)hideStore {
     self = [super init];
     if (self) {
         _config = config;
+        _hideStore = hideStore;
         _extraRootsCache = @[];
+        _hiddenChipsCache = @[];
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(languageDidChange:)
                                                      name:MLLanguageDidChangeNotification
+                                                   object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(hiddenChipsDidChange:)
+                                                     name:MLTaskbarHideDidChangeNotification
                                                    object:nil];
     }
     return self;
@@ -447,6 +462,57 @@ static const CGFloat kPrefsValueW = 48;
               inRect:right];
     y += 36;
 
+    /* —— Hidden task chips —— */
+    self.sectionHiddenChips = [self makeSectionTitle:@"" atY:&y inView:c];
+
+    self.hiddenChipsHint = [self makeLabel:@"" frame:NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 28)];
+    self.hiddenChipsHint.font = [NSFont systemFontOfSize:11];
+    self.hiddenChipsHint.textColor = [NSColor secondaryLabelColor];
+    self.hiddenChipsHint.maximumNumberOfLines = 2;
+    self.hiddenChipsHint.lineBreakMode = NSLineBreakByWordWrapping;
+    [c addSubview:self.hiddenChipsHint];
+    y += 30;
+
+    CGFloat hiddenTableH = 92;
+    CGFloat hiddenBtnColW = 118;
+    CGFloat hiddenTableW = kPrefsContentW - kPrefsPad * 2 - hiddenBtnColW - 8;
+    NSScrollView *hiddenScroll =
+        [[NSScrollView alloc] initWithFrame:NSMakeRect(kPrefsPad, y, hiddenTableW, hiddenTableH)];
+    hiddenScroll.hasVerticalScroller = YES;
+    hiddenScroll.autohidesScrollers = YES;
+    hiddenScroll.borderType = NSBezelBorder;
+
+    NSTableView *hiddenTable = [[NSTableView alloc] initWithFrame:hiddenScroll.bounds];
+    NSTableColumn *hiddenCol = [[NSTableColumn alloc] initWithIdentifier:@"hiddenApp"];
+    hiddenCol.title = @"";
+    hiddenCol.width = hiddenTableW - 20;
+    [hiddenTable addTableColumn:hiddenCol];
+    hiddenTable.headerView = nil;
+    hiddenTable.rowHeight = 22;
+    hiddenTable.allowsEmptySelection = YES;
+    hiddenTable.allowsMultipleSelection = NO;
+    hiddenTable.dataSource = self;
+    hiddenTable.delegate = self;
+    hiddenScroll.documentView = hiddenTable;
+    self.hiddenChipsTable = hiddenTable;
+    [c addSubview:hiddenScroll];
+
+    CGFloat hiddenBx = kPrefsPad + hiddenTableW + 8;
+    self.showHiddenChipBtn = [NSButton buttonWithTitle:@""
+                                                target:self
+                                                action:@selector(showSelectedHiddenChip:)];
+    self.showHiddenChipBtn.frame = NSMakeRect(hiddenBx, y + hiddenTableH - 28, hiddenBtnColW, 26);
+    [c addSubview:self.showHiddenChipBtn];
+
+    self.hiddenChipsEmptyLabel =
+        [self makeLabel:@""
+                  frame:NSMakeRect(kPrefsPad + 8, y + (hiddenTableH - 16) / 2.0, hiddenTableW - 16, 16)];
+    self.hiddenChipsEmptyLabel.font = [NSFont systemFontOfSize:11];
+    self.hiddenChipsEmptyLabel.textColor = [NSColor secondaryLabelColor];
+    self.hiddenChipsEmptyLabel.alignment = NSTextAlignmentCenter;
+    [c addSubview:self.hiddenChipsEmptyLabel];
+    y += hiddenTableH + 10;
+
     /* —— App folders —— */
     self.scanTitle = [self makeSectionTitle:@"" atY:&y inView:c];
 
@@ -552,6 +618,10 @@ static const CGFloat kPrefsValueW = 48;
     self.sectionGeneral.stringValue = [MLStrings t:@"prefs.section.general"];
     self.sectionHot.stringValue = [MLStrings t:@"prefs.section.hot"];
     self.sectionPerf.stringValue = [MLStrings t:@"prefs.section.performance"];
+    self.sectionHiddenChips.stringValue = [MLStrings t:@"prefs.section.hidden_chips"];
+    self.hiddenChipsHint.stringValue = [MLStrings t:@"prefs.hidden_chips_hint"];
+    self.hiddenChipsEmptyLabel.stringValue = [MLStrings t:@"prefs.hidden_chips_empty"];
+    self.showHiddenChipBtn.title = [MLStrings t:@"prefs.show_hidden_chip"];
     self.languageLabel.stringValue = [MLStrings t:@"prefs.language"];
     [[self.languagePopup itemAtIndex:0] setTitle:[MLStrings t:@"prefs.lang.zh"]];
     [[self.languagePopup itemAtIndex:1] setTitle:[MLStrings t:@"prefs.lang.en"]];
@@ -602,11 +672,20 @@ static const CGFloat kPrefsValueW = 48;
         [NSString stringWithFormat:[MLStrings t:@"prefs.config_path"],
                                    [MLConfigStore configFileURL].path];
     [self.extraRootsTable reloadData];
+    [self reloadHiddenChipsTable];
 }
 
 - (void)languageDidChange:(NSNotification *)note {
     (void)note;
     [self applyLocalizedStrings];
+}
+
+- (void)hiddenChipsDidChange:(NSNotification *)note {
+    (void)note;
+    if (!self.window) {
+        return;
+    }
+    [self reloadHiddenChipsTable];
 }
 
 #pragma mark - Actions
@@ -918,8 +997,26 @@ static const CGFloat kPrefsValueW = 48;
     [self.extraRootsTable reloadData];
 }
 
+- (void)reloadHiddenChipsTable {
+    self.hiddenChipsCache = self.hideStore.hiddenPaths ?: @[];
+    [self.hiddenChipsTable reloadData];
+    BOOL empty = self.hiddenChipsCache.count == 0;
+    self.hiddenChipsEmptyLabel.hidden = !empty;
+    self.showHiddenChipBtn.enabled = !empty && self.hiddenChipsTable.selectedRow >= 0;
+}
+
+- (void)tableViewSelectionDidChange:(NSNotification *)notification {
+    NSTableView *tv = notification.object;
+    if (tv == self.hiddenChipsTable) {
+        self.showHiddenChipBtn.enabled =
+            self.hiddenChipsCache.count > 0 && self.hiddenChipsTable.selectedRow >= 0;
+    }
+}
+
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
-    (void)tableView;
+    if (tableView == self.hiddenChipsTable) {
+        return (NSInteger)self.hiddenChipsCache.count;
+    }
     return (NSInteger)self.extraRootsCache.count;
 }
 
@@ -927,6 +1024,35 @@ static const CGFloat kPrefsValueW = 48;
     viewForTableColumn:(NSTableColumn *)tableColumn
                    row:(NSInteger)row {
     (void)tableColumn;
+    if (tableView == self.hiddenChipsTable) {
+        NSString *ident = @"hiddenChipCell";
+        NSTextField *cell = [tableView makeViewWithIdentifier:ident owner:self];
+        if (!cell) {
+            cell = [NSTextField labelWithString:@""];
+            cell.identifier = ident;
+            cell.editable = NO;
+            cell.bordered = NO;
+            cell.drawsBackground = NO;
+            cell.font = [NSFont systemFontOfSize:12];
+            cell.lineBreakMode = NSLineBreakByTruncatingMiddle;
+        }
+        if (row < 0 || row >= (NSInteger)self.hiddenChipsCache.count) {
+            cell.stringValue = @"";
+            return cell;
+        }
+        NSString *path = self.hiddenChipsCache[(NSUInteger)row];
+        NSString *name = [[NSFileManager defaultManager] displayNameAtPath:path];
+        if (name.length == 0) {
+            name = path.lastPathComponent.stringByDeletingPathExtension;
+        }
+        if (name.length == 0) {
+            name = path;
+        }
+        cell.stringValue = [NSString stringWithFormat:@"%@  —  %@", name, path];
+        cell.textColor = [NSColor labelColor];
+        return cell;
+    }
+
     NSString *ident = @"pathCell";
     NSTextField *cell = [tableView makeViewWithIdentifier:ident owner:self];
     if (!cell) {
@@ -954,6 +1080,17 @@ static const CGFloat kPrefsValueW = 48;
         cell.textColor = [NSColor secondaryLabelColor];
     }
     return cell;
+}
+
+- (void)showSelectedHiddenChip:(id)sender {
+    (void)sender;
+    NSInteger row = self.hiddenChipsTable.selectedRow;
+    if (row < 0 || row >= (NSInteger)self.hiddenChipsCache.count) {
+        return;
+    }
+    NSString *path = self.hiddenChipsCache[(NSUInteger)row];
+    [self.hideStore unhidePath:path];
+    /* Notification refreshes the table; keep selection on next row if any. */
 }
 
 - (void)addExtraRoot:(id)sender {
@@ -1098,6 +1235,7 @@ static const CGFloat kPrefsValueW = 48;
     [self ensureWindow];
     [self applyLocalizedStrings];
     [self reloadFields];
+    [self reloadHiddenChipsTable];
     [self.window center];
     [self.window orderFrontRegardless];
     [self.window makeKeyAndOrderFront:nil];

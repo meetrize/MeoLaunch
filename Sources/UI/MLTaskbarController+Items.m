@@ -37,7 +37,11 @@
     return [[NSBundle bundleWithPath:path] bundleIdentifier];
 }
 
-/** Finder is always-resident and replaced by MeoFind — never appear on the taskbar. */
+/**
+ * Always-resident apps whose idle (Pin / NoWindow) chips stay suppressed.
+ * Finder folder windows still appear as RunningWindow; only desktop wallpaper
+ * is filtered upstream. MeoFind remains the primary file-browser launcher.
+ */
 - (BOOL)isExcludedTaskbarAppPath:(NSString *)path {
     if (path.length == 0) {
         return NO;
@@ -217,9 +221,7 @@
     if (selfBid.length > 0 && [front.bundleIdentifier isEqualToString:selfBid]) {
         return 0;
     }
-    if ([front.bundleIdentifier isEqualToString:@"com.apple.finder"]) {
-        return 0;
-    }
+    BOOL frontIsFinder = [front.bundleIdentifier isEqualToString:@"com.apple.finder"];
     pid_t pid = front.processIdentifier;
     CFArrayRef list = [self.monitor.windowCensus cachedOnScreenWindowListRefreshingIfNeeded:YES];
     if (!list) {
@@ -252,6 +254,9 @@
         }
         if (bounds.size.width < 100.0 || bounds.size.height < 80.0) {
             continue;
+        }
+        if (frontIsFinder && [MLScreenGeometry quartzBoundsLooksLikeDesktopWallpaper:bounds]) {
+            continue; /* wallpaper, keep looking for a real Finder folder window */
         }
         CFNumberRef winRef = CFDictionaryGetValue(info, kCGWindowNumber);
         if (winRef) {
@@ -316,6 +321,10 @@
             continue;
         }
         if (bounds.size.width < 100.0 || bounds.size.height < 80.0) {
+            continue;
+        }
+        if ([owner.bundleIdentifier isEqualToString:@"com.apple.finder"] &&
+            [MLScreenGeometry quartzBoundsLooksLikeDesktopWallpaper:bounds]) {
             continue;
         }
         CFNumberRef alphaRef = CFDictionaryGetValue(info, kCGWindowAlpha);
@@ -653,9 +662,7 @@
                               ? self.rebuildPassFrontmostWID
                               : [self frontmostTrackedWindowID];
     for (MLTaskbarWindowInfo *w in uniqueWindows) {
-        if ([self isExcludedTaskbarAppPath:w.path]) {
-            continue;
-        }
+        /* Idle-only exclusions (e.g. Finder) must not drop window chips. */
         NSString *display = [self displayNameForPath:w.path];
         NSString *title = w.title.length > 0 ? w.title : display;
         BOOL pinned = [self pinSet:pinSet containsPath:w.path];

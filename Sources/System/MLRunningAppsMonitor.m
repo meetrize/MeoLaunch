@@ -79,10 +79,8 @@ const MLPollOptions MLPollOptionsFast =
         if ([bid isEqualToString:self.selfBundleID]) {
             return NO;
         }
-        /* Finder is always-resident; MeoLaunch replaces it with MeoFind — never taskbar chips. */
-        if ([bid isEqualToString:@"com.apple.finder"]) {
-            return NO;
-        }
+        /* Finder is tracked so folder windows can become task chips; desktop wallpaper
+         * surfaces are filtered in SnapshotBuilder, and idle NoWindow/Pin stay suppressed. */
     }
     NSURL *url = app.bundleURL;
     if (!url.path.length) {
