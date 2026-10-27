@@ -1280,24 +1280,42 @@ enum { MLFolderCompositeMaxEntries = 16 };
     [self scheduleEdgeFlipAfterDelay:0.50];
 }
 
+/**
+ * Prefer the overlay animation host (hit-through, `ml.` chrome).
+ * Never attach the ghost as a bare contentView child — MLOverlayContentView
+ * strips unknown subviews as "ChromeAnomaly", which made the drag icon vanish.
+ */
+- (NSView *)dragGhostHost {
+    NSView *content = self.window.contentView;
+    if (!content) {
+        return nil;
+    }
+    for (NSView *sub in content.subviews) {
+        if ([sub.identifier isEqualToString:@"ml.animationHost"]) {
+            return sub;
+        }
+    }
+    return content;
+}
+
 - (CGFloat)dragGhostScaleForMergeHover {
     if (_mergeHoverVis < 0) {
-        return 1.0;
+        return 1.08; /* slight lift while free-dragging */
     }
     if ([self isFolderAtVisibleIndex:_mergeHoverVis]) {
-        return 0.72;
+        return 0.68; /* shrink into folder plate */
     }
-    return 0.82;
+    return 0.78; /* preparing to merge into new folder */
 }
 
 - (CGFloat)dragGhostAlphaForMergeHover {
     if (_mergeHoverVis < 0) {
-        return 0.92;
-    }
-    if ([self isFolderAtVisibleIndex:_mergeHoverVis]) {
         return 0.78;
     }
-    return 0.85;
+    if ([self isFolderAtVisibleIndex:_mergeHoverVis]) {
+        return 0.62;
+    }
+    return 0.70;
 }
 
 - (void)beginDragAtPoint:(NSPoint)p {
@@ -1336,21 +1354,47 @@ enum { MLFolderCompositeMaxEntries = 16 };
         return;
     }
 
-    NSView *content = self.window.contentView;
-    NSRect startRect = [self convertRect:iconRect toView:content];
+    NSView *host = [self dragGhostHost];
+    if (!host) {
+        return;
+    }
+    /* Keep host on top so the translucent follower stays visible over grid chrome. */
+    if (host.superview) {
+        [host.superview addSubview:host positioned:NSWindowAbove relativeTo:nil];
+    }
+
+    NSRect startRect = [self convertRect:iconRect toView:host];
     _dragIconBaseSize = iconRect.size;
     _dragOffset = NSMakePoint(p.x - iconRect.origin.x, p.y - iconRect.origin.y);
     _mergeHoverVis = -1;
 
+    [_dragImageView removeFromSuperview];
     _dragImageView = [[NSImageView alloc] initWithFrame:startRect];
+    _dragImageView.identifier = @"ml.dragGhost";
     _dragImageView.image = icon;
-    _dragImageView.imageScaling = NSImageScaleAxesIndependently;
+    _dragImageView.imageScaling = NSImageScaleProportionallyUpOrDown;
+    _dragImageView.imageAlignment = NSImageAlignCenter;
     _dragImageView.wantsLayer = YES;
-    _dragImageView.alphaValue = 0.92;
-    _dragImageView.layer.shadowOpacity = 0.35;
-    _dragImageView.layer.shadowRadius = 8.0;
-    _dragImageView.layer.shadowOffset = CGSizeMake(0, -2);
-    [content addSubview:_dragImageView positioned:NSWindowAbove relativeTo:nil];
+    _dragImageView.alphaValue = 0.0;
+    _dragImageView.layer.shadowOpacity = 0.45;
+    _dragImageView.layer.shadowRadius = 12.0;
+    _dragImageView.layer.shadowOffset = CGSizeMake(0, -3);
+    _dragImageView.layer.shadowColor = [NSColor blackColor].CGColor;
+    [host addSubview:_dragImageView];
+
+    /* Pop in: translucent follower that tracks the cursor. */
+    CGFloat lift = 1.08;
+    NSSize lifted = NSMakeSize(startRect.size.width * lift, startRect.size.height * lift);
+    NSRect liftedRect = NSMakeRect(NSMidX(startRect) - lifted.width * 0.5,
+                                   NSMidY(startRect) - lifted.height * 0.5,
+                                   lifted.width,
+                                   lifted.height);
+    [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
+        ctx.duration = 0.12;
+        ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+        self->_dragImageView.animator.frame = liftedRect;
+        self->_dragImageView.animator.alphaValue = 0.78;
+    } completionHandler:nil];
 
     _dragActive = YES;
     self.selectedVisibleIndex = _dragSourceVis;
@@ -1365,7 +1409,10 @@ enum { MLFolderCompositeMaxEntries = 16 };
     if (!_dragImageView || _dragIconBaseSize.width <= 0) {
         return;
     }
-    NSView *content = self.window.contentView;
+    NSView *host = _dragImageView.superview ?: [self dragGhostHost];
+    if (!host) {
+        return;
+    }
     CGFloat scale = [self dragGhostScaleForMergeHover];
     NSSize size = NSMakeSize(_dragIconBaseSize.width * scale, _dragIconBaseSize.height * scale);
     NSPoint baseOrigin = NSMakePoint(p.x - _dragOffset.x, p.y - _dragOffset.y);
@@ -1375,8 +1422,9 @@ enum { MLFolderCompositeMaxEntries = 16 };
                                   center.y - size.height * 0.5,
                                   size.width,
                                   size.height);
-    NSRect inContentRect = [self convertRect:iconLocal toView:content];
-    _dragImageView.frame = inContentRect;
+    NSRect inHost = [self convertRect:iconLocal toView:host];
+    /* Direct frame — animator lag would desync the follower from the cursor. */
+    _dragImageView.frame = inHost;
     _dragImageView.alphaValue = [self dragGhostAlphaForMergeHover];
 }
 
@@ -1428,21 +1476,21 @@ enum { MLFolderCompositeMaxEntries = 16 };
         return;
     }
     NSRect targetIcon = [self iconRectForVisibleIndex:target];
-    NSView *content = self.window.contentView;
-    if (NSIsEmptyRect(targetIcon) || !content) {
+    NSView *host = _dragImageView.superview ?: [self dragGhostHost];
+    if (NSIsEmptyRect(targetIcon) || !host) {
         [self endDragVisuals];
         if (completion) {
             completion();
         }
         return;
     }
-    NSRect dest = [self convertRect:targetIcon toView:content];
-    CGFloat inset = MIN(NSWidth(dest), NSHeight(dest)) * 0.38;
+    NSRect dest = [self convertRect:targetIcon toView:host];
+    CGFloat inset = MIN(NSWidth(dest), NSHeight(dest)) * 0.42;
     NSRect endRect = NSInsetRect(dest, inset, inset);
     _dropAnimating = YES;
 
     [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) {
-        ctx.duration = 0.20;
+        ctx.duration = 0.22;
         ctx.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseIn];
         self->_dragImageView.animator.frame = endRect;
         self->_dragImageView.animator.alphaValue = 0.0;
