@@ -41,6 +41,7 @@
         _desktopPeekUserArmed = NO;
         _stickyDisplayUntil = 0;
         _audioIndicatorEnabled = YES;
+        _searchButtonEnabled = YES;
     }
     return self;
 }
@@ -223,6 +224,23 @@
                                                    object:self.audioActivity];
         [self.audioActivity start];
         [self applyAudioBadgesFromMonitor];
+    }
+}
+
+- (void)applySearchButtonVisibilityToBars {
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        bar.barView.showsSearchButton = self.searchButtonEnabled;
+    }
+}
+
+- (void)setSearchButtonEnabled:(BOOL)searchButtonEnabled {
+    if (_searchButtonEnabled == searchButtonEnabled) {
+        return;
+    }
+    _searchButtonEnabled = searchButtonEnabled;
+    [self applySearchButtonVisibilityToBars];
+    if (self.started && !self.itemsFrozenForDesktopReveal) {
+        [self rebuildItemsImmediate:YES];
     }
 }
 

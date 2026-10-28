@@ -30,6 +30,7 @@
 @property (nonatomic, strong) NSWindow *ghostWindow;
 @property (nonatomic, strong) NSImageView *ghostImageView;
 @property (nonatomic, assign) NSInteger pendingAudioBadgeIndex;
+@property (nonatomic, assign) BOOL pendingSearchButtonClick;
 @end
 
 @implementation MLTaskbarView
@@ -57,6 +58,8 @@
         _dragSourceIndex = -1;
         _dropInsertIndex = -1;
         _pendingAudioBadgeIndex = -1;
+        _pendingSearchButtonClick = NO;
+        _showsSearchButton = YES;
         _gapAnimFromDest = -1;
         _localDragZone = MLTaskbarChipZoneNone;
         _externalPreviewZone = MLTaskbarChipZoneNone;
@@ -111,6 +114,40 @@
 /** Bare icon slot for pinned-not-running launchers. */
 - (CGFloat)pinnedSlotWidth {
     return self.iconSize + 4.0;
+}
+
+- (CGFloat)searchButtonSlotWidth {
+    return self.iconSize + 4.0;
+}
+
+- (CGFloat)leadingChromeWidth {
+    if (!self.showsSearchButton) {
+        return 0;
+    }
+    return [self searchButtonSlotWidth] + self.spacing;
+}
+
+- (CGFloat)chipsOriginX {
+    return [self edgeInset] + [self leadingChromeWidth];
+}
+
+- (void)setShowsSearchButton:(BOOL)showsSearchButton {
+    if (_showsSearchButton == showsSearchButton) {
+        return;
+    }
+    _showsSearchButton = showsSearchButton;
+    [self setNeedsDisplay:YES];
+}
+
+- (NSRect)searchButtonRect {
+    if (!self.showsSearchButton) {
+        return NSZeroRect;
+    }
+    CGFloat y = (NSHeight(self.bounds) - self.barHeight) * 0.5;
+    if (y < 0) {
+        y = 0;
+    }
+    return NSMakeRect([self edgeInset], y, [self searchButtonSlotWidth], self.barHeight);
 }
 
 - (BOOL)isPinnedIconOnly:(MLTaskbarItem *)item {
@@ -173,7 +210,7 @@
         return self.itemMaxWidth;
     }
     CGFloat inset = [self edgeInset];
-    CGFloat avail = NSWidth(self.bounds) - inset * 2.0;
+    CGFloat avail = NSWidth(self.bounds) - inset * 2.0 - [self leadingChromeWidth];
     CGFloat spacing = self.spacing;
     CGFloat pinnedW = [self pinnedSlotWidth];
     CGFloat pinnedSpan = pinnedN * pinnedW + (pinnedN > 0 ? (pinnedN - 1) * spacing : 0);
@@ -218,7 +255,7 @@
     if (index < 0 || index >= (NSInteger)self.items.count) {
         return NSZeroRect;
     }
-    CGFloat x = [self edgeInset];
+    CGFloat x = [self chipsOriginX];
     for (NSInteger i = 0; i < index; i++) {
         MLTaskbarItem *prev = self.items[(NSUInteger)i];
         x += [self widthForItem:prev chipWidth:chipW] + self.spacing;
@@ -343,7 +380,7 @@
     /* Empty zone: still allow drop at start. */
     if (count == 0) {
         CGFloat chipW = [self windowChipWidth];
-        CGFloat x = [self edgeInset];
+        CGFloat x = [self chipsOriginX];
         for (NSInteger i = 0; i < start; i++) {
             x += [self widthForItem:self.items[(NSUInteger)i] chipWidth:chipW] + self.spacing;
         }
@@ -533,7 +570,7 @@
             return NSOrderedSame;
         }];
 
-        CGFloat x = [self edgeInset];
+        CGFloat x = [self chipsOriginX];
         BOOL holePlaced = NO;
         for (NSNumber *num in order) {
             NSInteger mi = num.integerValue;
@@ -554,7 +591,7 @@
     if ([self externalGapActive]) {
         NSInteger insert = self.externalInsertIndex;
         CGFloat ph = self.externalPlaceholderWidth;
-        CGFloat x = [self edgeInset];
+        CGFloat x = [self chipsOriginX];
         for (NSInteger i = 0; i < (NSInteger)self.items.count; i++) {
             if (i == insert) {
                 x += ph + self.spacing;
@@ -602,7 +639,7 @@
             return NSOrderedSame;
         }];
 
-        CGFloat x = [self edgeInset];
+        CGFloat x = [self chipsOriginX];
         for (NSNumber *num in order) {
             NSInteger mi = num.integerValue;
             NSInteger vis = [self shiftedIndex:mi source:src dest:dest];
@@ -616,7 +653,7 @@
     if ([self externalGapActive]) {
         NSInteger insert = self.externalInsertIndex;
         CGFloat ph = self.externalPlaceholderWidth;
-        CGFloat x = [self edgeInset];
+        CGFloat x = [self chipsOriginX];
         for (NSInteger i = 0; i < insert && i < (NSInteger)self.items.count; i++) {
             x += [self widthForItem:self.items[(NSUInteger)i] chipWidth:chipW] + self.spacing;
         }
@@ -722,6 +759,67 @@
     [path stroke];
 }
 
+- (void)drawSearchButtonInRect:(NSRect)cell {
+    if (NSIsEmptyRect(cell)) {
+        return;
+    }
+    NSColor *ink = [NSColor colorWithCalibratedRed:0.28 green:0.34 blue:0.44 alpha:0.92];
+    NSImage *symbol = nil;
+    if (@available(macOS 11.0, *)) {
+        NSImage *raw = [NSImage imageWithSystemSymbolName:@"magnifyingglass"
+                                 accessibilityDescription:nil];
+        if (raw) {
+            NSImageSymbolConfiguration *cfg =
+                [NSImageSymbolConfiguration configurationWithPointSize:15.0
+                                                                weight:NSFontWeightMedium
+                                                                 scale:NSImageSymbolScaleMedium];
+            symbol = [raw imageWithSymbolConfiguration:cfg] ?: raw;
+        }
+    }
+    if (symbol) {
+        CGFloat imgW = 18.0;
+        CGFloat imgH = 18.0;
+        NSRect r = NSMakeRect(NSMidX(cell) - imgW * 0.5,
+                              NSMidY(cell) - imgH * 0.5,
+                              imgW,
+                              imgH);
+        NSImage *drawn = [[NSImage alloc] initWithSize:r.size];
+        [drawn lockFocus];
+        NSRect local = NSMakeRect(0, 0, r.size.width, r.size.height);
+        [symbol drawInRect:local
+                  fromRect:NSZeroRect
+                 operation:NSCompositingOperationSourceOver
+                  fraction:1.0
+            respectFlipped:YES
+                     hints:nil];
+        [ink set];
+        NSRectFillUsingOperation(local, NSCompositingOperationSourceAtop);
+        [drawn unlockFocus];
+        [drawn drawInRect:r
+                 fromRect:NSZeroRect
+                operation:NSCompositingOperationSourceOver
+                 fraction:1.0
+           respectFlipped:YES
+                    hints:nil];
+        return;
+    }
+
+    CGFloat cx = NSMidX(cell) - 1.5;
+    CGFloat cy = NSMidY(cell) + 1.0;
+    CGFloat rad = 6.0;
+    [ink setStroke];
+    NSBezierPath *ring =
+        [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(cx - rad, cy - rad, rad * 2.0, rad * 2.0)];
+    ring.lineWidth = 1.6;
+    [ring stroke];
+    NSBezierPath *handle = [NSBezierPath bezierPath];
+    handle.lineWidth = 1.8;
+    handle.lineCapStyle = NSLineCapStyleRound;
+    [handle moveToPoint:NSMakePoint(cx + rad * 0.72, cy + rad * 0.72)];
+    [handle lineToPoint:NSMakePoint(cx + rad * 1.55, cy + rad * 1.55)];
+    [handle stroke];
+}
+
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
 
@@ -761,6 +859,8 @@
     NSColor *chipMinStroke = [NSColor colorWithCalibratedRed:0.827 green:0.847 blue:0.886 alpha:1.0];
     NSColor *chipActiveFill = [NSColor colorWithCalibratedRed:0.847 green:0.902 blue:0.980 alpha:1.0];
     NSColor *chipActiveStroke = [NSColor colorWithCalibratedRed:0.310 green:0.498 blue:0.910 alpha:1.0];
+
+    [self drawSearchButtonInRect:[self searchButtonRect]];
 
     if ([self reorderGapActive] || [self externalGapActive]) {
         [self drawPlaceholderInRect:[self placeholderRectChipWidth:chipW]];
@@ -1011,8 +1111,17 @@
         return;
     }
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    NSInteger idx = [self indexAtPoint:p];
     self.pendingAudioBadgeIndex = -1;
+    self.pendingSearchButtonClick = NO;
+    NSRect searchRect = [self searchButtonRect];
+    if (!NSIsEmptyRect(searchRect) && NSPointInRect(p, searchRect)) {
+        self.pendingSearchButtonClick = YES;
+        self.dragTracking = NO;
+        self.dragActive = NO;
+        self.dragSourceIndex = -1;
+        return;
+    }
+    NSInteger idx = [self indexAtPoint:p];
     if (idx < 0) {
         self.dragTracking = NO;
         self.dragActive = NO;
@@ -1084,7 +1193,9 @@
     BOOL wasDragging = self.dragActive;
     NSInteger src = self.dragSourceIndex;
     NSInteger audioIdx = self.pendingAudioBadgeIndex;
+    BOOL searchClick = self.pendingSearchButtonClick;
     self.pendingAudioBadgeIndex = -1;
+    self.pendingSearchButtonClick = NO;
 
     if (wasDragging) {
         if ([self.delegate respondsToSelector:@selector(taskbarView:endedDragAtScreenPoint:cancelled:)]) {
@@ -1097,6 +1208,15 @@
     self.dragTracking = NO;
     self.dragActive = NO;
     self.dragSourceIndex = -1;
+
+    if (searchClick) {
+        NSRect searchRect = [self searchButtonRect];
+        if (!NSIsEmptyRect(searchRect) && NSPointInRect(p, searchRect) &&
+            [self.delegate respondsToSelector:@selector(taskbarViewDidClickSearchButton:)]) {
+            [self.delegate taskbarViewDidClickSearchButton:self];
+        }
+        return;
+    }
 
     if (audioIdx >= 0) {
         NSRect badge = [self audioBadgeRectForItemAtIndex:audioIdx];
@@ -1218,6 +1338,14 @@
         }
         [menu addItem:[NSMenuItem separatorItem]];
     }
+
+    NSMenuItem *searchToggle =
+        [self menuItemWithTitle:[MLStrings t:@"taskbar.show_search_button"]
+                         action:MLTaskbarMenuActionSearchButtonToggle
+                        enabled:YES];
+    searchToggle.state = self.showsSearchButton ? NSControlStateValueOn : NSControlStateValueOff;
+    [menu addItem:searchToggle];
+    [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *mlRoot = [[NSMenuItem alloc] initWithTitle:[MLStrings t:@"taskbar.submenu.meolaunch"]
                                                     action:nil

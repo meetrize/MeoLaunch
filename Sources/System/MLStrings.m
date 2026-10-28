@@ -69,6 +69,10 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Exit Full Screen",
             @"zh" : @"退出全屏",
         },
+        @"taskbar.show_search_button" : @{
+            @"en" : @"Show Search Icon",
+            @"zh" : @"显示搜索图标",
+        },
         @"taskbar.submenu.meolaunch" : @{
             @"en" : @"MeoLaunch",
             @"zh" : @"MeoLaunch",

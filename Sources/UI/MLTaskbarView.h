@@ -30,6 +30,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
     MLTaskbarMenuActionPinToggle,
     MLTaskbarMenuActionHideChipToggle,
     MLTaskbarMenuActionAudioMuteToggle,
+    MLTaskbarMenuActionSearchButtonToggle,
     MLTaskbarMenuActionAbout,
     MLTaskbarMenuActionPreferences,
     MLTaskbarMenuActionQuit,
@@ -70,6 +71,11 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 - (void)taskbarShowAbout;
 - (void)taskbarShowPreferences;
 - (void)taskbarQuitApp;
+@optional
+/** Open / toggle Chip Locator panel. */
+- (void)taskbarToggleChipLocator;
+/** Persist + apply show/hide of the leftmost search icon. */
+- (void)taskbarToggleSearchButtonVisibility;
 @end
 
 @protocol MLTaskbarViewDelegate <NSObject>
@@ -93,6 +99,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
                  cancelled:(BOOL)cancelled;
 /** Audio badge only — must not activate / soft-min the chip. */
 - (void)taskbarView:(MLTaskbarView *)view didClickAudioBadgeAtIndex:(NSInteger)index;
+/** Leftmost search / Chip Locator button. */
+- (void)taskbarViewDidClickSearchButton:(MLTaskbarView *)view;
 @end
 
 @interface MLTaskbarView : NSView
@@ -106,11 +114,17 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 @property (nonatomic, assign) CGFloat barHeight;
 @property (nonatomic, assign) CGFloat itemMaxWidth;
 @property (nonatomic, assign) CGFloat itemMinWidth;
+/** Leftmost magnifier that opens Chip Locator; default YES. */
+@property (nonatomic, assign) BOOL showsSearchButton;
 
 - (NSInteger)indexAtPoint:(NSPoint)p;
 - (NSRect)rectForItemAtIndex:(NSInteger)index;
 /** Hit / draw rect for audio badge; empty if none. */
 - (NSRect)audioBadgeRectForItemAtIndex:(NSInteger)index;
+/** Hit / draw rect for leftmost search button; empty if hidden. */
+- (NSRect)searchButtonRect;
+/** Extra leading width reserved for search chrome (0 when hidden). */
+- (CGFloat)leadingChromeWidth;
 
 /** Leading contiguous PinnedOnly count (pin zone length). */
 - (NSInteger)pinZoneCount;

@@ -39,6 +39,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @property (nonatomic, assign, readwrite) NSInteger scanRefreshSeconds;
 @property (nonatomic, assign, readwrite) BOOL taskbarEnabled;
 @property (nonatomic, assign, readwrite) BOOL taskbarAudioIndicatorEnabled;
+@property (nonatomic, assign, readwrite) BOOL taskbarChipLocatorButtonEnabled;
 @property (nonatomic, assign, readwrite) NSTimeInterval taskbarWindowPollSeconds;
 @property (nonatomic, assign, readwrite) NSUInteger overlayIconCacheMax;
 @property (nonatomic, assign, readwrite) BOOL memoryFreeEnabled;
@@ -229,6 +230,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.scanRefreshSeconds = 60;
     self.taskbarEnabled = YES;
     self.taskbarAudioIndicatorEnabled = YES;
+    self.taskbarChipLocatorButtonEnabled = YES;
     self.taskbarWindowPollSeconds = 1.0;
     self.overlayIconCacheMax = 128;
     self.memoryFreeEnabled = NO;
@@ -398,6 +400,9 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         if (tb[@"audio_indicator"]) {
             self.taskbarAudioIndicatorEnabled = [tb[@"audio_indicator"] boolValue];
         }
+        if (tb[@"chip_locator_button"]) {
+            self.taskbarChipLocatorButtonEnabled = [tb[@"chip_locator_button"] boolValue];
+        }
         if (tb[@"window_poll_seconds"]) {
             NSTimeInterval s = [tb[@"window_poll_seconds"] doubleValue];
             if (s < 0.5) s = 0.5;
@@ -494,6 +499,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         @"taskbar" : @{
             @"enabled" : @(self.taskbarEnabled),
             @"audio_indicator" : @(self.taskbarAudioIndicatorEnabled),
+            @"chip_locator_button" : @(self.taskbarChipLocatorButtonEnabled),
             @"window_poll_seconds" : @(self.taskbarWindowPollSeconds > 0 ? self.taskbarWindowPollSeconds : 1.0),
         },
         @"menubar" : @{
@@ -841,6 +847,15 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         return;
     }
     self.taskbarAudioIndicatorEnabled = enabled;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateTaskbarChipLocatorButtonEnabled:(BOOL)enabled {
+    if (self.taskbarChipLocatorButtonEnabled == enabled) {
+        return;
+    }
+    self.taskbarChipLocatorButtonEnabled = enabled;
     [self notifyChanged];
     [self scheduleSave];
 }

@@ -64,6 +64,8 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 @property (nonatomic, assign, readonly) BOOL taskbarEnabled;
 /** Show sound indicator + mute on taskbar chips (doc/19); default YES. */
 @property (nonatomic, assign, readonly) BOOL taskbarAudioIndicatorEnabled;
+/** Leftmost Chip Locator search button on the taskbar; default YES. */
+@property (nonatomic, assign, readonly) BOOL taskbarChipLocatorButtonEnabled;
 @property (nonatomic, assign, readonly) NSTimeInterval taskbarWindowPollSeconds; /* default 1.0 */
 @property (nonatomic, assign, readonly) NSUInteger overlayIconCacheMax; /* default 128 */
 
@@ -107,6 +109,7 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 
 - (void)updateTaskbarEnabled:(BOOL)enabled;
 - (void)updateTaskbarAudioIndicatorEnabled:(BOOL)enabled;
+- (void)updateTaskbarChipLocatorButtonEnabled:(BOOL)enabled;
 - (void)updateTaskbarWindowPollSeconds:(NSTimeInterval)seconds;
 - (void)updateOverlayIconCacheMax:(NSUInteger)maxEntries;
 - (void)updateMemoryFreeEnabled:(BOOL)enabled;

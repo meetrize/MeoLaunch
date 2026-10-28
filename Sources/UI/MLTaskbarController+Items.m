@@ -862,7 +862,8 @@
     }
 
     bar.unfittedItems = [items copy];
-    items = [self fitItems:items toWidth:NSWidth(bar.barView.bounds) spacing:bar.barView.spacing
+    CGFloat fitW = NSWidth(bar.barView.bounds) - [bar.barView leadingChromeWidth];
+    items = [self fitItems:items toWidth:fitW spacing:bar.barView.spacing
                     minWidth:bar.barView.itemMinWidth];
     bar.pendingItems = items;
 }

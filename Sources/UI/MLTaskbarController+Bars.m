@@ -75,6 +75,7 @@
     view.delegate = self;
     view.iconCache = self.iconCache;
     view.barHeight = height;
+    view.showsSearchButton = self.searchButtonEnabled;
     [content addSubview:view];
 
     MLTaskbarScreenBar *bar = [[MLTaskbarScreenBar alloc] init];

@@ -1039,6 +1039,13 @@
                        [weakSelf refreshFullscreenVisibility];
                    });
 }
+- (void)taskbarViewDidClickSearchButton:(MLTaskbarView *)view {
+    (void)view;
+    if ([self.appActions respondsToSelector:@selector(taskbarToggleChipLocator)]) {
+        [self.appActions taskbarToggleChipLocator];
+    }
+}
+
 - (void)taskbarView:(MLTaskbarView *)view
     didSelectAction:(MLTaskbarMenuAction)action
             atIndex:(NSInteger)index {
@@ -1052,6 +1059,11 @@
             return;
         case MLTaskbarMenuActionQuit:
             [self.appActions taskbarQuitApp];
+            return;
+        case MLTaskbarMenuActionSearchButtonToggle:
+            if ([self.appActions respondsToSelector:@selector(taskbarToggleSearchButtonVisibility)]) {
+                [self.appActions taskbarToggleSearchButtonVisibility];
+            }
             return;
         default:
             break;
