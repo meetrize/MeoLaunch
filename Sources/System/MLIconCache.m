@@ -162,12 +162,34 @@ static const NSInteger kMLIconPixelCap = 512;
     return nil;
 }
 
+/**
+ * Icon Services presentation matches Finder / Launchpad (consistent optical size).
+ * Raw .icns from the bundle often fills the canvas differently → mixed big/small icons.
+ * Prefer Workspace; only fall back to bundle resources when Workspace returns the
+ * generic application placeholder (broken / mismatched CFBundleIconFile, etc.).
+ */
+- (BOOL)isGenericApplicationPlaceholder:(NSImage *)icon {
+    if (!icon) {
+        return YES;
+    }
+    NSString *desc = icon.description ?: @"";
+    if ([desc containsString:@"ISTypeIcon"] &&
+        [desc containsString:@"application-bundle"]) {
+        return YES;
+    }
+    return NO;
+}
+
 - (NSImage *)sourceIconForPath:(NSString *)path {
+    NSImage *workspace = [[NSWorkspace sharedWorkspace] iconForFile:path];
+    if (workspace && ![self isGenericApplicationPlaceholder:workspace]) {
+        return workspace;
+    }
     NSImage *fromBundle = [self iconFromAppBundleAtPath:path];
     if (fromBundle) {
         return fromBundle;
     }
-    return [[NSWorkspace sharedWorkspace] iconForFile:path];
+    return workspace;
 }
 
 #pragma mark - Slim rasterize
@@ -283,17 +305,17 @@ static const NSInteger kMLIconPixelCap = 512;
                                       includingPropertiesForKeys:nil
                                                          options:NSDirectoryEnumerationSkipsHiddenFiles
                                                            error:&err];
-    NSUInteger v2Count = 0;
+    NSUInteger v3Count = 0;
     for (NSURL *file in files) {
         NSString *name = file.lastPathComponent ?: @"";
-        if ([name hasSuffix:@"_v2.png"]) {
-            v2Count += 1;
+        if ([name hasSuffix:@"_v3.png"]) {
+            v3Count += 1;
         } else {
-            /* Drop pre-v2 / fat-TIFF leftovers so probe stays accurate. */
+            /* Drop pre-v3 (raw-icns / clipped) leftovers so probe stays accurate. */
             [[NSFileManager defaultManager] removeItemAtURL:file error:nil];
         }
     }
-    self.diskHasEntries = (v2Count > 0);
+    self.diskHasEntries = (v3Count > 0);
 }
 
 - (NSString *)diskFileNameForPath:(NSString *)path pixelEdge:(NSInteger)pixelEdge {
@@ -304,8 +326,8 @@ static const NSInteger kMLIconPixelCap = 512;
     for (int i = 0; i < 8; i++) {
         [hex appendFormat:@"%02x", digest[i]];
     }
-    /* v2: point-space rasterize (v1 wrongly drew px×px and clipped). */
-    return [NSString stringWithFormat:@"%@_%ldpx_v2.png", hex, (long)pixelEdge];
+    /* v3: Workspace-first macOS icon style (v2 mixed raw .icns optical sizes). */
+    return [NSString stringWithFormat:@"%@_%ldpx_v3.png", hex, (long)pixelEdge];
 }
 
 - (NSURL *)diskURLForPath:(NSString *)path pixelEdge:(NSInteger)pixelEdge {
