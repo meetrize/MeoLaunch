@@ -132,6 +132,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
                                              selector:@selector(languageDidChange:)
                                                  name:MLLanguageDidChangeNotification
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(iconCacheRefreshRequested:)
+                                                 name:MLIconCacheRefreshRequestedNotification
+                                               object:nil];
 
     memset(&_appIndex, 0, sizeof(_appIndex));
     [self rescanApps];
@@ -532,6 +536,19 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 - (void)overlayControllerDidRequestAppRescan:(MLOverlayController *)controller {
     (void)controller;
     [self rescanApps];
+}
+
+- (void)iconCacheRefreshRequested:(NSNotification *)note {
+    (void)note;
+    /* Nudge first — taskbar/overlay reloads must not race before this. */
+    for (NSString *root in [self.config expandedScanRoots]) {
+        if (root.length > 0) {
+            [[NSWorkspace sharedWorkspace] noteFileSystemChanged:root];
+        }
+    }
+    [self.overlay refreshIconCachesFromApps];
+    [self.taskbar refreshIconCachesFromApps];
+    NSLog(@"[MeoLaunch] Icon caches refreshed from prefs");
 }
 
 - (void)quit:(id)sender {

@@ -1973,6 +1973,16 @@ static void MLLogMemory(NSString *tag, NSUInteger iconCount) {
     MLLogMemory(@"hide-destroyed", self.iconCache.cachedCount);
 }
 
+- (void)refreshIconCachesFromApps {
+    [self cancelDelayedIconPurge];
+    [self.iconCache purgeAllCaches];
+    if (self.gridView) {
+        [self.gridView clearFolderCompositeCache];
+        [self.gridView reloadData];
+    }
+    NSLog(@"[MeoLaunch] Overlay icon caches refreshed (RAM+disk)");
+}
+
 - (void)setIconCacheMaxEntries:(NSUInteger)maxEntries {
     if (maxEntries < 32) {
         maxEntries = 32;

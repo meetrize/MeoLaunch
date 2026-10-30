@@ -69,6 +69,8 @@
         _externalPreviewZone = MLTaskbarChipZoneNone;
         _externalInsertIndex = -1;
         self.wantsLayer = YES;
+        /* Manual wantsLayer defaults can skip drawRect on setNeedsDisplay. */
+        self.layerContentsRedrawPolicy = NSViewLayerContentsRedrawOnSetNeedsDisplay;
     }
     return self;
 }
@@ -82,10 +84,11 @@
     return YES;
 }
 
-- (void)setItems:(NSArray<MLTaskbarItem *> *)items {
-    _items = [items copy] ?: @[];
-    [self setNeedsDisplay:YES];
-    for (MLTaskbarItem *item in _items) {
+- (void)prefetchIconsForCurrentItems {
+    if (!self.iconCache) {
+        return;
+    }
+    for (MLTaskbarItem *item in self.items) {
         if (item.path.length == 0) {
             continue;
         }
@@ -109,6 +112,49 @@
                                    }
                                }];
     }
+}
+
+- (void)setItems:(NSArray<MLTaskbarItem *> *)items {
+    _items = [items copy] ?: @[];
+    [self setNeedsDisplay:YES];
+    [self prefetchIconsForCurrentItems];
+}
+
+- (void)reloadIconsFromApps {
+    if (self.layer) {
+        self.layer.contents = nil;
+    }
+    /*
+     * Synchronously refill RAM from app bundles, then force a paint.
+     * Async-only prefetch + setNeedsDisplay left stale layer bitmaps /
+     * Icon Services results after prefs「更新图标缓存」.
+     */
+    NSArray<MLTaskbarItem *> *items = [self.items copy];
+    MLIconCache *cache = self.iconCache;
+    if (!cache || items.count == 0) {
+        [self setNeedsDisplay:YES];
+        return;
+    }
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        for (MLTaskbarItem *item in items) {
+            if (item.path.length == 0) {
+                continue;
+            }
+            (void)[cache slimIconForPath:item.path pointSize:0];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) self = weakSelf;
+            if (!self) {
+                return;
+            }
+            if (self.layer) {
+                self.layer.contents = nil;
+            }
+            [self setNeedsDisplay:YES];
+            [self displayIfNeeded];
+        });
+    });
 }
 
 - (CGFloat)edgeInset {

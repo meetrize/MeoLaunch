@@ -114,6 +114,12 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 @property (nonatomic, copy) NSArray<MLTaskbarItem *> *items;
 @property (nonatomic, weak) MLIconCache *iconCache;
 
+/**
+ * After icon cache purge: re-request icons for current chips and repaint.
+ * (setNeedsDisplay alone does not start loadIconForPath.)
+ */
+- (void)reloadIconsFromApps;
+
 @property (nonatomic, assign) CGFloat iconSize;
 @property (nonatomic, assign) CGFloat spacing;
 @property (nonatomic, assign) CGFloat barHeight;

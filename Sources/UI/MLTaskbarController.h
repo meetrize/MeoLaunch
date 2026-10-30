@@ -50,6 +50,8 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 - (void)clearDisplayNameCacheForIdleReclaim;
 /** Memory pressure: purge icon LRU + display names (reload on next paint). */
 - (void)purgeRebuildableCachesForMemoryPressure;
+/** Prefs: drop icon RAM and repaint bars so icons reload from apps. */
+- (void)refreshIconCachesFromApps;
 
 @end
 

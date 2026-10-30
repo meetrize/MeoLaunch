@@ -46,6 +46,11 @@
 /** P2: apply overlay icon LRU cap from prefs. */
 - (void)setIconCacheMaxEntries:(NSUInteger)maxEntries;
 /**
+ * Drop overlay icon RAM + disk thumbnails (and folder composites).
+ * Next show / paint reloads icons from app bundles via Workspace.
+ */
+- (void)refreshIconCachesFromApps;
+/**
  * Idle / memory-pressure reclaim while overlay is hidden.
  * underPressure=YES → purge icon RAM (+ filter/folder caches).
  * underPressure=NO → light trim only (filter/folder); keep icon RAM for fast re-show.

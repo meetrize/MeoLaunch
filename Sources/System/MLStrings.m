@@ -401,6 +401,18 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Icon cache",
             @"zh" : @"图标缓存",
         },
+        @"prefs.refresh_icon_cache" : @{
+            @"en" : @"Refresh Icons",
+            @"zh" : @"更新图标缓存",
+        },
+        @"prefs.refresh_icon_cache_hint" : @{
+            @"en" : @"Clear cached icons and reload from apps (use after an app changes its icon).",
+            @"zh" : @"清除已缓存图标并从应用重新加载（应用更换图标后使用）。",
+        },
+        @"prefs.refresh_icon_cache_done" : @{
+            @"en" : @"Icons refreshed.",
+            @"zh" : @"图标缓存已更新。",
+        },
         @"prefs.scan_title" : @{
             @"en" : @"App Folders",
             @"zh" : @"应用目录",

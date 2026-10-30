@@ -1,5 +1,8 @@
 #import <Cocoa/Cocoa.h>
 
+/** Prefs / menu: clear icon RAM+disk and reload from app bundles. */
+FOUNDATION_EXPORT NSNotificationName const MLIconCacheRefreshRequestedNotification;
+
 @interface MLIconCache : NSObject
 
 @property (nonatomic, assign) NSUInteger maxEntries; /* default 128 */
@@ -33,6 +36,12 @@
 
 /** Remove on-disk thumbnails (no-op if diskCacheEnabled is NO). */
 - (void)purgeDiskCache;
+
+/**
+ * Drop RAM and on-disk thumbnails so the next load re-reads app icons
+ * (e.g. after an app replaced its icon).
+ */
+- (void)purgeAllCaches;
 
 - (NSUInteger)cachedCount;
 

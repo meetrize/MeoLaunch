@@ -185,6 +185,29 @@
 - (void)purgeRebuildableCachesForMemoryPressure {
     [self.iconCache purge];
     [self.displayNameCache removeAllObjects];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        [bar.barView reloadIconsFromApps];
+    }
+}
+- (void)refreshIconCachesFromApps {
+    /* Invalidate Icon Services for chip paths before we re-read icons. */
+    NSMutableSet<NSString *> *paths = [NSMutableSet set];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        for (MLTaskbarItem *item in bar.barView.items) {
+            if (item.path.length > 0) {
+                [paths addObject:item.path];
+            }
+        }
+    }
+    for (NSString *path in paths) {
+        [[NSWorkspace sharedWorkspace] noteFileSystemChanged:path];
+    }
+
+    [self.iconCache purge];
+    [self.displayNameCache removeAllObjects];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        [bar.barView reloadIconsFromApps];
+    }
 }
 - (void)pinsDidChange:(NSNotification *)note {
     (void)note;

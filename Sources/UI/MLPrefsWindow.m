@@ -2,6 +2,7 @@
 
 #import "MLAppAudioMuteController.h"
 #import "MLConfigStore.h"
+#import "MLIconCache.h"
 #import "MLLaunchAtLogin.h"
 #import "MLScreenGeometry.h"
 #import "MLHotKeyRecorder.h"
@@ -67,6 +68,8 @@
 @property (nonatomic, strong) NSTextField *iconCacheLabel;
 @property (nonatomic, strong) NSSlider *iconCacheSlider;
 @property (nonatomic, strong) NSTextField *iconCacheValueLabel;
+@property (nonatomic, strong) NSButton *refreshIconCacheBtn;
+@property (nonatomic, strong) NSTextField *refreshIconCacheHint;
 @property (nonatomic, strong) NSTextField *hiddenChipsHint;
 @property (nonatomic, strong) NSTextField *hiddenChipsEmptyLabel;
 @property (nonatomic, strong) NSTableView *hiddenChipsTable;
@@ -485,6 +488,25 @@ static const CGFloat kPrefsValueW = 48;
               inRect:right];
     y += 36;
 
+    CGFloat refreshBtnW = 148;
+    self.refreshIconCacheBtn = [NSButton buttonWithTitle:@""
+                                                   target:self
+                                                   action:@selector(refreshIconCache:)];
+    self.refreshIconCacheBtn.bezelStyle = NSBezelStyleRounded;
+    self.refreshIconCacheBtn.frame = NSMakeRect(kPrefsPad, y, refreshBtnW, 28);
+    [c addSubview:self.refreshIconCacheBtn];
+    self.refreshIconCacheHint =
+        [self makeLabel:@""
+                  frame:NSMakeRect(kPrefsPad + refreshBtnW + 10,
+                                   y + 4,
+                                   kPrefsContentW - kPrefsPad * 2 - refreshBtnW - 10,
+                                   22)];
+    self.refreshIconCacheHint.font = [NSFont systemFontOfSize:11];
+    self.refreshIconCacheHint.textColor = [NSColor secondaryLabelColor];
+    self.refreshIconCacheHint.lineBreakMode = NSLineBreakByTruncatingTail;
+    [c addSubview:self.refreshIconCacheHint];
+    y += 36;
+
     /* —— Hidden task chips —— */
     self.sectionHiddenChips = [self makeSectionTitle:@"" atY:&y inView:c];
 
@@ -681,6 +703,23 @@ static const CGFloat kPrefsValueW = 48;
     self.memoryFreeEnabled.title = [MLStrings t:@"prefs.memory_free_enabled"];
     self.pollLabel.stringValue = [MLStrings t:@"prefs.window_poll"];
     self.iconCacheLabel.stringValue = [MLStrings t:@"prefs.overlay_icon_cache"];
+    self.refreshIconCacheBtn.title = [MLStrings t:@"prefs.refresh_icon_cache"];
+    [self.refreshIconCacheBtn sizeToFit];
+    {
+        NSRect bf = self.refreshIconCacheBtn.frame;
+        if (bf.size.width < 120) {
+            bf.size.width = 120;
+        }
+        bf.size.width += 16;
+        bf.size.height = 28;
+        bf.origin.x = kPrefsPad;
+        self.refreshIconCacheBtn.frame = bf;
+        NSRect hf = self.refreshIconCacheHint.frame;
+        hf.origin.x = NSMaxX(bf) + 10;
+        hf.size.width = kPrefsContentW - kPrefsPad - hf.origin.x;
+        self.refreshIconCacheHint.frame = hf;
+    }
+    self.refreshIconCacheHint.stringValue = [MLStrings t:@"prefs.refresh_icon_cache_hint"];
     self.scanTitle.stringValue = [MLStrings t:@"prefs.scan_title"];
     self.scanHint.stringValue = [MLStrings t:@"prefs.scan_hint"];
     NSString *roots = [[MLConfigStore builtInScanRoots] componentsJoinedByString:@" · "];
@@ -1167,6 +1206,25 @@ static const CGFloat kPrefsValueW = 48;
 - (void)rescanApps:(id)sender {
     (void)sender;
     [self.config requestAppRescan];
+}
+
+- (void)refreshIconCache:(id)sender {
+    (void)sender;
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:MLIconCacheRefreshRequestedNotification
+                      object:self];
+    self.refreshIconCacheHint.stringValue = [MLStrings t:@"prefs.refresh_icon_cache_done"];
+    self.refreshIconCacheHint.textColor = [NSColor secondaryLabelColor];
+    __weak typeof(self) weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                       __strong typeof(weakSelf) self = weakSelf;
+                       if (!self) {
+                           return;
+                       }
+                       self.refreshIconCacheHint.stringValue =
+                           [MLStrings t:@"prefs.refresh_icon_cache_hint"];
+                   });
 }
 
 - (void)reloadFields {

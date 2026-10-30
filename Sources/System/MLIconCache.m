@@ -2,6 +2,9 @@
 
 #import <CommonCrypto/CommonDigest.h>
 
+NSNotificationName const MLIconCacheRefreshRequestedNotification =
+    @"MLIconCacheRefreshRequestedNotification";
+
 static const NSUInteger kMLIconLoadConcurrency = 10;
 static const NSInteger kMLIconPixelCap = 512;
 
@@ -100,6 +103,71 @@ static const NSInteger kMLIconPixelCap = 512;
         }
         return img;
     }
+}
+
+#pragma mark - Source icon (prefer on-disk app resources)
+
+/**
+ * Read the app's own icon file / asset catalog when possible.
+ * Icon Services (iconForFile) can keep a stale bitmap after an app replaces
+ * its icon; bundle Resources are authoritative for refresh.
+ */
+- (NSImage *)iconFromAppBundleAtPath:(NSString *)path {
+    if (path.length == 0 || ![path.pathExtension.lowercaseString isEqualToString:@"app"]) {
+        return nil;
+    }
+    NSBundle *bundle = [NSBundle bundleWithPath:path];
+    if (!bundle) {
+        return nil;
+    }
+
+    NSString *iconFile = [bundle objectForInfoDictionaryKey:@"CFBundleIconFile"];
+    if ([iconFile isKindOfClass:[NSString class]] && iconFile.length > 0) {
+        NSString *base = iconFile.stringByDeletingPathExtension;
+        NSString *ext = iconFile.pathExtension.length > 0 ? iconFile.pathExtension : @"icns";
+        NSString *resPath = [bundle pathForResource:base ofType:ext];
+        if (!resPath) {
+            /* NSBundle resource lookup is case-sensitive even on APFS. */
+            NSString *resources =
+                [path stringByAppendingPathComponent:@"Contents/Resources"];
+            NSArray<NSString *> *files =
+                [[NSFileManager defaultManager] contentsOfDirectoryAtPath:resources error:nil];
+            NSString *want =
+                iconFile.pathExtension.length > 0 ? iconFile
+                                                  : [iconFile stringByAppendingPathExtension:@"icns"];
+            for (NSString *name in files) {
+                if ([name caseInsensitiveCompare:want] == NSOrderedSame ||
+                    [name.stringByDeletingPathExtension caseInsensitiveCompare:base] ==
+                        NSOrderedSame) {
+                    resPath = [resources stringByAppendingPathComponent:name];
+                    break;
+                }
+            }
+        }
+        if (resPath.length > 0) {
+            NSImage *img = [[NSImage alloc] initWithContentsOfFile:resPath];
+            if (img) {
+                return img;
+            }
+        }
+    }
+
+    NSString *iconName = [bundle objectForInfoDictionaryKey:@"CFBundleIconName"];
+    if ([iconName isKindOfClass:[NSString class]] && iconName.length > 0) {
+        NSImage *named = [bundle imageForResource:iconName];
+        if (named) {
+            return named;
+        }
+    }
+    return nil;
+}
+
+- (NSImage *)sourceIconForPath:(NSString *)path {
+    NSImage *fromBundle = [self iconFromAppBundleAtPath:path];
+    if (fromBundle) {
+        return fromBundle;
+    }
+    return [[NSWorkspace sharedWorkspace] iconForFile:path];
 }
 
 #pragma mark - Slim rasterize
@@ -386,8 +454,8 @@ static const NSInteger kMLIconPixelCap = 512;
             }
         }
         if (!slim) {
-            NSImage *workspaceIcon = [[NSWorkspace sharedWorkspace] iconForFile:path];
-            slim = [self slimImageFromSource:workspaceIcon pointSize:pts scale:scale];
+            NSImage *sourceIcon = [self sourceIconForPath:path];
+            slim = [self slimImageFromSource:sourceIcon pointSize:pts scale:scale];
             if (slim && self.diskCacheEnabled) {
                 [self scheduleDiskWrite:slim forPath:path pixelEdge:pixelEdge];
             }
@@ -448,14 +516,14 @@ static const NSInteger kMLIconPixelCap = 512;
             }
 
             if (!slim) {
-                NSImage *workspaceIcon = nil;
+                NSImage *sourceIcon = nil;
                 @autoreleasepool {
-                    workspaceIcon = [[NSWorkspace sharedWorkspace] iconForFile:path];
+                    sourceIcon = [self sourceIconForPath:path];
                     /* Rasterize inside pool so multi-rep source dies here. */
-                    slim = [self slimImageFromSource:workspaceIcon
+                    slim = [self slimImageFromSource:sourceIcon
                                            pointSize:pointSize
                                                scale:scale];
-                    workspaceIcon = nil;
+                    sourceIcon = nil;
                 }
                 loadedFromWorkspace = (slim != nil);
             }
@@ -513,6 +581,11 @@ static const NSInteger kMLIconPixelCap = 512;
     }
     self.diskDirectoryProbed = YES;
     self.diskHasEntries = NO;
+}
+
+- (void)purgeAllCaches {
+    [self purge];
+    [self purgeDiskCache];
 }
 
 - (NSUInteger)cachedCount {
