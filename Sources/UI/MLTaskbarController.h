@@ -28,6 +28,8 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 @property (nonatomic, assign) BOOL audioIndicatorEnabled;
 /** Leftmost Chip Locator search button on each bar. Default YES. */
 @property (nonatomic, assign) BOOL searchButtonEnabled;
+/** Rightmost Show Desktop button on each bar. Default YES. */
+@property (nonatomic, assign) BOOL showDesktopButtonEnabled;
 /** Session-only activation MRU for Chip Locator (doc/22). */
 @property (nonatomic, strong, readonly) MLWindowActivationMRU *activationMRU;
 @property (nonatomic, strong, readonly) MLIconCache *iconCache;

@@ -31,6 +31,7 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
     MLTaskbarMenuActionHideChipToggle,
     MLTaskbarMenuActionAudioMuteToggle,
     MLTaskbarMenuActionSearchButtonToggle,
+    MLTaskbarMenuActionShowDesktopButtonToggle,
     MLTaskbarMenuActionAbout,
     MLTaskbarMenuActionPreferences,
     MLTaskbarMenuActionQuit,
@@ -76,6 +77,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 - (void)taskbarToggleChipLocator;
 /** Persist + apply show/hide of the leftmost search icon. */
 - (void)taskbarToggleSearchButtonVisibility;
+/** Persist + apply show/hide of the rightmost Show Desktop icon. */
+- (void)taskbarToggleShowDesktopButtonVisibility;
 @end
 
 @protocol MLTaskbarViewDelegate <NSObject>
@@ -118,6 +121,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 @property (nonatomic, assign) CGFloat itemMinWidth;
 /** Leftmost magnifier that opens Chip Locator; default YES. */
 @property (nonatomic, assign) BOOL showsSearchButton;
+/** Rightmost Show Desktop button; default YES. */
+@property (nonatomic, assign) BOOL showsShowDesktopButton;
 /** Highlight when Show Desktop session is active (windows soft-hidden). */
 @property (nonatomic, assign) BOOL showDesktopButtonActive;
 

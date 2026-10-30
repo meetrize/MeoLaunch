@@ -1079,8 +1079,9 @@
 }
 
 - (void)syncShowDesktopButtonAppearance {
-    BOOL on = self.showDesktopSessionActive;
+    BOOL on = self.showDesktopButtonEnabled && self.showDesktopSessionActive;
     for (MLTaskbarScreenBar *bar in self.bars) {
+        bar.barView.showsShowDesktopButton = self.showDesktopButtonEnabled;
         bar.barView.showDesktopButtonActive = on;
     }
 }
@@ -1415,6 +1416,11 @@
         case MLTaskbarMenuActionSearchButtonToggle:
             if ([self.appActions respondsToSelector:@selector(taskbarToggleSearchButtonVisibility)]) {
                 [self.appActions taskbarToggleSearchButtonVisibility];
+            }
+            return;
+        case MLTaskbarMenuActionShowDesktopButtonToggle:
+            if ([self.appActions respondsToSelector:@selector(taskbarToggleShowDesktopButtonVisibility)]) {
+                [self.appActions taskbarToggleShowDesktopButtonVisibility];
             }
             return;
         default:

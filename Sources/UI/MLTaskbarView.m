@@ -62,6 +62,7 @@
         _pendingSearchButtonClick = NO;
         _pendingShowDesktopButtonClick = NO;
         _showsSearchButton = YES;
+        _showsShowDesktopButton = YES;
         _showDesktopButtonActive = NO;
         _gapAnimFromDest = -1;
         _localDragZone = MLTaskbarChipZoneNone;
@@ -135,6 +136,9 @@
 }
 
 - (CGFloat)trailingChromeWidth {
+    if (!self.showsShowDesktopButton) {
+        return 0;
+    }
     return [self showDesktopButtonSlotWidth] + self.spacing;
 }
 
@@ -147,6 +151,15 @@
         return;
     }
     _showsSearchButton = showsSearchButton;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)setShowsShowDesktopButton:(BOOL)showsShowDesktopButton {
+    if (_showsShowDesktopButton == showsShowDesktopButton) {
+        return;
+    }
+    _showsShowDesktopButton = showsShowDesktopButton;
+    [self refreshShowDesktopToolTip];
     [self setNeedsDisplay:YES];
 }
 
@@ -196,6 +209,9 @@
 }
 
 - (NSRect)showDesktopButtonRect {
+    if (!self.showsShowDesktopButton) {
+        return NSZeroRect;
+    }
     CGFloat y = (NSHeight(self.bounds) - self.barHeight) * 0.5;
     if (y < 0) {
         y = 0;
@@ -1500,6 +1516,12 @@
                         enabled:YES];
     searchToggle.state = self.showsSearchButton ? NSControlStateValueOn : NSControlStateValueOff;
     [menu addItem:searchToggle];
+    NSMenuItem *desktopToggle =
+        [self menuItemWithTitle:[MLStrings t:@"taskbar.show_desktop_button"]
+                         action:MLTaskbarMenuActionShowDesktopButtonToggle
+                        enabled:YES];
+    desktopToggle.state = self.showsShowDesktopButton ? NSControlStateValueOn : NSControlStateValueOff;
+    [menu addItem:desktopToggle];
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *mlRoot = [[NSMenuItem alloc] initWithTitle:[MLStrings t:@"taskbar.submenu.meolaunch"]

@@ -73,6 +73,10 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Show Search Icon",
             @"zh" : @"显示搜索图标",
         },
+        @"taskbar.show_desktop_button" : @{
+            @"en" : @"Show Desktop Icon",
+            @"zh" : @"显示「显示桌面」图标",
+        },
         @"taskbar.show_desktop" : @{
             @"en" : @"Show Desktop",
             @"zh" : @"显示桌面",

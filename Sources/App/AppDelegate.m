@@ -105,6 +105,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.taskbar.audioMute = self.audioMute;
     self.taskbar.audioIndicatorEnabled = self.config.taskbarAudioIndicatorEnabled;
     self.taskbar.searchButtonEnabled = self.config.taskbarChipLocatorButtonEnabled;
+    self.taskbar.showDesktopButtonEnabled = self.config.taskbarShowDesktopButtonEnabled;
     self.taskbar.appActions = self;
     self.taskbar.enabled = self.config.taskbarEnabled;
     self.chipLocator = [[MLChipLocatorController alloc] init];
@@ -213,6 +214,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
         self.taskbar.enabled = YES;
         self.taskbar.audioIndicatorEnabled = self.config.taskbarAudioIndicatorEnabled;
         self.taskbar.searchButtonEnabled = self.config.taskbarChipLocatorButtonEnabled;
+        self.taskbar.showDesktopButtonEnabled = self.config.taskbarShowDesktopButtonEnabled;
         [self.taskbar start];
     } else {
         [self.taskbar stop];
@@ -570,6 +572,10 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
 
 - (void)taskbarToggleSearchButtonVisibility {
     [self.config updateTaskbarChipLocatorButtonEnabled:!self.config.taskbarChipLocatorButtonEnabled];
+}
+
+- (void)taskbarToggleShowDesktopButtonVisibility {
+    [self.config updateTaskbarShowDesktopButtonEnabled:!self.config.taskbarShowDesktopButtonEnabled];
 }
 
 - (BOOL)applicationSupportsSecureRestorableState:(NSApplication *)app {

@@ -42,6 +42,7 @@
         _stickyDisplayUntil = 0;
         _audioIndicatorEnabled = YES;
         _searchButtonEnabled = YES;
+        _showDesktopButtonEnabled = YES;
         _showDesktopSessionActive = NO;
         _showDesktopSessionItems = [NSMutableArray array];
     }
@@ -237,12 +238,31 @@
     }
 }
 
+- (void)applyShowDesktopButtonVisibilityToBars {
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        bar.barView.showsShowDesktopButton = self.showDesktopButtonEnabled;
+        bar.barView.showDesktopButtonActive =
+            self.showDesktopButtonEnabled && self.showDesktopSessionActive;
+    }
+}
+
 - (void)setSearchButtonEnabled:(BOOL)searchButtonEnabled {
     if (_searchButtonEnabled == searchButtonEnabled) {
         return;
     }
     _searchButtonEnabled = searchButtonEnabled;
     [self applySearchButtonVisibilityToBars];
+    if (self.started && !self.itemsFrozenForDesktopReveal) {
+        [self rebuildItemsImmediate:YES];
+    }
+}
+
+- (void)setShowDesktopButtonEnabled:(BOOL)showDesktopButtonEnabled {
+    if (_showDesktopButtonEnabled == showDesktopButtonEnabled) {
+        return;
+    }
+    _showDesktopButtonEnabled = showDesktopButtonEnabled;
+    [self applyShowDesktopButtonVisibilityToBars];
     if (self.started && !self.itemsFrozenForDesktopReveal) {
         [self rebuildItemsImmediate:YES];
     }
