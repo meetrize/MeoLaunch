@@ -177,6 +177,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)toggleMinimizeForItem:(MLTaskbarItem *)item;
 - (void)toggleFullscreenForItem:(MLTaskbarItem *)item;
 - (void)toggleAudioMuteForItem:(MLTaskbarItem *)item;
+- (void)taskbarViewDidClickSearchButton:(MLTaskbarView *)view;
+- (void)taskbarViewDidClickShowDesktopButton:(MLTaskbarView *)view;
+- (void)syncShowDesktopButtonAppearance;
+- (void)clearShowDesktopSession;
+- (void)noteShowDesktopSessionRestoredWindowID:(CGWindowID)windowID;
+- (void)enterShowDesktopSession;
+- (void)restoreShowDesktopSession;
 
 @end
 

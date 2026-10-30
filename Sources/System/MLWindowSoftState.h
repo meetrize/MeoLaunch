@@ -8,6 +8,8 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod) {
     MLWindowHideMethodNone = 0,
     MLWindowHideMethodAlpha = 1,
     MLWindowHideMethodAXMinimized = 2,
+    /** Off-screen AX park (Show Desktop batch — no minimize animation). */
+    MLWindowHideMethodParked = 3,
 };
 
 @interface MLWindowSoftRecord : NSObject
@@ -60,5 +62,12 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod) {
 - (void)removeAllForPID:(pid_t)pid;
 
 - (void)removeAll;
+
+/**
+ * Coalesce DidChange notifications while batching many soft-min marks
+ * (Show Desktop). Nested begin/end supported; one notify on final end if dirty.
+ */
+- (void)beginBatchUpdates;
+- (void)endBatchUpdates;
 
 @end

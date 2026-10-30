@@ -73,6 +73,14 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Show Search Icon",
             @"zh" : @"显示搜索图标",
         },
+        @"taskbar.show_desktop" : @{
+            @"en" : @"Show Desktop",
+            @"zh" : @"显示桌面",
+        },
+        @"taskbar.show_open_windows" : @{
+            @"en" : @"Show Open Windows",
+            @"zh" : @"显示打开的窗口",
+        },
         @"taskbar.submenu.meolaunch" : @{
             @"en" : @"MeoLaunch",
             @"zh" : @"MeoLaunch",

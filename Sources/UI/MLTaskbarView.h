@@ -101,6 +101,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 - (void)taskbarView:(MLTaskbarView *)view didClickAudioBadgeAtIndex:(NSInteger)index;
 /** Leftmost search / Chip Locator button. */
 - (void)taskbarViewDidClickSearchButton:(MLTaskbarView *)view;
+/** Rightmost Show Desktop toggle (soft-min all / restore). */
+- (void)taskbarViewDidClickShowDesktopButton:(MLTaskbarView *)view;
 @end
 
 @interface MLTaskbarView : NSView
@@ -116,6 +118,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 @property (nonatomic, assign) CGFloat itemMinWidth;
 /** Leftmost magnifier that opens Chip Locator; default YES. */
 @property (nonatomic, assign) BOOL showsSearchButton;
+/** Highlight when Show Desktop session is active (windows soft-hidden). */
+@property (nonatomic, assign) BOOL showDesktopButtonActive;
 
 - (NSInteger)indexAtPoint:(NSPoint)p;
 - (NSRect)rectForItemAtIndex:(NSInteger)index;
@@ -123,8 +127,12 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 - (NSRect)audioBadgeRectForItemAtIndex:(NSInteger)index;
 /** Hit / draw rect for leftmost search button; empty if hidden. */
 - (NSRect)searchButtonRect;
+/** Hit / draw rect for rightmost Show Desktop button. */
+- (NSRect)showDesktopButtonRect;
 /** Extra leading width reserved for search chrome (0 when hidden). */
 - (CGFloat)leadingChromeWidth;
+/** Extra trailing width reserved for Show Desktop chrome. */
+- (CGFloat)trailingChromeWidth;
 
 /** Leading contiguous PinnedOnly count (pin zone length). */
 - (NSInteger)pinZoneCount;

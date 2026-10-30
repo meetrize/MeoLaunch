@@ -65,6 +65,16 @@ static float MLCGWindowListAlpha(CGWindowID windowID) {
     return alpha;
 }
 
+bool MLCGSSetWindowAlphaUnverified(CGWindowID windowID, float alpha) {
+    MLCGSResolve();
+    if (!sResolved || windowID == kCGNullWindowID || windowID == 0) {
+        return false;
+    }
+    MLCGSConnectionID cid = sMainConn();
+    int32_t err = sSetAlpha(cid, (uint32_t)windowID, alpha);
+    return err == 0;
+}
+
 bool MLCGSSetWindowAlpha(CGWindowID windowID, float alpha) {
     MLCGSResolve();
     if (!sResolved || windowID == kCGNullWindowID || windowID == 0) {

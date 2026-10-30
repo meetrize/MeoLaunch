@@ -26,6 +26,8 @@ NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoft
 
 @interface MLWindowSoftState ()
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, MLWindowSoftRecord *> *byID;
+@property (nonatomic, assign) NSInteger batchDepth;
+@property (nonatomic, assign) BOOL batchDirty;
 @end
 
 @implementation MLWindowSoftState
@@ -34,13 +36,36 @@ NSNotificationName const MLWindowSoftStateDidChangeNotification = @"MLWindowSoft
     self = [super init];
     if (self) {
         _byID = [NSMutableDictionary dictionary];
+        _batchDepth = 0;
+        _batchDirty = NO;
     }
     return self;
 }
 
 - (void)notify {
+    if (self.batchDepth > 0) {
+        self.batchDirty = YES;
+        return;
+    }
     [[NSNotificationCenter defaultCenter] postNotificationName:MLWindowSoftStateDidChangeNotification
                                                         object:self];
+}
+
+- (void)beginBatchUpdates {
+    self.batchDepth += 1;
+}
+
+- (void)endBatchUpdates {
+    if (self.batchDepth <= 0) {
+        self.batchDepth = 0;
+        return;
+    }
+    self.batchDepth -= 1;
+    if (self.batchDepth == 0 && self.batchDirty) {
+        self.batchDirty = NO;
+        [[NSNotificationCenter defaultCenter] postNotificationName:MLWindowSoftStateDidChangeNotification
+                                                            object:self];
+    }
 }
 
 - (BOOL)isSoftHiddenWindowID:(CGWindowID)windowID {

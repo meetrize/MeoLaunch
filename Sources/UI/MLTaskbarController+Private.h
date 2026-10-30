@@ -53,6 +53,13 @@
 /** Test hook: counts downward peek frame commits (smoke / regression). */
 @property (nonatomic, assign) NSInteger peekFrameDownApplyCount;
 
+/**
+ * Show Desktop button session: soft-min'd window IDs from the last "hide all".
+ * Second click restores these; does NOT arm peek (passive minimize-all).
+ */
+@property (nonatomic, assign) BOOL showDesktopSessionActive;
+@property (nonatomic, strong) NSMutableArray<MLTaskbarItem *> *showDesktopSessionItems;
+
 /** Non-nil while a chip drag session is active (blocks peek-sensitive commits). */
 @property (nonatomic, assign) BOOL chipDragActive;
 @property (nonatomic, weak) MLTaskbarScreenBar *chipDragSourceBar;

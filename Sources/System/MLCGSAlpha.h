@@ -7,6 +7,11 @@ extern "C" {
 
 /** Instantly hide/show another app's window without Dock minimize animation. */
 bool MLCGSSetWindowAlpha(CGWindowID windowID, float alpha);
+/**
+ * Set alpha without per-window CGWindowList verify — for batch Show Desktop.
+ * Caller should spot-check after applying a batch.
+ */
+bool MLCGSSetWindowAlphaUnverified(CGWindowID windowID, float alpha);
 bool MLCGSWindowAlphaAvailable(void);
 
 #ifdef __cplusplus

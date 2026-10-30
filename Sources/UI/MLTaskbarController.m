@@ -42,6 +42,8 @@
         _stickyDisplayUntil = 0;
         _audioIndicatorEnabled = YES;
         _searchButtonEnabled = YES;
+        _showDesktopSessionActive = NO;
+        _showDesktopSessionItems = [NSMutableArray array];
     }
     return self;
 }
@@ -156,6 +158,8 @@
     [self.fullscreenHideStreaks removeAllObjects];
     [self.lastStableWindowCountByScreen removeAllObjects];
     self.stickyDisplayUntil = 0;
+    self.showDesktopSessionActive = NO;
+    [self.showDesktopSessionItems removeAllObjects];
     [self.workAreaEnforcer stop];
     self.workAreaEnforcer = nil;
     [self.minimizeInterceptor stop];

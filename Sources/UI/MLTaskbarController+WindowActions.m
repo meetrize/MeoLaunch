@@ -358,7 +358,8 @@
         }
         /* Soft restore: still try retained AX element. */
         if (softAX && wasSoft) {
-            if (hideMethod == MLWindowHideMethodAlpha && wid != 0) {
+            if ((hideMethod == MLWindowHideMethodAlpha || hideMethod == MLWindowHideMethodParked) &&
+                wid != 0) {
                 MLCGSSetWindowAlpha(wid, 1.0f);
             }
             AXUIElementSetAttributeValue(softAX, kAXMinimizedAttribute, kCFBooleanFalse);
@@ -450,7 +451,9 @@
 
     BOOL verified = NO;
     if (target) {
-        if (wasSoft && hideMethod == MLWindowHideMethodAlpha && wid != 0) {
+        if (wasSoft &&
+            (hideMethod == MLWindowHideMethodAlpha || hideMethod == MLWindowHideMethodParked) &&
+            wid != 0) {
             MLCGSSetWindowAlpha(wid, 1.0f);
         }
 
@@ -620,6 +623,9 @@
             [self activateApplicationForItem:item];
             [self raiseAndFocusWindowForItem:item];
             [self touchActivationMRUForItem:item];
+            if (item.windowID != 0) {
+                [self noteShowDesktopSessionRestoredWindowID:item.windowID];
+            }
             __weak typeof(self) weakSelf = self;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
@@ -636,6 +642,7 @@
         if ([self isItemFrontmostWindow:item]) {
             /* Already frontmost → soft-minimize (same as yellow button). */
             [self softMinimizeItem:item];
+            /* Manual soft-min while in Show Desktop session: leave session as-is. */
             return;
         }
 
@@ -697,6 +704,9 @@
         [self activateApplicationForItem:item];
         [self raiseAndFocusWindowForItem:item makeAppFrontmost:YES];
         [self touchActivationMRUForItem:item];
+        if (item.windowID != 0) {
+            [self noteShowDesktopSessionRestoredWindowID:item.windowID];
+        }
         __weak typeof(self) weakSelf = self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
@@ -1000,6 +1010,9 @@
     if ([self isItemSoftHiddenOrMinimized:item]) {
         [self activateApplicationForItem:item];
         [self raiseAndFocusWindowForItem:item];
+        if (item.windowID != 0) {
+            [self noteShowDesktopSessionRestoredWindowID:item.windowID];
+        }
         __weak typeof(self) weakSelf = self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
@@ -1043,6 +1056,345 @@
     (void)view;
     if ([self.appActions respondsToSelector:@selector(taskbarToggleChipLocator)]) {
         [self.appActions taskbarToggleChipLocator];
+    }
+}
+
+- (MLTaskbarItem *)copyItemForShowDesktopSession:(MLTaskbarItem *)src {
+    if (!src) {
+        return nil;
+    }
+    MLTaskbarItem *c = [[MLTaskbarItem alloc] init];
+    c.path = src.path;
+    c.bundleID = src.bundleID;
+    c.pid = src.pid;
+    c.windowID = src.windowID;
+    c.title = src.title;
+    c.kind = src.kind;
+    c.pinned = src.pinned;
+    c.minimized = src.minimized;
+    c.active = NO;
+    c.seenOrder = src.seenOrder;
+    c.audioState = MLTaskbarAudioNone;
+    return c;
+}
+
+- (void)syncShowDesktopButtonAppearance {
+    BOOL on = self.showDesktopSessionActive;
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        bar.barView.showDesktopButtonActive = on;
+    }
+}
+
+- (void)clearShowDesktopSession {
+    self.showDesktopSessionActive = NO;
+    [self.showDesktopSessionItems removeAllObjects];
+    [self syncShowDesktopButtonAppearance];
+}
+
+- (void)noteShowDesktopSessionRestoredWindowID:(CGWindowID)windowID {
+    if (!self.showDesktopSessionActive || windowID == 0) {
+        return;
+    }
+    NSMutableArray<MLTaskbarItem *> *kept = [NSMutableArray array];
+    for (MLTaskbarItem *it in self.showDesktopSessionItems) {
+        if (it.windowID != windowID) {
+            [kept addObject:it];
+        }
+    }
+    [self.showDesktopSessionItems setArray:kept];
+    if (self.showDesktopSessionItems.count == 0) {
+        [self clearShowDesktopSession];
+    }
+}
+
+/** One CGWindowList pass → cocoa frames for the given window IDs. */
+- (NSDictionary<NSNumber *, NSValue *> *)cocoaFramesByWindowIDs:(NSSet<NSNumber *> *)windowIDs {
+    NSMutableDictionary<NSNumber *, NSValue *> *out = [NSMutableDictionary dictionary];
+    if (windowIDs.count == 0) {
+        return out;
+    }
+    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly |
+                                                     kCGWindowListExcludeDesktopElements,
+                                                 kCGNullWindowID);
+    if (!list) {
+        return out;
+    }
+    CFIndex count = CFArrayGetCount(list);
+    for (CFIndex i = 0; i < count; i++) {
+        CFDictionaryRef info = (CFDictionaryRef)CFArrayGetValueAtIndex(list, i);
+        CFNumberRef widRef = info ? CFDictionaryGetValue(info, kCGWindowNumber) : NULL;
+        if (!widRef) {
+            continue;
+        }
+        CGWindowID wid = 0;
+        CFNumberGetValue(widRef, kCFNumberIntType, &wid);
+        if (wid == 0 || ![windowIDs containsObject:@(wid)]) {
+            continue;
+        }
+        CFDictionaryRef boundsDict = CFDictionaryGetValue(info, kCGWindowBounds);
+        CGRect q = CGRectZero;
+        if (boundsDict && CGRectMakeWithDictionaryRepresentation(boundsDict, &q)) {
+            NSRect cocoa = [MLScreenGeometry cocoaRectFromQuartzBounds:q];
+            if (cocoa.size.width >= 2.0 && cocoa.size.height >= 2.0) {
+                out[@(wid)] = [NSValue valueWithRect:cocoa];
+            }
+        }
+    }
+    CFRelease(list);
+    return out;
+}
+
+/**
+ * Resolve AX windows for many PIDs in one pass each.
+ * Values are ARC-retained AXUIElementRefs (bridged id).
+ */
+- (NSDictionary<NSNumber *, id> *)axWindowsByWindowIDForItems:(NSArray<MLTaskbarItem *> *)items {
+    NSMutableDictionary<NSNumber *, id> *out = [NSMutableDictionary dictionary];
+    if (items.count == 0 || !AXIsProcessTrusted()) {
+        return out;
+    }
+    NSMutableSet<NSNumber *> *pids = [NSMutableSet set];
+    NSMutableSet<NSNumber *> *wantWids = [NSMutableSet set];
+    for (MLTaskbarItem *it in items) {
+        if (it.pid > 0) {
+            [pids addObject:@(it.pid)];
+        }
+        if (it.windowID != 0) {
+            [wantWids addObject:@(it.windowID)];
+        }
+    }
+    for (NSNumber *pidNum in pids) {
+        AXUIElementRef appRef = AXUIElementCreateApplication((pid_t)pidNum.intValue);
+        if (!appRef) {
+            continue;
+        }
+        CFTypeRef windowsRef = NULL;
+        AXError err = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute, &windowsRef);
+        CFRelease(appRef);
+        if (err != kAXErrorSuccess || !windowsRef || CFGetTypeID(windowsRef) != CFArrayGetTypeID()) {
+            if (windowsRef) {
+                CFRelease(windowsRef);
+            }
+            continue;
+        }
+        CFArrayRef windows = (CFArrayRef)windowsRef;
+        CFIndex count = CFArrayGetCount(windows);
+        for (CFIndex i = 0; i < count; i++) {
+            AXUIElementRef win = (AXUIElementRef)CFArrayGetValueAtIndex(windows, i);
+            CGWindowID wid = [MLAXWindowHelper windowIDForAXWindow:win];
+            if (wid == 0 || ![wantWids containsObject:@(wid)] || out[@(wid)]) {
+                continue;
+            }
+            out[@(wid)] = CFBridgingRelease(CFRetain(win));
+        }
+        CFRelease(windowsRef);
+    }
+    return out;
+}
+
+/** Park far off-screen (same size) — instantaneous, no Dock minimize animation. */
+- (void)parkAXWindowOffScreen:(AXUIElementRef)win keepingSize:(NSSize)size {
+    if (!win) {
+        return;
+    }
+    CGFloat w = size.width >= 2.0 ? size.width : 100.0;
+    CGFloat h = size.height >= 2.0 ? size.height : 100.0;
+    NSRect park = NSMakeRect(-28000.0, -28000.0, w, h);
+    [MLScreenGeometry applyCocoaFrame:park toAXWindow:win];
+}
+
+/**
+ * Show Desktop: hide ALL windows in one burst via alpha + off-screen park.
+ * Never uses AXMinimized (that animates one-by-one). Restore is the inverse burst.
+ */
+- (void)enterShowDesktopSession {
+    if (self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed) {
+        [self unfreezeDesktopRevealAndRefresh];
+    }
+
+    pid_t selfPid = (pid_t)NSProcessInfo.processInfo.processIdentifier;
+    NSMutableArray<MLTaskbarItem *> *targets = [NSMutableArray array];
+    NSMutableSet<NSNumber *> *seen = [NSMutableSet set];
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        for (MLTaskbarItem *item in bar.barView.items) {
+            if (item.kind != MLTaskbarItemRunningWindow || item.windowID == 0) {
+                continue;
+            }
+            if (item.pid == selfPid || [seen containsObject:@(item.windowID)]) {
+                continue;
+            }
+            if ([self isItemSoftHiddenOrMinimized:item]) {
+                continue;
+            }
+            [seen addObject:@(item.windowID)];
+            MLTaskbarItem *copy = [self copyItemForShowDesktopSession:item];
+            if (copy) {
+                [targets addObject:copy];
+            }
+        }
+    }
+
+    if (targets.count == 0) {
+        [self clearShowDesktopSession];
+        return;
+    }
+
+    NSDictionary<NSNumber *, NSValue *> *framesByWid = [self cocoaFramesByWindowIDs:seen];
+    NSDictionary<NSNumber *, id> *axByWid = [self axWindowsByWindowIDForItems:targets];
+    BOOL alphaAvail = MLCGSWindowAlphaAvailable();
+
+    [self.showDesktopSessionItems removeAllObjects];
+    [self.monitor.softState beginBatchUpdates];
+
+    /* Pass 1: mark every window soft (chips stay) before mutating geometry. */
+    for (MLTaskbarItem *item in targets) {
+        NSRect frame = NSZeroRect;
+        NSValue *frameVal = framesByWid[@(item.windowID)];
+        if (frameVal) {
+            frame = frameVal.rectValue;
+        }
+        AXUIElementRef win = (__bridge AXUIElementRef)axByWid[@(item.windowID)];
+        if ((frame.size.width < 2.0 || frame.size.height < 2.0) && win) {
+            [MLScreenGeometry readCocoaFrame:&frame fromAXWindow:win];
+        }
+        if (frame.size.width < 2.0 || frame.size.height < 2.0) {
+            continue;
+        }
+
+        CGWindowID wid = item.windowID;
+        [self rememberWindowForCustomMinimizePID:item.pid
+                                           title:item.title ?: @""
+                                          bounds:NSRectToCGRect(frame)
+                                        windowID:wid];
+
+        NSScreen *screen = [MLScreenGeometry screenForCocoaRect:frame];
+        NSNumber *screenID = [MLScreenGeometry screenIDForScreen:screen];
+        NSString *path = item.path;
+        if (path.length == 0 && item.pid > 0) {
+            NSRunningApplication *app =
+                [NSRunningApplication runningApplicationWithProcessIdentifier:item.pid];
+            path = app.bundleURL.path;
+        }
+
+        [self.monitor markSoftHiddenWindowID:wid
+                                         pid:item.pid
+                                        path:path
+                                       title:item.title ?: @""
+                               restoreFrame:frame
+                                   screenID:screenID
+                                   axWindow:win];
+        [self.monitor.softState updateHideMethod:MLWindowHideMethodParked forWindowID:wid];
+        [self.showDesktopSessionItems addObject:item];
+    }
+
+    /* Pass 2: alpha + park in one tight loop — all windows vanish together. */
+    for (MLTaskbarItem *item in self.showDesktopSessionItems) {
+        CGWindowID wid = item.windowID;
+        if (wid == 0) {
+            continue;
+        }
+        if (alphaAvail) {
+            MLCGSSetWindowAlphaUnverified(wid, 0.0f);
+        }
+        AXUIElementRef win = (__bridge AXUIElementRef)axByWid[@(wid)];
+        if (!win) {
+            continue;
+        }
+        MLWindowSoftRecord *rec = [self.monitor.softState recordForWindowID:wid];
+        NSSize sz = rec ? rec.restoreFrameCocoa.size : NSMakeSize(100, 100);
+        [self parkAXWindowOffScreen:win keepingSize:sz];
+    }
+
+    [self.monitor.softState endBatchUpdates];
+
+    if (self.showDesktopSessionItems.count == 0) {
+        [self clearShowDesktopSession];
+        return;
+    }
+
+    self.showDesktopSessionActive = YES;
+    [self syncShowDesktopButtonAppearance];
+}
+
+- (void)restoreShowDesktopSession {
+    NSArray<MLTaskbarItem *> *items = [self.showDesktopSessionItems copy];
+    [self clearShowDesktopSession];
+
+    if (self.itemsFrozenForDesktopReveal || self.desktopPeekUserArmed) {
+        [self unfreezeDesktopRevealAndRefresh];
+    }
+
+    if (items.count == 0) {
+        return;
+    }
+
+    NSDictionary<NSNumber *, id> *axByWid = [self axWindowsByWindowIDForItems:items];
+    BOOL alphaAvail = MLCGSWindowAlphaAvailable();
+
+    [self.monitor.softState beginBatchUpdates];
+
+    /* Pass 1: restore alpha + frames for every window in one burst (no per-app activate). */
+    for (MLTaskbarItem *item in items) {
+        CGWindowID wid = item.windowID;
+        if (wid == 0) {
+            continue;
+        }
+        MLWindowSoftRecord *rec = [self.monitor.softState recordForWindowID:wid];
+        NSRect restore = rec ? rec.restoreFrameCocoa : NSZeroRect;
+
+        if (alphaAvail) {
+            MLCGSSetWindowAlphaUnverified(wid, 1.0f);
+        }
+
+        AXUIElementRef win = (__bridge AXUIElementRef)axByWid[@(wid)];
+        if (!win && rec.axWindow) {
+            win = rec.axWindow;
+        }
+        if (win && restore.size.width >= 2.0 && restore.size.height >= 2.0) {
+            [MLScreenGeometry applyCocoaFrame:restore toAXWindow:win];
+            AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanFalse);
+        } else if (win) {
+            AXUIElementSetAttributeValue(win, kAXMinimizedAttribute, kCFBooleanFalse);
+        }
+    }
+
+    /* Pass 2: raise all (still no activate thrash). */
+    for (MLTaskbarItem *item in [items reverseObjectEnumerator]) {
+        CGWindowID wid = item.windowID;
+        AXUIElementRef win = (__bridge AXUIElementRef)axByWid[@(wid)];
+        MLWindowSoftRecord *rec = wid != 0 ? [self.monitor.softState recordForWindowID:wid] : nil;
+        if (!win && rec.axWindow) {
+            win = rec.axWindow;
+        }
+        if (win) {
+            AXUIElementPerformAction(win, kAXRaiseAction);
+        }
+    }
+
+    /* Pass 3: drop soft marks together — one notify / rebuild. */
+    for (MLTaskbarItem *item in items) {
+        if (item.windowID != 0) {
+            [self.monitor.softState clearVerifiedWindowID:item.windowID];
+        }
+    }
+    [self.monitor.softState endBatchUpdates];
+
+    /* Focus only one app so restore does not cascade activates. */
+    MLTaskbarItem *front = items.lastObject;
+    if (front) {
+        [self activateApplicationForItem:front];
+        [self touchActivationMRUForItem:front];
+    }
+
+    [self rebuildItemsImmediate:YES];
+}
+
+- (void)taskbarViewDidClickShowDesktopButton:(MLTaskbarView *)view {
+    (void)view;
+    if (self.showDesktopSessionActive) {
+        [self restoreShowDesktopSession];
+    } else {
+        [self enterShowDesktopSession];
     }
 }
 

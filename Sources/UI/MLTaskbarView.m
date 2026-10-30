@@ -31,6 +31,7 @@
 @property (nonatomic, strong) NSImageView *ghostImageView;
 @property (nonatomic, assign) NSInteger pendingAudioBadgeIndex;
 @property (nonatomic, assign) BOOL pendingSearchButtonClick;
+@property (nonatomic, assign) BOOL pendingShowDesktopButtonClick;
 @end
 
 @implementation MLTaskbarView
@@ -59,7 +60,9 @@
         _dropInsertIndex = -1;
         _pendingAudioBadgeIndex = -1;
         _pendingSearchButtonClick = NO;
+        _pendingShowDesktopButtonClick = NO;
         _showsSearchButton = YES;
+        _showDesktopButtonActive = NO;
         _gapAnimFromDest = -1;
         _localDragZone = MLTaskbarChipZoneNone;
         _externalPreviewZone = MLTaskbarChipZoneNone;
@@ -120,11 +123,19 @@
     return self.iconSize + 4.0;
 }
 
+- (CGFloat)showDesktopButtonSlotWidth {
+    return self.iconSize + 4.0;
+}
+
 - (CGFloat)leadingChromeWidth {
     if (!self.showsSearchButton) {
         return 0;
     }
     return [self searchButtonSlotWidth] + self.spacing;
+}
+
+- (CGFloat)trailingChromeWidth {
+    return [self showDesktopButtonSlotWidth] + self.spacing;
 }
 
 - (CGFloat)chipsOriginX {
@@ -139,6 +150,40 @@
     [self setNeedsDisplay:YES];
 }
 
+- (void)setShowDesktopButtonActive:(BOOL)showDesktopButtonActive {
+    if (_showDesktopButtonActive == showDesktopButtonActive) {
+        return;
+    }
+    _showDesktopButtonActive = showDesktopButtonActive;
+    [self refreshShowDesktopToolTip];
+    [self setNeedsDisplay:YES];
+}
+
+- (void)refreshShowDesktopToolTip {
+    [self removeAllToolTips];
+    NSRect r = [self showDesktopButtonRect];
+    if (!NSIsEmptyRect(r)) {
+        [self addToolTipRect:r owner:self userData:NULL];
+    }
+}
+
+- (NSString *)view:(NSView *)view
+    stringForToolTip:(NSToolTipTag)tag
+               point:(NSPoint)point
+            userData:(void *)data {
+    (void)view;
+    (void)tag;
+    (void)point;
+    (void)data;
+    return self.showDesktopButtonActive ? [MLStrings t:@"taskbar.show_open_windows"]
+                                        : [MLStrings t:@"taskbar.show_desktop"];
+}
+
+- (void)setFrameSize:(NSSize)newSize {
+    [super setFrameSize:newSize];
+    [self refreshShowDesktopToolTip];
+}
+
 - (NSRect)searchButtonRect {
     if (!self.showsSearchButton) {
         return NSZeroRect;
@@ -148,6 +193,16 @@
         y = 0;
     }
     return NSMakeRect([self edgeInset], y, [self searchButtonSlotWidth], self.barHeight);
+}
+
+- (NSRect)showDesktopButtonRect {
+    CGFloat y = (NSHeight(self.bounds) - self.barHeight) * 0.5;
+    if (y < 0) {
+        y = 0;
+    }
+    CGFloat w = [self showDesktopButtonSlotWidth];
+    CGFloat x = NSWidth(self.bounds) - [self edgeInset] - w;
+    return NSMakeRect(x, y, w, self.barHeight);
 }
 
 - (BOOL)isPinnedIconOnly:(MLTaskbarItem *)item {
@@ -210,7 +265,8 @@
         return self.itemMaxWidth;
     }
     CGFloat inset = [self edgeInset];
-    CGFloat avail = NSWidth(self.bounds) - inset * 2.0 - [self leadingChromeWidth];
+    CGFloat avail = NSWidth(self.bounds) - inset * 2.0 - [self leadingChromeWidth] -
+                    [self trailingChromeWidth];
     CGFloat spacing = self.spacing;
     CGFloat pinnedW = [self pinnedSlotWidth];
     CGFloat pinnedSpan = pinnedN * pinnedW + (pinnedN > 0 ? (pinnedN - 1) * spacing : 0);
@@ -820,6 +876,84 @@
     [handle stroke];
 }
 
+/** Windows-style show-desktop glyph: desk rectangle + thin bottom strip. */
+- (void)drawShowDesktopButtonInRect:(NSRect)cell {
+    if (NSIsEmptyRect(cell)) {
+        return;
+    }
+    if (self.showDesktopButtonActive) {
+        NSRect chip = NSInsetRect(cell, 1.0, 4.0);
+        NSColor *fill = [NSColor colorWithCalibratedRed:0.847 green:0.902 blue:0.980 alpha:0.95];
+        NSColor *stroke = [NSColor colorWithCalibratedRed:0.310 green:0.498 blue:0.910 alpha:1.0];
+        NSBezierPath *bg = [NSBezierPath bezierPathWithRoundedRect:chip xRadius:8.0 yRadius:8.0];
+        [fill setFill];
+        [bg fill];
+        [stroke setStroke];
+        bg.lineWidth = 1.25;
+        [bg stroke];
+    }
+
+    NSColor *ink = self.showDesktopButtonActive
+                       ? [NSColor colorWithCalibratedRed:0.078 green:0.188 blue:0.361 alpha:0.95]
+                       : [NSColor colorWithCalibratedRed:0.28 green:0.34 blue:0.44 alpha:0.92];
+    NSImage *symbol = nil;
+    if (@available(macOS 11.0, *)) {
+        NSImage *raw = [NSImage imageWithSystemSymbolName:@"rectangle.on.rectangle"
+                                 accessibilityDescription:nil];
+        if (raw) {
+            NSImageSymbolConfiguration *cfg =
+                [NSImageSymbolConfiguration configurationWithPointSize:14.0
+                                                                weight:NSFontWeightMedium
+                                                                 scale:NSImageSymbolScaleMedium];
+            symbol = [raw imageWithSymbolConfiguration:cfg] ?: raw;
+        }
+    }
+    if (symbol) {
+        CGFloat imgW = 17.0;
+        CGFloat imgH = 17.0;
+        NSRect r = NSMakeRect(NSMidX(cell) - imgW * 0.5,
+                              NSMidY(cell) - imgH * 0.5,
+                              imgW,
+                              imgH);
+        NSImage *drawn = [[NSImage alloc] initWithSize:r.size];
+        [drawn lockFocus];
+        NSRect local = NSMakeRect(0, 0, r.size.width, r.size.height);
+        [symbol drawInRect:local
+                  fromRect:NSZeroRect
+                 operation:NSCompositingOperationSourceOver
+                  fraction:1.0
+            respectFlipped:YES
+                     hints:nil];
+        [ink set];
+        NSRectFillUsingOperation(local, NSCompositingOperationSourceAtop);
+        [drawn unlockFocus];
+        [drawn drawInRect:r
+                 fromRect:NSZeroRect
+                operation:NSCompositingOperationSourceOver
+                 fraction:1.0
+           respectFlipped:YES
+                    hints:nil];
+        return;
+    }
+
+    /* Fallback: window stack + desk strip. */
+    CGFloat cx = NSMidX(cell);
+    CGFloat cy = NSMidY(cell);
+    [ink setStroke];
+    NSBezierPath *back = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(cx - 5.0, cy - 7.0, 12.0, 10.0)
+                                                         xRadius:1.5
+                                                         yRadius:1.5];
+    back.lineWidth = 1.4;
+    [back stroke];
+    NSBezierPath *front = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(cx - 8.0, cy - 4.0, 12.0, 10.0)
+                                                          xRadius:1.5
+                                                          yRadius:1.5];
+    front.lineWidth = 1.4;
+    [front stroke];
+    [ink setFill];
+    NSRectFill(NSMakeRect(cx - 9.0, cy + 7.5, 18.0, 1.6));
+}
+
 - (void)drawRect:(NSRect)dirtyRect {
     (void)dirtyRect;
 
@@ -861,6 +995,7 @@
     NSColor *chipActiveStroke = [NSColor colorWithCalibratedRed:0.310 green:0.498 blue:0.910 alpha:1.0];
 
     [self drawSearchButtonInRect:[self searchButtonRect]];
+    [self drawShowDesktopButtonInRect:[self showDesktopButtonRect]];
 
     if ([self reorderGapActive] || [self externalGapActive]) {
         [self drawPlaceholderInRect:[self placeholderRectChipWidth:chipW]];
@@ -1113,9 +1248,18 @@
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     self.pendingAudioBadgeIndex = -1;
     self.pendingSearchButtonClick = NO;
+    self.pendingShowDesktopButtonClick = NO;
     NSRect searchRect = [self searchButtonRect];
     if (!NSIsEmptyRect(searchRect) && NSPointInRect(p, searchRect)) {
         self.pendingSearchButtonClick = YES;
+        self.dragTracking = NO;
+        self.dragActive = NO;
+        self.dragSourceIndex = -1;
+        return;
+    }
+    NSRect desktopRect = [self showDesktopButtonRect];
+    if (!NSIsEmptyRect(desktopRect) && NSPointInRect(p, desktopRect)) {
+        self.pendingShowDesktopButtonClick = YES;
         self.dragTracking = NO;
         self.dragActive = NO;
         self.dragSourceIndex = -1;
@@ -1194,8 +1338,10 @@
     NSInteger src = self.dragSourceIndex;
     NSInteger audioIdx = self.pendingAudioBadgeIndex;
     BOOL searchClick = self.pendingSearchButtonClick;
+    BOOL desktopClick = self.pendingShowDesktopButtonClick;
     self.pendingAudioBadgeIndex = -1;
     self.pendingSearchButtonClick = NO;
+    self.pendingShowDesktopButtonClick = NO;
 
     if (wasDragging) {
         if ([self.delegate respondsToSelector:@selector(taskbarView:endedDragAtScreenPoint:cancelled:)]) {
@@ -1214,6 +1360,15 @@
         if (!NSIsEmptyRect(searchRect) && NSPointInRect(p, searchRect) &&
             [self.delegate respondsToSelector:@selector(taskbarViewDidClickSearchButton:)]) {
             [self.delegate taskbarViewDidClickSearchButton:self];
+        }
+        return;
+    }
+
+    if (desktopClick) {
+        NSRect desktopRect = [self showDesktopButtonRect];
+        if (!NSIsEmptyRect(desktopRect) && NSPointInRect(p, desktopRect) &&
+            [self.delegate respondsToSelector:@selector(taskbarViewDidClickShowDesktopButton:)]) {
+            [self.delegate taskbarViewDidClickShowDesktopButton:self];
         }
         return;
     }
