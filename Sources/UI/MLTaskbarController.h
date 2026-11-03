@@ -26,6 +26,8 @@ typedef NS_ENUM(NSInteger, MLWindowHideMethod);
 @property (nonatomic, strong) MLAppAudioMuteController *audioMute;
 /** When NO, stop monitor and clear mute taps (prefs). Default YES. */
 @property (nonatomic, assign) BOOL audioIndicatorEnabled;
+/** Show a spinner while Zed is generating or running agent tools. Default YES. */
+@property (nonatomic, assign) BOOL aiActivityIndicatorEnabled;
 /** Leftmost Chip Locator search button on each bar. Default YES. */
 @property (nonatomic, assign) BOOL searchButtonEnabled;
 /** Rightmost Show Desktop button on each bar. Default YES. */

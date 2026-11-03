@@ -32,6 +32,8 @@
 @property (nonatomic, assign) NSInteger pendingAudioBadgeIndex;
 @property (nonatomic, assign) BOOL pendingSearchButtonClick;
 @property (nonatomic, assign) BOOL pendingShowDesktopButtonClick;
+@property (nonatomic, strong) NSTimer *busyAnimationTimer;
+@property (nonatomic, assign) CGFloat busyAnimationPhase;
 @end
 
 @implementation MLTaskbarView
@@ -77,6 +79,7 @@
 
 - (void)dealloc {
     [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    [_busyAnimationTimer invalidate];
     [self destroyGhostWindow];
 }
 
@@ -116,8 +119,51 @@
 
 - (void)setItems:(NSArray<MLTaskbarItem *> *)items {
     _items = [items copy] ?: @[];
+    [self syncBusyAnimation];
     [self setNeedsDisplay:YES];
     [self prefetchIconsForCurrentItems];
+}
+
+- (void)refreshBusyAnimation {
+    [self syncBusyAnimation];
+    [self setNeedsDisplay:YES];
+}
+
+- (BOOL)hasBusyItems {
+    for (MLTaskbarItem *item in self.items) {
+        if (item.busy) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (void)syncBusyAnimation {
+    if ([self hasBusyItems]) {
+        if (self.busyAnimationTimer) {
+            return;
+        }
+        __weak typeof(self) weakSelf = self;
+        self.busyAnimationTimer =
+            [NSTimer timerWithTimeInterval:0.07
+                                   repeats:YES
+                                     block:^(NSTimer *timer) {
+                                         (void)timer;
+                                         __strong typeof(weakSelf) self = weakSelf;
+                                         if (!self) {
+                                             return;
+                                         }
+                                         self.busyAnimationPhase =
+                                             fmod(self.busyAnimationPhase + 24.0, 360.0);
+                                         [self setNeedsDisplay:YES];
+                                     }];
+        [[NSRunLoop mainRunLoop] addTimer:self.busyAnimationTimer
+                                  forMode:NSRunLoopCommonModes];
+    } else {
+        [self.busyAnimationTimer invalidate];
+        self.busyAnimationTimer = nil;
+        self.busyAnimationPhase = 0;
+    }
 }
 
 - (void)reloadIconsFromApps {
@@ -812,6 +858,35 @@
     }
 }
 
+- (void)drawBusyOverlayForItem:(MLTaskbarItem *)item iconRect:(NSRect)iconRect {
+    if (!item.busy || NSIsEmptyRect(iconRect)) {
+        return;
+    }
+    NSRect disc = NSInsetRect(iconRect, 1.0, 1.0);
+    [[NSColor colorWithCalibratedWhite:0.08 alpha:0.46] setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:disc] fill];
+
+    NSRect ringRect = NSInsetRect(iconRect, 5.0, 5.0);
+    if (NSWidth(ringRect) < 8.0 || NSHeight(ringRect) < 8.0) {
+        return;
+    }
+    [[NSColor colorWithCalibratedWhite:1.0 alpha:0.30] setStroke];
+    NSBezierPath *track = [NSBezierPath bezierPathWithOvalInRect:ringRect];
+    track.lineWidth = 2.0;
+    [track stroke];
+
+    NSBezierPath *arc = [NSBezierPath bezierPath];
+    [arc appendBezierPathWithArcWithCenter:NSMakePoint(NSMidX(ringRect), NSMidY(ringRect))
+                                    radius:NSWidth(ringRect) * 0.5
+                                startAngle:self.busyAnimationPhase
+                                  endAngle:self.busyAnimationPhase + 250.0
+                                 clockwise:NO];
+    [[NSColor colorWithCalibratedRed:0.25 green:0.62 blue:1.0 alpha:0.98] setStroke];
+    arc.lineWidth = 2.2;
+    arc.lineCapStyle = NSLineCapStyleRound;
+    [arc stroke];
+}
+
 - (void)drawAudioBadgeForItem:(MLTaskbarItem *)item iconRect:(NSRect)iconRect {
     if (!item || item.audioState == MLTaskbarAudioNone) {
         return;
@@ -1092,6 +1167,9 @@
                 [[NSColor colorWithCalibratedRed:0.82 green:0.85 blue:0.90 alpha:frac] setFill];
                 NSRectFill(iconRect);
             }
+            if (!dimmed) {
+                [self drawBusyOverlayForItem:item iconRect:iconRect];
+            }
             continue;
         }
 
@@ -1143,6 +1221,7 @@
             NSBezierPath *ph = [NSBezierPath bezierPathWithRoundedRect:iconRect xRadius:6.0 yRadius:6.0];
             [ph fill];
         }
+        [self drawBusyOverlayForItem:item iconRect:iconRect];
         [self drawAudioBadgeForItem:item iconRect:iconRect];
 
         NSRect titleRect = NSMakeRect(NSMaxX(iconRect) + 6.0,

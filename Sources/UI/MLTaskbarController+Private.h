@@ -10,6 +10,8 @@
 #import "MLTaskbarHideStore.h"
 #import "MLWindowSoftState.h"
 #import "MLAudioActivityMonitor.h"
+#import "MLZedActivityMonitor.h"
+#import "MLCursorActivityMonitor.h"
 
 #import <ApplicationServices/ApplicationServices.h>
 
@@ -26,6 +28,8 @@
 @property (nonatomic, strong) NSMutableArray<MLTaskbarScreenBar *> *bars;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *displayNameCache;
 @property (nonatomic, strong) MLMinimizeInterceptor *minimizeInterceptor;
+@property (nonatomic, strong) MLZedActivityMonitor *zedActivity;
+@property (nonatomic, strong) MLCursorActivityMonitor *cursorActivity;
 @property (nonatomic, strong) MLWorkAreaEnforcer *workAreaEnforcer;
 @property (nonatomic, strong) NSSet<NSNumber *> *fullscreenScreenIDs;
 @property (nonatomic, strong) NSSet<NSNumber *> *desktopRevealScreenIDs;

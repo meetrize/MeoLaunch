@@ -369,6 +369,10 @@ static NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *sTable;
             @"en" : @"Show sound indicator on taskbar (mute on click)",
             @"zh" : @"任务栏显示声音指示（点击可静音）",
         },
+        @"prefs.taskbar_ai_activity" : @{
+            @"en" : @"Show AI activity spinner on taskbar chips (Zed / Cursor)",
+            @"zh" : @"任务栏芯片显示 AI 对话/处理指示（Zed / Cursor）",
+        },
         @"prefs.section.hidden_chips" : @{
             @"en" : @"Hidden Task Chips",
             @"zh" : @"已隐藏的任务芯片",

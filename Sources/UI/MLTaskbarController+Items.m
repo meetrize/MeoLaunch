@@ -85,6 +85,122 @@
     }
 }
 
+- (BOOL)isZedItemPath:(NSString *)path bundleID:(NSString *)bundleID {
+    if ([bundleID isEqualToString:@"dev.zed.Zed"]) {
+        return YES;
+    }
+    if (path.length == 0) {
+        return NO;
+    }
+    if ([[path lastPathComponent] isEqualToString:@"Zed.app"]) {
+        return YES;
+    }
+    return [[[NSBundle bundleWithPath:path] bundleIdentifier] isEqualToString:@"dev.zed.Zed"];
+}
+
+- (BOOL)isCursorItemPath:(NSString *)path bundleID:(NSString *)bundleID {
+    if ([bundleID isEqualToString:@"com.todesktop.230313mzl4w4u92"]) {
+        return YES;
+    }
+    if (path.length == 0) {
+        return NO;
+    }
+    if ([[path lastPathComponent] isEqualToString:@"Cursor.app"]) {
+        return YES;
+    }
+    return [[[NSBundle bundleWithPath:path] bundleIdentifier]
+        isEqualToString:@"com.todesktop.230313mzl4w4u92"];
+}
+
+- (BOOL)isAIBusyForItemPath:(NSString *)path
+                       title:(NSString *)title
+                    bundleID:(NSString *)bundleID {
+    if ([self isZedItemPath:path bundleID:bundleID]) {
+        return [self.zedActivity isBusyForWindowTitle:title];
+    }
+    if ([self isCursorItemPath:path bundleID:bundleID]) {
+        return [self.cursorActivity isBusyForWindowTitle:title];
+    }
+    return NO;
+}
+
+- (void)applyAIBusyFallbackToItems:(NSArray<MLTaskbarItem *> *)items
+                           anyBusy:(BOOL)anyBusy {
+    if (!anyBusy || items.count == 0) {
+        return;
+    }
+    for (MLTaskbarItem *it in items) {
+        if (it.busy) {
+            return;
+        }
+    }
+    /* Title mapping failed (renamed window / multi-root). Do not leave the
+       only chip dark; with several chips prefer the frontmost one. */
+    if (items.count == 1) {
+        items[0].busy = YES;
+        return;
+    }
+    for (MLTaskbarItem *it in items) {
+        if (it.active) {
+            it.busy = YES;
+            return;
+        }
+    }
+}
+
+- (void)applyAIBusyStateOntoItemArray:(NSArray<MLTaskbarItem *> *)items {
+    if (items.count == 0) {
+        return;
+    }
+    if (!self.aiActivityIndicatorEnabled || (!self.zedActivity && !self.cursorActivity)) {
+        for (MLTaskbarItem *it in items) {
+            it.busy = NO;
+        }
+        return;
+    }
+
+    NSMutableArray<MLTaskbarItem *> *zedItems = [NSMutableArray array];
+    NSMutableArray<MLTaskbarItem *> *cursorItems = [NSMutableArray array];
+    for (MLTaskbarItem *it in items) {
+        if (it.kind != MLTaskbarItemRunningWindow) {
+            it.busy = NO;
+            continue;
+        }
+        if (it.bundleID.length == 0) {
+            it.bundleID = [self bundleIDForItemPath:it.path fallback:nil];
+        }
+        if ([self isZedItemPath:it.path bundleID:it.bundleID]) {
+            [zedItems addObject:it];
+            it.busy = [self.zedActivity isBusyForWindowTitle:it.title];
+            continue;
+        }
+        if ([self isCursorItemPath:it.path bundleID:it.bundleID]) {
+            [cursorItems addObject:it];
+            it.busy = [self.cursorActivity isBusyForWindowTitle:it.title];
+            continue;
+        }
+        it.busy = NO;
+    }
+
+    [self applyAIBusyFallbackToItems:zedItems anyBusy:self.zedActivity.hasAnyBusy];
+    [self applyAIBusyFallbackToItems:cursorItems anyBusy:self.cursorActivity.hasAnyBusy];
+}
+
+/** Refresh AI busy spinners without rebuilding chips. */
+- (void)applyAIBusyBadgesFromMonitor {
+    if (self.itemsFrozenForDesktopReveal) {
+        for (NSNumber *sid in self.frozenItemsByScreenID) {
+            [self applyAIBusyStateOntoItemArray:self.frozenItemsByScreenID[sid]];
+        }
+    }
+    for (MLTaskbarScreenBar *bar in self.bars) {
+        [self applyAIBusyStateOntoItemArray:bar.barView.items];
+        [self applyAIBusyStateOntoItemArray:bar.pendingItems];
+        [bar.barView refreshBusyAnimation];
+        [bar.barView setNeedsDisplay:YES];
+    }
+}
+
 - (void)pruneDeadAudioMutes {
     if (!self.audioMute) {
         return;
@@ -555,6 +671,7 @@
         c.active = it.active;
         c.seenOrder = it.seenOrder;
         c.audioState = it.audioState;
+        c.busy = it.busy;
         [out addObject:c];
     }
     return out;
@@ -686,6 +803,8 @@
                                        seenOrder:ord];
         chip.bundleID = [self bundleIDForItemPath:w.path fallback:w.bundleID];
         chip.audioState = [self audioStateForPID:w.pid bundleID:chip.bundleID appPath:w.path];
+        chip.busy = self.aiActivityIndicatorEnabled &&
+                    [self isAIBusyForItemPath:w.path title:title bundleID:chip.bundleID];
         [windowItems addObject:chip];
     }
 
@@ -860,6 +979,8 @@
             [items addObject:chip];
         }
     }
+
+    [self applyAIBusyStateOntoItemArray:items];
 
     bar.unfittedItems = [items copy];
     CGFloat fitW = NSWidth(bar.barView.bounds) - [bar.barView leadingChromeWidth] -

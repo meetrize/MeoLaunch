@@ -51,9 +51,11 @@ INC=(
   -I"$ROOT/Sources/Core"
   -I"$ROOT/Sources/UI"
   -I"$ROOT/Sources/System"
+  -I"$ROOT/Sources/ThirdParty/zstd"
 )
 
 LIBS=(
+  -lsqlite3
   -framework AppKit
   -framework Foundation
   -framework ApplicationServices
@@ -79,6 +81,15 @@ compile_arch() {
 
   echo "[build] compiling Core (.c) for $arch ..."
   for src in "$ROOT"/Sources/Core/*.c; do
+    base="$(basename "$src" .c)"
+    out="$arch_obj/${base}.o"
+    clang -arch "$arch" "${CFLAGS_C[@]}" -c "$src" -o "$out"
+    objs+=("$out")
+  done
+
+  echo "[build] compiling ThirdParty (.c) for $arch ..."
+  for src in "$ROOT"/Sources/ThirdParty/zstd/*.c; do
+    [[ -f "$src" ]] || continue
     base="$(basename "$src" .c)"
     out="$arch_obj/${base}.o"
     clang -arch "$arch" "${CFLAGS_C[@]}" -c "$src" -o "$out"

@@ -23,6 +23,7 @@
 | 右键 | 见 [11-taskbar-context-menu.md](./11-taskbar-context-menu.md)：关闭 / 最小化↔还原 / 全屏 / 钉住 / 隐藏↔显示任务芯片 / MeoLaunch▸ |
 | 持久化 | 钉住列表写入 `taskbar_pins.json`（仅 path）；隐藏列表写入 `taskbar_hidden_chips.json` |
 | 声音指示（扩展） | macOS 14.2+：出声应用芯片显示喇叭；点角标 / 右键静音。设计见 [19-taskbar-audio-indicator.md](./19-taskbar-audio-indicator.md) |
+| AI 活动指示（扩展） | Zed / Cursor 正在生成回复 / 执行 Agent 工具时，芯片图标上叠加半透明旋转圈；结束自动消失。设计见 [23-zed-ai-activity.md](./23-zed-ai-activity.md) / [24-cursor-ai-activity.md](./24-cursor-ai-activity.md) |
 | 无窗仍运行（扩展） | Regular 进程在、全局无窗芯片 → **主屏**一条淡化虚线芯片。设计见 [20-taskbar-running-no-window.md](./20-taskbar-running-no-window.md) |
 | 隐藏任务芯片（扩展） | 无窗不显示 idle 芯片（NoWindow/Pin）；有窗仍显示。设计见 [21-taskbar-hide-chip.md](./21-taskbar-hide-chip.md) |
 

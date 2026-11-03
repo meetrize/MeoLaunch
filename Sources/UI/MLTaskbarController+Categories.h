@@ -51,6 +51,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)computePendingItemsForAllBars;
 - (void)rebuildItemsImmediate:(BOOL)immediate;
 - (void)applyAudioBadgesFromMonitor;
+- (void)applyAIBusyBadgesFromMonitor;
 - (nullable NSString *)bundleIDForItemPath:(nullable NSString *)path
                                   fallback:(nullable NSString *)fallback;
 - (NSMutableArray<MLTaskbarItem *> *)fitItems:(NSMutableArray<MLTaskbarItem *> *)items

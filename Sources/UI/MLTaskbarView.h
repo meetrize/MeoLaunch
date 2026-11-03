@@ -51,6 +51,8 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 @property (nonatomic, assign) NSUInteger seenOrder;
 /** Per-process audio indicator (shared across chips with same pid). */
 @property (nonatomic, assign) MLTaskbarAudioState audioState;
+/** AI conversation or tool execution is in progress (Zed). */
+@property (nonatomic, assign) BOOL busy;
 @end
 
 /** Live flags for context menu (read at popup time). index < 0 = empty bar. */
@@ -114,11 +116,13 @@ typedef NS_ENUM(NSInteger, MLTaskbarMenuAction) {
 @property (nonatomic, copy) NSArray<MLTaskbarItem *> *items;
 @property (nonatomic, weak) MLIconCache *iconCache;
 
-/**
- * After icon cache purge: re-request icons for current chips and repaint.
+/** After icon cache purge: re-request icons for current chips and repaint.
  * (setNeedsDisplay alone does not start loadIconForPath.)
  */
 - (void)reloadIconsFromApps;
+
+/** Re-evaluate the AI busy spinner after item busy flags change. */
+- (void)refreshBusyAnimation;
 
 @property (nonatomic, assign) CGFloat iconSize;
 @property (nonatomic, assign) CGFloat spacing;

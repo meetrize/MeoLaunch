@@ -64,6 +64,8 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 @property (nonatomic, assign, readonly) BOOL taskbarEnabled;
 /** Show sound indicator + mute on taskbar chips (doc/19); default YES. */
 @property (nonatomic, assign, readonly) BOOL taskbarAudioIndicatorEnabled;
+/** Show a spinner while Zed is generating or running agent tools; default YES. */
+@property (nonatomic, assign, readonly) BOOL taskbarAIActivityIndicatorEnabled;
 /** Leftmost Chip Locator search button on the taskbar; default YES. */
 @property (nonatomic, assign, readonly) BOOL taskbarChipLocatorButtonEnabled;
 /** Rightmost Show Desktop button on the taskbar; default YES. */
@@ -111,6 +113,7 @@ FOUNDATION_EXPORT NSNotificationName const MLConfigStoreScanRootsDidChangeNotifi
 
 - (void)updateTaskbarEnabled:(BOOL)enabled;
 - (void)updateTaskbarAudioIndicatorEnabled:(BOOL)enabled;
+- (void)updateTaskbarAIActivityIndicatorEnabled:(BOOL)enabled;
 - (void)updateTaskbarChipLocatorButtonEnabled:(BOOL)enabled;
 - (void)updateTaskbarShowDesktopButtonEnabled:(BOOL)enabled;
 - (void)updateTaskbarWindowPollSeconds:(NSTimeInterval)seconds;

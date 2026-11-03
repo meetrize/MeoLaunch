@@ -41,6 +41,9 @@
         _desktopPeekUserArmed = NO;
         _stickyDisplayUntil = 0;
         _audioIndicatorEnabled = YES;
+        _aiActivityIndicatorEnabled = YES;
+        _zedActivity = [[MLZedActivityMonitor alloc] init];
+        _cursorActivity = [[MLCursorActivityMonitor alloc] init];
         _searchButtonEnabled = YES;
         _showDesktopButtonEnabled = YES;
         _showDesktopSessionActive = NO;
@@ -112,6 +115,20 @@
                                                    object:self.audioActivity];
         [self.audioActivity start];
     }
+    if (self.zedActivity && self.aiActivityIndicatorEnabled) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(aiActivityDidChange:)
+                                                     name:MLZedActivityDidChangeNotification
+                                                   object:self.zedActivity];
+        [self.zedActivity start];
+    }
+    if (self.cursorActivity && self.aiActivityIndicatorEnabled) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(aiActivityDidChange:)
+                                                     name:MLCursorActivityDidChangeNotification
+                                                   object:self.cursorActivity];
+        [self.cursorActivity start];
+    }
 
     [self.monitor start];
     /* Allow Show Desktop freeze only after census has settled (avoid startup false peek). */
@@ -169,6 +186,8 @@
     [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
     [self.audioActivity stop];
     [self.audioMute unmuteAll];
+    [self.zedActivity stop];
+    [self.cursorActivity stop];
     [self.monitor stop];
     for (MLTaskbarScreenBar *bar in self.bars) {
         [bar.window orderOut:nil];
@@ -228,6 +247,11 @@
     [self applyAudioBadgesFromMonitor];
 }
 
+- (void)aiActivityDidChange:(NSNotification *)note {
+    (void)note;
+    [self applyAIBusyBadgesFromMonitor];
+}
+
 - (void)setAudioIndicatorEnabled:(BOOL)audioIndicatorEnabled {
     if (_audioIndicatorEnabled == audioIndicatorEnabled) {
         return;
@@ -253,6 +277,43 @@
         [self.audioActivity start];
         [self applyAudioBadgesFromMonitor];
     }
+}
+
+- (void)setAIActivityIndicatorEnabled:(BOOL)enabled {
+    if (_aiActivityIndicatorEnabled == enabled) {
+        return;
+    }
+    _aiActivityIndicatorEnabled = enabled;
+    if (!self.started) {
+        return;
+    }
+    if (!enabled) {
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                        name:MLZedActivityDidChangeNotification
+                                                      object:self.zedActivity];
+        [[NSNotificationCenter defaultCenter] removeObserver:self
+                                                        name:MLCursorActivityDidChangeNotification
+                                                      object:self.cursorActivity];
+        [self.zedActivity stop];
+        [self.cursorActivity stop];
+        [self applyAIBusyBadgesFromMonitor];
+        return;
+    }
+    if (self.zedActivity) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(aiActivityDidChange:)
+                                                     name:MLZedActivityDidChangeNotification
+                                                   object:self.zedActivity];
+        [self.zedActivity start];
+    }
+    if (self.cursorActivity) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(aiActivityDidChange:)
+                                                     name:MLCursorActivityDidChangeNotification
+                                                   object:self.cursorActivity];
+        [self.cursorActivity start];
+    }
+    [self applyAIBusyBadgesFromMonitor];
 }
 
 - (void)applySearchButtonVisibilityToBars {

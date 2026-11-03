@@ -39,6 +39,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
 @property (nonatomic, assign, readwrite) NSInteger scanRefreshSeconds;
 @property (nonatomic, assign, readwrite) BOOL taskbarEnabled;
 @property (nonatomic, assign, readwrite) BOOL taskbarAudioIndicatorEnabled;
+@property (nonatomic, assign, readwrite) BOOL taskbarAIActivityIndicatorEnabled;
 @property (nonatomic, assign, readwrite) BOOL taskbarChipLocatorButtonEnabled;
 @property (nonatomic, assign, readwrite) BOOL taskbarShowDesktopButtonEnabled;
 @property (nonatomic, assign, readwrite) NSTimeInterval taskbarWindowPollSeconds;
@@ -231,6 +232,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
     self.scanRefreshSeconds = 60;
     self.taskbarEnabled = YES;
     self.taskbarAudioIndicatorEnabled = YES;
+    self.taskbarAIActivityIndicatorEnabled = YES;
     self.taskbarChipLocatorButtonEnabled = YES;
     self.taskbarShowDesktopButtonEnabled = YES;
     self.taskbarWindowPollSeconds = 1.0;
@@ -402,6 +404,9 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         if (tb[@"audio_indicator"]) {
             self.taskbarAudioIndicatorEnabled = [tb[@"audio_indicator"] boolValue];
         }
+        if (tb[@"ai_activity_indicator"]) {
+            self.taskbarAIActivityIndicatorEnabled = [tb[@"ai_activity_indicator"] boolValue];
+        }
         if (tb[@"chip_locator_button"]) {
             self.taskbarChipLocatorButtonEnabled = [tb[@"chip_locator_button"] boolValue];
         }
@@ -504,6 +509,7 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         @"taskbar" : @{
             @"enabled" : @(self.taskbarEnabled),
             @"audio_indicator" : @(self.taskbarAudioIndicatorEnabled),
+            @"ai_activity_indicator" : @(self.taskbarAIActivityIndicatorEnabled),
             @"chip_locator_button" : @(self.taskbarChipLocatorButtonEnabled),
             @"show_desktop_button" : @(self.taskbarShowDesktopButtonEnabled),
             @"window_poll_seconds" : @(self.taskbarWindowPollSeconds > 0 ? self.taskbarWindowPollSeconds : 1.0),
@@ -853,6 +859,15 @@ NSNotificationName const MLConfigStoreScanRootsDidChangeNotification =
         return;
     }
     self.taskbarAudioIndicatorEnabled = enabled;
+    [self notifyChanged];
+    [self scheduleSave];
+}
+
+- (void)updateTaskbarAIActivityIndicatorEnabled:(BOOL)enabled {
+    if (self.taskbarAIActivityIndicatorEnabled == enabled) {
+        return;
+    }
+    self.taskbarAIActivityIndicatorEnabled = enabled;
     [self notifyChanged];
     [self scheduleSave];
 }

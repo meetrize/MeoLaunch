@@ -104,6 +104,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     self.taskbar.audioActivity = self.audioActivity;
     self.taskbar.audioMute = self.audioMute;
     self.taskbar.audioIndicatorEnabled = self.config.taskbarAudioIndicatorEnabled;
+    self.taskbar.aiActivityIndicatorEnabled = self.config.taskbarAIActivityIndicatorEnabled;
     self.taskbar.searchButtonEnabled = self.config.taskbarChipLocatorButtonEnabled;
     self.taskbar.showDesktopButtonEnabled = self.config.taskbarShowDesktopButtonEnabled;
     self.taskbar.appActions = self;
@@ -217,6 +218,7 @@ static NSString *const kMLDidPromptAccessibilityKey = @"MLDidPromptAccessibility
     if (self.config.taskbarEnabled) {
         self.taskbar.enabled = YES;
         self.taskbar.audioIndicatorEnabled = self.config.taskbarAudioIndicatorEnabled;
+        self.taskbar.aiActivityIndicatorEnabled = self.config.taskbarAIActivityIndicatorEnabled;
         self.taskbar.searchButtonEnabled = self.config.taskbarChipLocatorButtonEnabled;
         self.taskbar.showDesktopButtonEnabled = self.config.taskbarShowDesktopButtonEnabled;
         [self.taskbar start];

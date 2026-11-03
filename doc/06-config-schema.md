@@ -73,6 +73,7 @@
   "taskbar": {
     "enabled": true,
     "audio_indicator": true,
+    "ai_activity_indicator": true,
     "chip_locator_button": true,
     "window_poll_seconds": 1.0
   },
@@ -106,6 +107,7 @@
 | `ui.overlay_icon_cache_max` | int | Overlay 图标 LRU 上限（32–256，默认 128） |
 | `taskbar.enabled` | bool | 是否显示任务栏（默认 true） |
 | `taskbar.audio_indicator` | bool | 任务芯片声音指示（默认 true） |
+| `taskbar.ai_activity_indicator` | bool | Zed / Cursor 芯片 AI 对话/处理转圈指示（默认 true，见 [23-zed-ai-activity.md](./23-zed-ai-activity.md)、[24-cursor-ai-activity.md](./24-cursor-ai-activity.md)） |
 | `taskbar.chip_locator_button` | bool | 任务栏最左侧「快速定位」搜索按钮（默认 true） |
 | `taskbar.window_poll_seconds` | number | 窗口轮询间隔秒（0.5–5.0，默认 1.0） |
 | `menubar.memory_free.enabled` | bool | 菜单栏显示整机**剩余**内存 %（默认 false） |

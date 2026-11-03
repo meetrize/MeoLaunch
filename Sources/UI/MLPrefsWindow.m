@@ -61,6 +61,7 @@
 @property (nonatomic, strong) MLHotKeyRecorder *chipLocatorHotkeyRecorder;
 @property (nonatomic, strong) NSButton *taskbarEnabled;
 @property (nonatomic, strong) NSButton *taskbarAudioIndicator;
+@property (nonatomic, strong) NSButton *taskbarAIActivityIndicator;
 @property (nonatomic, strong) NSButton *memoryFreeEnabled;
 @property (nonatomic, strong) NSTextField *pollLabel;
 @property (nonatomic, strong) NSSlider *pollSlider;
@@ -378,6 +379,14 @@ static const CGFloat kPrefsValueW = 48;
                                                       action:@selector(prefsChanged:)];
     self.taskbarAudioIndicator.frame = NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 24);
     [c addSubview:self.taskbarAudioIndicator];
+    y += 28;
+
+    self.taskbarAIActivityIndicator = [NSButton checkboxWithTitle:@""
+                                                           target:self
+                                                           action:@selector(prefsChanged:)];
+    self.taskbarAIActivityIndicator.frame =
+        NSMakeRect(kPrefsPad, y, kPrefsContentW - kPrefsPad * 2, 24);
+    [c addSubview:self.taskbarAIActivityIndicator];
     y += 28;
 
     self.memoryFreeEnabled = [NSButton checkboxWithTitle:@""
@@ -700,6 +709,7 @@ static const CGFloat kPrefsValueW = 48;
     self.chipLocatorHotkeyLabel.stringValue = [MLStrings t:@"prefs.chip_locator_hotkey_shortcut"];
     self.taskbarEnabled.title = [MLStrings t:@"prefs.taskbar_enabled"];
     self.taskbarAudioIndicator.title = [MLStrings t:@"prefs.taskbar_audio_indicator"];
+    self.taskbarAIActivityIndicator.title = [MLStrings t:@"prefs.taskbar_ai_activity"];
     self.memoryFreeEnabled.title = [MLStrings t:@"prefs.memory_free_enabled"];
     self.pollLabel.stringValue = [MLStrings t:@"prefs.window_poll"];
     self.iconCacheLabel.stringValue = [MLStrings t:@"prefs.overlay_icon_cache"];
@@ -807,6 +817,7 @@ static const CGFloat kPrefsValueW = 48;
                                          shift:NO];
     self.taskbarEnabled.state = NSControlStateValueOn;
     self.taskbarAudioIndicator.state = NSControlStateValueOn;
+    self.taskbarAIActivityIndicator.state = NSControlStateValueOn;
     self.memoryFreeEnabled.state = NSControlStateValueOff;
     self.pollSlider.doubleValue = 10;
     [self updatePollValueLabel];
@@ -834,6 +845,8 @@ static const CGFloat kPrefsValueW = 48;
     self.taskbarAudioIndicator.hidden = !audioOK;
     self.taskbarAudioIndicator.enabled =
         audioOK && (self.taskbarEnabled.state == NSControlStateValueOn);
+    self.taskbarAIActivityIndicator.enabled =
+        (self.taskbarEnabled.state == NSControlStateValueOn);
 }
 
 - (void)languageChanged:(id)sender {
@@ -1270,6 +1283,8 @@ static const CGFloat kPrefsValueW = 48;
     self.taskbarEnabled.state = self.config.taskbarEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     self.taskbarAudioIndicator.state =
         self.config.taskbarAudioIndicatorEnabled ? NSControlStateValueOn : NSControlStateValueOff;
+    self.taskbarAIActivityIndicator.state =
+        self.config.taskbarAIActivityIndicatorEnabled ? NSControlStateValueOn : NSControlStateValueOff;
     BOOL audioOK = [MLAppAudioMuteController isAvailable];
     self.taskbarAudioIndicator.hidden = !audioOK;
     self.taskbarAudioIndicator.enabled = audioOK && self.config.taskbarEnabled;
@@ -1327,6 +1342,8 @@ static const CGFloat kPrefsValueW = 48;
         [self.config updateTaskbarAudioIndicatorEnabled:
                          (self.taskbarAudioIndicator.state == NSControlStateValueOn)];
     }
+    [self.config updateTaskbarAIActivityIndicatorEnabled:
+                     (self.taskbarAIActivityIndicator.state == NSControlStateValueOn)];
     [self.config updateMemoryFreeEnabled:(self.memoryFreeEnabled.state == NSControlStateValueOn)];
     [self.config updateTaskbarWindowPollSeconds:[self pollSecondsFromSlider]];
     [self.config updateOverlayIconCacheMax:(NSUInteger)lround(self.iconCacheSlider.doubleValue)];
