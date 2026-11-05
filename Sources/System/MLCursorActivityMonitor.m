@@ -1,6 +1,7 @@
 #import "MLCursorActivityMonitor.h"
 
 #import <AppKit/AppKit.h>
+#import <sqlite3.h>
 #include <libproc.h>
 #include <math.h>
 #include <sys/stat.h>
@@ -15,6 +16,8 @@ static NSString *const MLCursorExtensionHostRoleKey = @"CURSOR_EXTENSION_HOST_RO
 
 static const NSTimeInterval MLCursorScanInterval = 1.0;
 static const NSTimeInterval MLCursorProcessCache = 3.0;
+/** Re-probe extension-host env quickly when the last scan found nothing. */
+static const NSTimeInterval MLCursorProcessEmptyRetry = 0.75;
 static const NSTimeInterval MLCursorGrowingWindow = 3.0;
 static const NSTimeInterval MLCursorCatchUpGap = 2.5;
 static const NSTimeInterval MLCursorAssistantGrace = 25.0;
@@ -27,6 +30,15 @@ static const NSTimeInterval MLCursorAgentStoreWindow = 20.0;
 static const long long MLCursorAgentStoreGrowth = 2048;
 static const NSTimeInterval MLCursorParentlessWindow = 180.0;
 static const NSTimeInterval MLCursorActiveTurnWindow = 45.0 * 60.0;
+/**
+ * composerData stays Busy only while checkpoint/lastUpdated is fresh.
+ * unfinishedRunAt often lingers after a turn ends — do not key off its age alone.
+ */
+static const NSTimeInterval MLCursorComposerActiveWindow = 55.0;
+/** Keep Busy briefly after the last composer heartbeat to avoid flicker. */
+static const NSTimeInterval MLCursorComposerHangover = 3.0;
+/** Ignore tool bubbles whose createdAt is older than this (stale "loading"). */
+static const NSTimeInterval MLCursorComposerLoadingMaxAge = 90.0;
 static const NSUInteger MLCursorCandidateLimit = 12;
 static const NSUInteger MLCursorSessionDirLimit = 20;
 static const NSUInteger MLCursorTailBytes = 64 * 1024;
@@ -106,6 +118,18 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
 
 @property (nonatomic, copy) NSString *projectsRoot;
 @property (nonatomic, copy) NSString *agentStoresRoot;
+@property (nonatomic, copy) NSString *globalStateDB;
+
+/** Cached composer busy labels; refreshed when state.vscdb(-wal) changes. */
+@property (nonatomic, copy) NSSet<NSString *> *composerBusyLabels;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSDictionary *> *composerInfos;
+@property (nonatomic, assign) time_t composerDBMtime;
+@property (nonatomic, assign) off_t composerDBSize;
+@property (nonatomic, assign) time_t composerWalMtime;
+@property (nonatomic, assign) off_t composerWalSize;
+@property (nonatomic, assign) NSTimeInterval lastComposerRead;
+/** label -> last time composer reported busy (hangover). */
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *composerBusyUntil;
 @end
 
 @implementation MLCursorActivityMonitor
@@ -123,6 +147,9 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
         _rolesByLabel = @{};
         _samples = [NSMutableDictionary dictionary];
         _agentStoreSizes = [NSMutableDictionary dictionary];
+        _composerBusyLabels = [NSSet set];
+        _composerInfos = [NSMutableDictionary dictionary];
+        _composerBusyUntil = [NSMutableDictionary dictionary];
         _projectsRoot = MLCursorPathOverride(
             "ML_CURSOR_PROJECTS_ROOT",
             [NSHomeDirectory() stringByAppendingPathComponent:@".cursor/projects"]);
@@ -130,6 +157,10 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
             "ML_CURSOR_AGENT_STORES_ROOT",
             [NSHomeDirectory() stringByAppendingPathComponent:
                 @"Library/Application Support/Cursor/AgentStores/cursor_agent_stores"]);
+        _globalStateDB = MLCursorPathOverride(
+            "ML_CURSOR_GLOBAL_STATE_DB",
+            [NSHomeDirectory() stringByAppendingPathComponent:
+                @"Library/Application Support/Cursor/User/globalStorage/state.vscdb"]);
         _running = NO;
     }
     return self;
@@ -287,6 +318,9 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
             [NSRunningApplication runningApplicationsWithBundleIdentifier:MLCursorBundleIdentifier];
         if (apps.count == 0) {
             self.rolesByLabel = @{};
+            self.composerBusyLabels = [NSSet set];
+            [self.composerInfos removeAllObjects];
+            [self.composerBusyUntil removeAllObjects];
             NSSet *empty = [NSSet set];
             [self updateBusyLabels:empty openLabels:empty];
             [self writeDebugSignalsWithOpen:empty busy:empty infos:@{}];
@@ -295,27 +329,50 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
 
         NSTimeInterval now = MLCursorNow();
         [self refreshProcessesIfNeededAt:now];
-        NSSet<NSString *> *open = self.openLabels;
-        if (open.count == 0) {
-            NSSet *empty = [NSSet set];
-            [self updateBusyLabels:empty openLabels:empty];
-            [self writeDebugSignalsWithOpen:empty busy:empty infos:@{}];
-            return;
+        NSSet<NSString *> *composerBusy = [self refreshComposerBusyAt:now];
+        NSMutableSet<NSString *> *open = [NSMutableSet setWithSet:self.openLabels];
+        /* Only promote Busy composer labels into open — not every historical
+           workspace that still has a composerData row. */
+        [open unionSet:composerBusy];
+        [open unionSet:self.composerBusyLabels];
+
+        NSMutableSet<NSString *> *busy = [NSMutableSet setWithSet:composerBusy];
+        NSMutableDictionary<NSString *, NSDictionary *> *infos =
+            [NSMutableDictionary dictionaryWithDictionary:self.composerInfos];
+
+        if (open.count > 0) {
+            NSDictionary<NSString *, NSArray<NSString *> *> *dirsByLabel =
+                [self projectDirsByLabelWithOpenLabels:open];
+            for (NSString *label in dirsByLabel) {
+                NSDictionary *info = nil;
+                if ([self labelIsBusy:label projectDirs:dirsByLabel[label] now:now info:&info]) {
+                    [busy addObject:label];
+                    if (info && !infos[label]) {
+                        infos[label] = info;
+                    } else if (info && infos[label]) {
+                        /* Prefer composer reason when both fire; keep transcript as note. */
+                        NSMutableDictionary *merged =
+                            [NSMutableDictionary dictionaryWithDictionary:infos[label]];
+                        merged[@"transcript"] = info[@"reason"] ?: @"transcript";
+                        infos[label] = merged;
+                    }
+                } else if (info && !infos[label]) {
+                    infos[label] = info;
+                }
+            }
         }
 
-        NSDictionary<NSString *, NSArray<NSString *> *> *dirsByLabel =
-            [self projectDirsByLabelWithOpenLabels:open];
-        NSMutableSet<NSString *> *busy = [NSMutableSet set];
-        NSMutableDictionary<NSString *, NSDictionary *> *infos = [NSMutableDictionary dictionary];
-        for (NSString *label in dirsByLabel) {
-            NSDictionary *info = nil;
-            if ([self labelIsBusy:label projectDirs:dirsByLabel[label] now:now info:&info]) {
+        /* Composer hangover: stay Busy a few seconds after the last heartbeat. */
+        for (NSString *label in self.composerBusyUntil.allKeys) {
+            NSTimeInterval until = [self.composerBusyUntil[label] doubleValue];
+            if (now <= until) {
                 [busy addObject:label];
-            }
-            if (info) {
-                infos[label] = info;
+                [open addObject:label];
+            } else {
+                [self.composerBusyUntil removeObjectForKey:label];
             }
         }
+
         [self updateBusyLabels:busy openLabels:open];
         [self writeDebugSignalsWithOpen:open busy:busy infos:infos];
         [self pruneAt:now];
@@ -323,7 +380,9 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
 }
 
 - (void)refreshProcessesIfNeededAt:(NSTimeInterval)now {
-    if (self.rolesByLabel.count > 0 && (now - self.lastProcessScan) < MLCursorProcessCache) {
+    NSTimeInterval minGap = (self.rolesByLabel.count > 0) ? MLCursorProcessCache
+                                                          : MLCursorProcessEmptyRetry;
+    if ((now - self.lastProcessScan) < minGap) {
         return;
     }
     self.lastProcessScan = now;
@@ -331,8 +390,9 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
     if (roles.count > 0) {
         self.rolesByLabel = roles;
         self.lastGoodLabelsAt = now;
-        [self updateBusyLabels:self.busyLabels
-                    openLabels:[NSSet setWithArray:roles.allKeys]];
+        NSMutableSet<NSString *> *open = [NSMutableSet setWithArray:roles.allKeys];
+        [open unionSet:self.composerBusyLabels];
+        [self updateBusyLabels:self.busyLabels openLabels:open];
         return;
     }
     /* A transient /proc read failure should not hide an open workspace. */
@@ -340,7 +400,8 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
         return;
     }
     self.rolesByLabel = @{};
-    [self updateBusyLabels:[NSSet set] openLabels:[NSSet set]];
+    /* Keep composer-derived Busy labels visible even if env scan failed. */
+    [self updateBusyLabels:self.busyLabels openLabels:self.composerBusyLabels];
 }
 
 - (NSDictionary<NSString *, NSArray<NSString *> *> *)projectDirsByLabelWithOpenLabels:
@@ -550,6 +611,366 @@ static BOOL MLCursorIsASCIISpace(uint8_t c) {
           atomically:YES
             encoding:NSUTF8StringEncoding
                error:NULL];
+}
+
+#pragma mark - Composer DB (primary signal)
+
+- (NSString *)labelFromWorkspacePath:(NSString *)path {
+    if (path.length == 0) {
+        return nil;
+    }
+    NSString *trimmed =
+        [path stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"/"]];
+    NSString *last = trimmed.lastPathComponent.lowercaseString;
+    return last.length > 0 ? last : nil;
+}
+
+- (BOOL)jsonArrayLooksNonEmpty:(NSString *)text {
+    if (text.length < 3) {
+        return NO;
+    }
+    NSString *trimmed =
+        [text stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    if ([trimmed isEqualToString:@"[]"] || [trimmed isEqualToString:@"null"]) {
+        return NO;
+    }
+    return [trimmed hasPrefix:@"["];
+}
+
+- (NSSet<NSString *> *)refreshComposerBusyAt:(NSTimeInterval)now {
+    NSString *dbPath = self.globalStateDB;
+    if (dbPath.length == 0) {
+        return [NSSet set];
+    }
+    struct stat st = {0};
+    struct stat walSt = {0};
+    BOOL hasDB = (stat(dbPath.fileSystemRepresentation, &st) == 0);
+    NSString *walPath = [dbPath stringByAppendingString:@"-wal"];
+    BOOL hasWal = (stat(walPath.fileSystemRepresentation, &walSt) == 0);
+    if (!hasDB) {
+        self.composerBusyLabels = [NSSet set];
+        [self.composerInfos removeAllObjects];
+        return [NSSet set];
+    }
+
+    BOOL changed = (st.st_mtime != self.composerDBMtime || st.st_size != self.composerDBSize);
+    if (hasWal) {
+        changed = changed || (walSt.st_mtime != self.composerWalMtime ||
+                              walSt.st_size != self.composerWalSize);
+    } else if (self.composerWalMtime != 0 || self.composerWalSize != 0) {
+        changed = YES;
+    }
+    BOOL stale = (now - self.lastComposerRead) >= 2.0;
+    if (changed || stale || self.lastComposerRead <= 0) {
+        self.composerDBMtime = st.st_mtime;
+        self.composerDBSize = st.st_size;
+        self.composerWalMtime = hasWal ? walSt.st_mtime : 0;
+        self.composerWalSize = hasWal ? walSt.st_size : 0;
+        self.lastComposerRead = now;
+        [self loadComposerBusyFromDatabaseAtPath:dbPath now:now];
+    }
+
+    NSMutableSet<NSString *> *busy = [NSMutableSet set];
+    for (NSString *label in self.composerBusyLabels) {
+        [busy addObject:label];
+        self.composerBusyUntil[label] = @(now + MLCursorComposerHangover);
+    }
+    return busy;
+}
+
+- (void)loadComposerBusyFromDatabaseAtPath:(NSString *)dbPath now:(NSTimeInterval)now {
+    sqlite3 *db = NULL;
+    if (sqlite3_open_v2(dbPath.fileSystemRepresentation, &db,
+                        SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, NULL) != SQLITE_OK) {
+        if (db) {
+            sqlite3_close(db);
+        }
+        return;
+    }
+    sqlite3_busy_timeout(db, 80);
+
+    const char *sql =
+        "SELECT key,"
+        " json_extract(value,'$.status'),"
+        " json_extract(value,'$.unfinishedRunAt'),"
+        " json_extract(value,'$.chatGenerationUUID'),"
+        " json_extract(value,'$.isContinuationInProgress'),"
+        " json_extract(value,'$.lastUpdatedAt'),"
+        " json_extract(value,'$.conversationCheckpointLastUpdatedAt'),"
+        " json_extract(value,'$.workspaceIdentifier.uri.path'),"
+        " json_extract(value,'$.workspaceIdentifier.uri.fsPath'),"
+        " json_extract(value,'$.generatingBubbleIds'),"
+        " json_extract(value,'$.composerId')"
+        " FROM cursorDiskKV WHERE key LIKE 'composerData:%'";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        sqlite3_close(db);
+        return;
+    }
+
+    NSMutableSet<NSString *> *busy = [NSMutableSet set];
+    NSMutableDictionary<NSString *, NSDictionary *> *infos = [NSMutableDictionary dictionary];
+    NSTimeInterval nowMs = now * 1000.0;
+    NSTimeInterval activeMs = MLCursorComposerActiveWindow * 1000.0;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *statusC = sqlite3_column_text(stmt, 1);
+        double unfinished = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                                ? NAN
+                                : sqlite3_column_double(stmt, 2);
+        const unsigned char *chatGenC = sqlite3_column_text(stmt, 3);
+        int cont = sqlite3_column_type(stmt, 4) == SQLITE_NULL ? 0
+                                                              : sqlite3_column_int(stmt, 4);
+        double last = sqlite3_column_type(stmt, 5) == SQLITE_NULL
+                          ? NAN
+                          : sqlite3_column_double(stmt, 5);
+        double ckpt = sqlite3_column_type(stmt, 6) == SQLITE_NULL
+                          ? NAN
+                          : sqlite3_column_double(stmt, 6);
+        const unsigned char *pathC = sqlite3_column_text(stmt, 7);
+        const unsigned char *fsPathC = sqlite3_column_text(stmt, 8);
+        const unsigned char *gensC = sqlite3_column_text(stmt, 9);
+
+        NSString *pathText = pathC ? [NSString stringWithUTF8String:(const char *)pathC] : nil;
+        if (pathText.length == 0 && fsPathC) {
+            pathText = [NSString stringWithUTF8String:(const char *)fsPathC];
+        }
+        NSString *label = [self labelFromWorkspacePath:pathText];
+        if (label.length == 0) {
+            continue;
+        }
+
+        NSString *status = statusC ? [NSString stringWithUTF8String:(const char *)statusC] : @"";
+        NSString *chatGen = chatGenC ? [NSString stringWithUTF8String:(const char *)chatGenC] : nil;
+        NSString *gens = gensC ? [NSString stringWithUTF8String:(const char *)gensC] : nil;
+
+        BOOL hasGens = [self jsonArrayLooksNonEmpty:gens];
+        BOOL hasUnfinished = !isnan(unfinished);
+        BOOL hasChatGen = chatGen.length > 0;
+        /* Activity clock: checkpoint / lastUpdated only. unfinishedRunAt is a
+           sticky start marker and must not keep Busy alive by itself. */
+        double activity = NAN;
+        if (!isnan(ckpt)) {
+            activity = ckpt;
+        }
+        if (!isnan(last) && (isnan(activity) || last > activity)) {
+            activity = last;
+        }
+        BOOL freshActivity = !isnan(activity) && (nowMs - activity) <= activeMs &&
+                             (nowMs - activity) >= -5000.0;
+
+        /*
+         * Unified Agent UI often leaves status as "aborted" and unfinishedRunAt
+         * set after a turn. Require a fresh checkpoint/lastUpdated, or explicit
+         * generating / continuation flags.
+         */
+        BOOL terminalCompleted = [status isEqualToString:@"completed"];
+        BOOL terminalNone = [status isEqualToString:@"none"] || status.length == 0;
+        BOOL composerBusy = NO;
+        if (!terminalCompleted) {
+            if (hasGens || cont != 0) {
+                composerBusy = YES;
+            } else if (hasUnfinished && freshActivity) {
+                composerBusy = YES;
+            } else if (hasChatGen && freshActivity && !terminalNone &&
+                       !isnan(ckpt) && !isnan(last) && ckpt > last + 250.0) {
+                /* First seconds: checkpoint advances before unfinished sticks. */
+                composerBusy = YES;
+            }
+        }
+
+        double age = !isnan(activity) ? (nowMs - activity) / 1000.0 : -1.0;
+        if (composerBusy) {
+            [busy addObject:label];
+            NSString *reason = hasGens ? @"composer-generating"
+                                       : (hasUnfinished ? @"composer-unfinished"
+                                                        : @"composer-generation");
+            NSDictionary *prev = infos[label];
+            BOOL replace = !prev || [prev[@"reason"] isEqualToString:@"idle"] ||
+                           [prev[@"age"] doubleValue] > age;
+            if (replace) {
+                infos[label] = @{
+                    @"reason" : reason,
+                    @"kind" : status.length ? status : @"none",
+                    @"age" : @(age),
+                    @"side" : @0,
+                    @"candidates" : @1,
+                };
+            }
+        } else if (!infos[label] && ![busy containsObject:label]) {
+            infos[label] = @{
+                @"reason" : @"idle",
+                @"kind" : status.length ? status : @"none",
+                @"age" : @(age),
+                @"side" : @0,
+                @"candidates" : @1,
+            };
+        }
+    }
+    sqlite3_finalize(stmt);
+
+    /*
+     * Tool-loading bubbles catch the first seconds of a turn (and long tool
+     * calls). Skip the extra query when composerData already marked Busy — it
+     * is the common path and avoids scanning a multi-GB KV table every tick.
+     */
+    if (busy.count == 0) {
+        NSDictionary<NSString *, NSString *> *loadingLabels =
+            [self labelsForLoadingToolBubblesInDatabase:db limit:40];
+        for (NSString *label in loadingLabels) {
+            [busy addObject:label];
+            NSMutableDictionary *info =
+                [NSMutableDictionary dictionaryWithDictionary:infos[label] ?: @{}];
+            info[@"reason"] = @"composer-tool-loading";
+            info[@"kind"] = loadingLabels[label] ?: @"loading";
+            info[@"side"] = @1;
+            infos[label] = info;
+        }
+    }
+
+    sqlite3_close(db);
+    self.composerBusyLabels = busy;
+    self.composerInfos = infos;
+}
+
+- (NSTimeInterval)ageOfISO8601Timestamp:(NSString *)text now:(NSTimeInterval)now {
+    if (text.length < 20) {
+        return INFINITY;
+    }
+    static NSISO8601DateFormatter *fractional = nil;
+    static NSISO8601DateFormatter *plain = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        fractional = [[NSISO8601DateFormatter alloc] init];
+        fractional.formatOptions =
+            NSISO8601DateFormatWithInternetDateTime | NSISO8601DateFormatWithFractionalSeconds;
+        plain = [[NSISO8601DateFormatter alloc] init];
+        plain.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+    });
+    NSDate *date = [fractional dateFromString:text] ?: [plain dateFromString:text];
+    if (!date) {
+        return INFINITY;
+    }
+    return now - date.timeIntervalSince1970;
+}
+
+- (NSDictionary<NSString *, NSString *> *)labelsForLoadingToolBubblesInDatabase:(sqlite3 *)db
+                                                                         limit:(int)limit {
+    if (!db) {
+        return @{};
+    }
+    /*
+     * Bounded scan of tool bubbles still reporting status=loading. Cursor leaves
+     * stale "loading" rows for days — require a fresh createdAt, and skip
+     * composers that already completed.
+     */
+    const char *sql =
+        "SELECT key,"
+        " json_extract(value,'$.createdAt'),"
+        " json_extract(value,'$.toolFormerData.status')"
+        " FROM cursorDiskKV"
+        " WHERE key LIKE 'bubbleId:%'"
+        "   AND key LIKE '%/t:%'"
+        "   AND value LIKE '%\"status\":\"loading\"%'"
+        " LIMIT ?";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return @{};
+    }
+    sqlite3_bind_int(stmt, 1, limit > 0 ? limit : 40);
+
+    NSTimeInterval now = MLCursorNow();
+    NSMutableSet<NSString *> *composerIds = [NSMutableSet set];
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const unsigned char *keyC = sqlite3_column_text(stmt, 0);
+        const unsigned char *createdC = sqlite3_column_text(stmt, 1);
+        const unsigned char *statusC = sqlite3_column_text(stmt, 2);
+        if (!keyC) {
+            continue;
+        }
+        if (statusC) {
+            NSString *toolStatus = [NSString stringWithUTF8String:(const char *)statusC];
+            if (toolStatus.length > 0 && ![toolStatus isEqualToString:@"loading"]) {
+                continue;
+            }
+        }
+        NSString *created =
+            createdC ? [NSString stringWithUTF8String:(const char *)createdC] : nil;
+        if ([self ageOfISO8601Timestamp:created now:now] > MLCursorComposerLoadingMaxAge) {
+            continue;
+        }
+        NSString *key = [NSString stringWithUTF8String:(const char *)keyC];
+        /* bubbleId:<composerId>:<bubble...> */
+        NSArray<NSString *> *parts = [key componentsSeparatedByString:@":"];
+        if (parts.count >= 3 && parts[1].length > 0) {
+            [composerIds addObject:parts[1]];
+        }
+    }
+    sqlite3_finalize(stmt);
+    if (composerIds.count == 0) {
+        return @{};
+    }
+
+    NSMutableDictionary<NSString *, NSString *> *out = [NSMutableDictionary dictionary];
+    const char *mapSql =
+        "SELECT json_extract(value,'$.status'),"
+        " coalesce(json_extract(value,'$.workspaceIdentifier.uri.path'),"
+        "          json_extract(value,'$.workspaceIdentifier.uri.fsPath')),"
+        " json_extract(value,'$.unfinishedRunAt'),"
+        " json_extract(value,'$.conversationCheckpointLastUpdatedAt'),"
+        " json_extract(value,'$.lastUpdatedAt')"
+        " FROM cursorDiskKV WHERE key = ?";
+    sqlite3_stmt *mapStmt = NULL;
+    if (sqlite3_prepare_v2(db, mapSql, -1, &mapStmt, NULL) != SQLITE_OK) {
+        return @{};
+    }
+    NSTimeInterval nowMs = now * 1000.0;
+    NSTimeInterval activeMs = MLCursorComposerActiveWindow * 1000.0;
+    for (NSString *cid in composerIds) {
+        NSString *key = [@"composerData:" stringByAppendingString:cid];
+        sqlite3_reset(mapStmt);
+        sqlite3_clear_bindings(mapStmt);
+        sqlite3_bind_text(mapStmt, 1, key.UTF8String, -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(mapStmt) != SQLITE_ROW) {
+            continue;
+        }
+        const unsigned char *statusC = sqlite3_column_text(mapStmt, 0);
+        const unsigned char *pathC = sqlite3_column_text(mapStmt, 1);
+        NSString *composerStatus =
+            statusC ? [NSString stringWithUTF8String:(const char *)statusC] : @"";
+        if ([composerStatus isEqualToString:@"completed"]) {
+            continue;
+        }
+        if (!pathC) {
+            continue;
+        }
+        /* Prefer composers that still look mid-turn; avoid abandoned aborted rows. */
+        BOOL hasUnfinished = sqlite3_column_type(mapStmt, 2) != SQLITE_NULL;
+        double ckpt = sqlite3_column_type(mapStmt, 3) == SQLITE_NULL
+                          ? NAN
+                          : sqlite3_column_double(mapStmt, 3);
+        double last = sqlite3_column_type(mapStmt, 4) == SQLITE_NULL
+                          ? NAN
+                          : sqlite3_column_double(mapStmt, 4);
+        double activity = NAN;
+        if (!isnan(ckpt)) {
+            activity = ckpt;
+        }
+        if (!isnan(last) && (isnan(activity) || last > activity)) {
+            activity = last;
+        }
+        BOOL fresh = !isnan(activity) && (nowMs - activity) <= activeMs;
+        if (!hasUnfinished && !fresh) {
+            continue;
+        }
+        NSString *label = [self labelFromWorkspacePath:
+            [NSString stringWithUTF8String:(const char *)pathC]];
+        if (label.length > 0) {
+            out[label] = @"loading";
+        }
+    }
+    sqlite3_finalize(mapStmt);
+    return out;
 }
 
 #pragma mark - Transcript / side-channel scan

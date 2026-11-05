@@ -134,17 +134,13 @@
             return;
         }
     }
-    /* Title mapping failed (renamed window / multi-root). Do not leave the
-       only chip dark; with several chips prefer the frontmost one. */
+    /*
+     * Title mapping failed (renamed window / multi-root). Only the single-chip
+     * case is safe — with several Cursor/Zed windows, marking the frontmost one
+     * falsely spins a window that is not generating.
+     */
     if (items.count == 1) {
         items[0].busy = YES;
-        return;
-    }
-    for (MLTaskbarItem *it in items) {
-        if (it.active) {
-            it.busy = YES;
-            return;
-        }
     }
 }
 

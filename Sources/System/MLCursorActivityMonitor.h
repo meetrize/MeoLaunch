@@ -8,10 +8,17 @@ FOUNDATION_EXPORT NSNotificationName const MLCursorActivityDidChangeNotification
  * Detects in-progress Cursor agent work.
  *
  * Cursor windows are titled `<project> - <file>`; the project label is read
- * from each extension-host's `CURSOR_WORKSPACE_LABEL` env var. Busy state comes
- * from `~/.cursor/projects/<slug>/agent-transcripts/<uuid>/<uuid>.jsonl`
- * (last complete JSONL row / incomplete trailer / file growth), with the same
- * agent-tools / terminals / AgentStores side channels used by MeoCursor.
+ * from each extension-host's `CURSOR_WORKSPACE_LABEL` env var.
+ *
+ * Primary busy signal (Cursor unified Agent UI):
+ *   `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
+ *   → `cursorDiskKV.composerData:*` (`unfinishedRunAt` / `generatingBubbleIds` /
+ *   `chatGenerationUUID` / recent checkpoint), optionally confirmed by
+ *   `bubbleId:*` tool rows with `status=loading`.
+ *
+ * Legacy / side channels (still used when present):
+ *   `~/.cursor/projects/<slug>/agent-transcripts/...jsonl`, agent-tools,
+ *   terminals, AgentStores WAL growth.
  */
 @interface MLCursorActivityMonitor : NSObject
 
